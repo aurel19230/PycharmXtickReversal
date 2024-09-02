@@ -5,7 +5,7 @@ import seaborn as sns
 from standardFunc import timestamp_to_date_utc
 
 # Charger les données
-file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\020122_270223_4TicksRev_0.csv"
+file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\010424_300824_4TicksRevdepuisavril.csv"
 df = pd.read_csv(file_path, delimiter=';')
 
 # Calcul correct de la variable cible
@@ -92,3 +92,8 @@ plt.ylabel('Proportion')
 plt.legend(title='Classe', bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 plt.show()
+
+# Sauvegarder le DataFrame complet dans un fichier CSV
+output_file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\df_complet_analyse.csv"
+df.to_csv(output_file_path, index=False, sep=';')
+print(f"\nLe DataFrame complet a été sauvegardé dans : {output_file_path}")
