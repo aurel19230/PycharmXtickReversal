@@ -13,7 +13,7 @@ add_date_column = input("Voulez-vous ajouter une colonne 'date' ? (Appuyez sur E
 directory = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL/"
 directoryMerge = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL/merge"
 
-suffixe=""
+suffixe="_191120_061222"
 if add_date_column.lower() == 'd':
     withDate="_withDate"
 else:
