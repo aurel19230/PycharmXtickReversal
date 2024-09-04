@@ -2,15 +2,33 @@ import os
 import pandas as pd
 import re
 
-
 def generate_output_filename(files):
+    if not files:
+        raise ValueError("La liste des fichiers est vide.")
+
+    # Trier les fichiers
     sorted_files = sorted(files)
-    first_file = sorted_files[0]
-    last_file = sorted_files[-1]
-    prefix = first_file.split('_')[0]
-    second_part = first_file.split('_')[1]
-    output_filename = f"{prefix}_{second_part}_merged.csv"
+
+    # Trouver le fichier qui se termine par "_0.csv"
+    first_file = next((f for f in sorted_files if f.endswith('_0.csv')), None)
+    if first_file is None:
+        raise ValueError("Aucun fichier ne se termine par '_0.csv'.")
+
+    # Extraire la date du début à partir du fichier _0.csv (partie avant le premier '_')
+    start_date = first_file.split('_')[0]
+
+    # Trouver le fichier avec le plus grand X dans _X.csv
+    last_file = max(sorted_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+
+    # Extraire la date de fin à partir du dernier fichier (partie après le dernier '_', sans '.csv')
+    end_date = last_file.split('_')[-1].split('.')[0]
+
+    # Utiliser "MergedAllFile" comme nom de base du fichier de sortie
+    output_filename = f"MergedAllFile_{start_date}_{end_date}_merged.csv"
     return output_filename
+
+# Le reste du code reste inchangé
+
 
 
 def merge_files(directory):
