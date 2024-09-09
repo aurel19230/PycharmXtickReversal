@@ -3,11 +3,10 @@ import numpy as np
 from numba import jit
 import os
 import time
+from standardFunc import  print_notification
 
 
-def print_notification(message):
-    print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
-
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\MergedAllFile_290824_0_merged.csv"
 
 @jit(nopython=True)
 def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_normale, seuil_anormal):
@@ -54,12 +53,12 @@ def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_norm
 
 
 def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95, taille_lot=100000,
-                                     fichier_original=None):
+                                     fichier_original=None, sessions_a_sauvegarder=None):
     print_notification("Début de l'analyse et de la sauvegarde des sessions")
 
-    if 'SessionStartEnd' not in df.columns or 'timeStampOpening' not in df.columns:
+    if 'SessionStartEnd' not in df.columns or 'timeStampOpeningConvertedtoDate' not in df.columns:
         raise ValueError(
-            "Les colonnes 'SessionStartEnd' et 'timeStampOpening' doivent être présentes dans le DataFrame.")
+            "Les colonnes 'SessionStartEnd' et 'timeStampOpeningConvertedtoDate' doivent être présentes dans le DataFrame.")
 
     if not np.all(np.isin(df['SessionStartEnd'], [10, 15, 20])):
         raise ValueError("La colonne 'SessionStartEnd' contient des valeurs autres que 10, 15 ou 20.")
@@ -68,7 +67,7 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
         raise ValueError("Le nombre de débuts de session (10) ne correspond pas au nombre de fins de session (20).")
 
     print_notification("Préparation des données pour l'analyse")
-    timestamps = df['timeStampOpening'].astype(np.int64).values // 10 ** 9
+    timestamps = df['timeStampOpeningConvertedtoDate'].astype(np.int64).values // 10 ** 9
     session_start_end = df['SessionStartEnd'].values
 
     all_sessions = []
@@ -116,10 +115,25 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
     if fichier_original:
         print_notification("Début de la sauvegarde des sessions normales")
         df_sessions_normales = pd.DataFrame()
+
+        # Trier les sessions normales par ordre chronologique décroissant
+        all_sessions_normales.sort(key=lambda x: x[1], reverse=True)
+
+        # Si un nombre spécifique de sessions est demandé, ne prendre que les dernières sessions
+        if sessions_a_sauvegarder and sessions_a_sauvegarder < len(all_sessions_normales):
+            print_notification(f"Sauvegarde des {sessions_a_sauvegarder} dernières sessions normales")
+            all_sessions_normales = all_sessions_normales[:sessions_a_sauvegarder]
+        else:
+            print_notification("Sauvegarde de toutes les sessions normales")
+
+        # Inverser l'ordre pour traiter du plus ancien au plus récent
+        all_sessions_normales.reverse()
+
         for i, (start, end) in enumerate(all_sessions_normales):
             start_ts = pd.Timestamp(start, unit='s')
             end_ts = pd.Timestamp(end, unit='s')
-            session_data = df[(df['timeStampOpening'] >= start_ts) & (df['timeStampOpening'] <= end_ts)]
+            session_data = df[
+                (df['timeStampOpeningConvertedtoDate'] >= start_ts) & (df['timeStampOpeningConvertedtoDate'] <= end_ts)]
             df_sessions_normales = pd.concat([df_sessions_normales, session_data])
             if (i + 1) % 100 == 0:
                 print_notification(f"Sessions normales traitées : {i + 1} sur {len(all_sessions_normales)}")
@@ -127,7 +141,10 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
         df_sessions_normales = df_sessions_normales.reset_index(drop=True)
 
         nom_fichier, extension = os.path.splitext(fichier_original)
-        nouveau_fichier = f"{nom_fichier}_extractOnlyFullSession{extension}"
+        if sessions_a_sauvegarder:
+            nouveau_fichier = f"{nom_fichier}_extractOnly{sessions_a_sauvegarder}LastFullSession{extension}"
+        else:
+            nouveau_fichier = f"{nom_fichier}_extractOnlyFullSession{extension}"
 
         print_notification(f"Sauvegarde du fichier : {nouveau_fichier}")
         df_sessions_normales.to_csv(nouveau_fichier, sep=';', index=False)
@@ -139,15 +156,19 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
     return all_sessions, sessions_anormales, sessions_normales, sessions_superieures, session_plus_courte, session_plus_longue
 
 
+# Demander le nombre de sessions à sauvegarder
+sessions_a_sauvegarder = input(
+    "Combien de sessions voulez-vous sauvegarder ? (Appuyez sur Entrée pour toutes les sessions) : ")
+sessions_a_sauvegarder = int(sessions_a_sauvegarder) if sessions_a_sauvegarder.strip() else None
+
 # Charger les données
 print_notification("Début du chargement des données")
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\MergedAllFile_030619_300824_merged.csv"
 df = pd.read_csv(file_path, sep=';')
 print_notification(f"Données chargées : {len(df)} lignes")
 
 # Convertir la colonne timeStampOpening en datetime
 print_notification("Conversion de la colonne timeStampOpening en datetime")
-df['timeStampOpening'] = pd.to_datetime(df['timeStampOpening'], unit='s')
+df['timeStampOpeningConvertedtoDate'] = pd.to_datetime(df['timeStampOpening'], unit='s')
 
 # Supprimer les premières lignes avec SessionStartEnd=15 en début de fichier
 print_notification("Nettoyage des données initiales")
@@ -182,7 +203,7 @@ print_notification(f"Le SessionStartEnd de la dernière ligne (index {derniere_l
 try:
     print_notification("Début de l'analyse des sessions")
     sessions, sessions_anormales, sessions_normales, sessions_superieures, session_plus_courte, session_plus_longue = analyser_et_sauvegarder_sessions(
-        df, fichier_original=file_path)
+        df, fichier_original=file_path, sessions_a_sauvegarder=sessions_a_sauvegarder)
 
     print_notification("Résultats de l'analyse :")
     print(f"\nNombre total de sessions : {len(sessions)}")

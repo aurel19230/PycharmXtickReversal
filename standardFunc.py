@@ -28,6 +28,7 @@ def convert_to_unix_timestamp(date_string):
     return int(dt.timestamp())
 
 
+
 # Fonction pour convertir un timestamp Unix en chaîne de caractères de date
 def convert_from_unix_timestamp(unix_timestamp):
     date_format = "%Y-%m-%d %H:%M:%S"  # Modifier le format de date
@@ -71,30 +72,6 @@ def plot_feature_histograms_by_class(data,className, column_settings, figsize=(3
     plt.tight_layout()
     plt.show()
 
-'''''
-# Timestamp to convert
-timestamp = 1709675743
 
-# Convert the timestamp to UTC date and time
-utc_date_time = timestamp_to_date_utc(timestamp)
-
-# Print the UTC date and time
-print(f"Timestamp: {timestamp}")
-print(f"UTC Date and Time: {utc_date_time}")
-'''''
-
-
-
-'''''
-# Exemple d'utilisation
-year = 2024
-month = 3
-day = 5
-hour = 21
-minute = 55
-second = 43
-
-timestamp = date_to_timestamp_utc(year, month, day, hour, minute, second)
-print(f"Date: {year}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}")
-print(f"Timestamp UTC: {timestamp}")
-'''''
+def print_notification(message):
+    print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
