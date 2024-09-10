@@ -6,7 +6,7 @@ import time
 from standardFunc import  print_notification
 
 
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\MergedAllFile_290824_0_merged.csv"
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\Step2_MergedAllFile_Step1_0_merged.csv"
 
 @jit(nopython=True)
 def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_normale, seuil_anormal):
@@ -140,14 +140,21 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
 
         df_sessions_normales = df_sessions_normales.reset_index(drop=True)
 
-        nom_fichier, extension = os.path.splitext(fichier_original)
-        if sessions_a_sauvegarder:
-            nouveau_fichier = f"{nom_fichier}_extractOnly{sessions_a_sauvegarder}LastFullSession{extension}"
-        else:
-            nouveau_fichier = f"{nom_fichier}_extractOnlyFullSession{extension}"
+        # Modify the part where the new filename is created
+        nom_fichier = os.path.basename(fichier_original)
+        nom_fichier, extension = os.path.splitext(nom_fichier)
+        dossier = os.path.dirname(fichier_original)
 
-        print_notification(f"Sauvegarde du fichier : {nouveau_fichier}")
-        df_sessions_normales.to_csv(nouveau_fichier, sep=';', index=False)
+        if sessions_a_sauvegarder:
+            nouveau_fichier = f"Step3_{nom_fichier}_extractOnly{sessions_a_sauvegarder}LastFullSession{extension}"
+        else:
+            nouveau_fichier = f"Step3_{nom_fichier}_extractOnlyFullSession{extension}"
+
+        # Combine the directory path with the new filename
+        nouveau_fichier_complet = os.path.join(dossier, nouveau_fichier)
+
+        print_notification(f"Sauvegarde du fichier : {nouveau_fichier_complet}")
+        df_sessions_normales.to_csv(nouveau_fichier_complet, sep=';', index=False)
 
         print_notification(f"Les sessions normales ont été sauvegardées dans le fichier : {nouveau_fichier}")
         print_notification(f"Nombre de lignes dans le nouveau fichier : {len(df_sessions_normales)}")

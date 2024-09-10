@@ -3,9 +3,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from standardFunc import timestamp_to_date_utc
+from standardFunc import print_notification
+import os
 
 # Charger les données
-file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\MergedAllFile_290824_0_merged_extractOnlyFullSession.csv"
+file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\Step3_Step2_MergedAllFile_Step1_0_merged_extractOnlyFullSession.csv"
 
 df = pd.read_csv(file_path, delimiter=';')
 df['timeStampOpening'] = pd.to_numeric(df['timeStampOpening'], errors='coerce')
@@ -13,6 +15,73 @@ df['timeStampOpening'] = pd.to_numeric(df['timeStampOpening'], errors='coerce')
 # Convertir la colonne timeStamp en datetime
 df['formatted_date'] = timestamp_to_date_utc(df['timeStampOpening'])
 df['date'] = pd.to_datetime(df['formatted_date'])
+
+# Demander à l'utilisateur de choisir l'option
+user_choice = input("Entrez 'Entrée' pour prendre en compte les shorts et longs, 's' pour les shorts uniquement ou 'l' pour les longs uniquement : ")
+
+# Créer la colonne 'class' en fonction du choix de l'utilisateur
+if user_choice.lower() == 's':
+    df['class'] = np.select(
+        [
+            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
+        ],
+        [1, 0],
+        default=99
+    )
+    output_file_suffix = "_OnlyShort"
+elif user_choice.lower() == 'l':
+    df['class'] = np.select(
+        [
+            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == 1) & (df['tradeResult'] == -1)
+        ],
+        [1, 0],
+        default=99
+    )
+    output_file_suffix = "_OnlyLong"
+else:
+    df['class'] = np.select(
+        [
+            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
+        ],
+        [1, 1, 0, 0],
+        default=99
+    )
+    output_file_suffix = ""
+
+# Filtrer les données pour exclure les valeurs 99 dans la colonne 'class'
+filtered_class_counts = df[df['class'] != 99]['class'].value_counts()
+filtered_class_percentages = filtered_class_counts / filtered_class_counts.sum() * 100
+
+# Préparation des données pour le graphique de distribution mensuelle détaillée
+df['month'] = df['date'].dt.strftime('%Y-%m')
+
+# Set default value for trade_category
+df['trade_category'] = 'Pas de trade'
+
+# Create mask for rows where class is not 99
+mask = df['class'] != 99
+
+# Assign trade categories only to rows where class is not 99
+df.loc[mask, 'trade_category'] = np.select(
+    [
+        (df.loc[mask, 'tradeDir'] == 1) & (df.loc[mask, 'tradeResult'] == 1),
+        (df.loc[mask, 'tradeDir'] == 1) & (df.loc[mask, 'tradeResult'] == -1),
+        (df.loc[mask, 'tradeDir'] == -1) & (df.loc[mask, 'tradeResult'] == 1),
+        (df.loc[mask, 'tradeDir'] == -1) & (df.loc[mask, 'tradeResult'] == -1)
+    ],
+    [
+        'Trades réussis long',
+        'Trades échoués long',
+        'Trades réussis short',
+        'Trades échoués short'
+    ],
+    default='Pas de trade'
+)
 
 # Calculer les pourcentages pour le camembert
 total_trades = len(df)
@@ -34,49 +103,34 @@ long_trades = trades[trades['tradeDir'] == 1]
 short_percent = len(short_trades) / total_active_trades * 100
 long_percent = len(long_trades) / total_active_trades * 100
 
-short_success = short_trades[short_trades['tradeResult'] == 1].shape[0] / len(short_trades) * 100
+short_success = short_trades[short_trades['tradeResult'] == 1].shape[0] / len(short_trades) * 100 if len(short_trades) > 0 else 0
 short_fail = 100 - short_success
 
-long_success = long_trades[long_trades['tradeResult'] == 1].shape[0] / len(long_trades) * 100
+long_success = long_trades[long_trades['tradeResult'] == 1].shape[0] / len(long_trades) * 100 if len(long_trades) > 0 else 0
 long_fail = 100 - long_success
-
-# Créer la colonne 'class'
-df['class'] = np.select(
-    [
-        (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-        (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-        (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
-        (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-    ],
-    [1, 1, 0, 0],
-    default=99
-)
-
-# Filtrer les données pour exclure les valeurs 99 dans la colonne 'class'
-filtered_class_counts = df[df['class'] != 99]['class'].value_counts()
-filtered_class_percentages = filtered_class_counts / filtered_class_counts.sum() * 100
-
-# Préparation des données pour le graphique de distribution mensuelle détaillée
-df['month'] = df['date'].dt.strftime('%Y-%m')
-df['trade_category'] = np.select(
-    [
-        (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-        (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
-        (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-        (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-    ],
-    [
-        'Trades réussis long',
-        'Trades échoués long',
-        'Trades réussis short',
-        'Trades échoués short'
-    ],
-    default='Pas de trade'
-)
 
 monthly_distribution = df[df['tradeResult'] != 99].groupby(['month', 'trade_category']).size().unstack(fill_value=0)
 monthly_distribution['Total'] = monthly_distribution.sum(axis=1)
 monthly_distribution = monthly_distribution.div(monthly_distribution['Total'], axis=0) * 100
+
+# Ensure all categories are present, fill with 0 if missing
+all_categories = ['Trades réussis long', 'Trades réussis short', 'Trades échoués long', 'Trades échoués short']
+for category in all_categories:
+    if category not in monthly_distribution.columns:
+        monthly_distribution[category] = 0
+
+# Obtenir le nom du fichier d'entrée
+nom_fichier_entree = os.path.basename(file_path)
+
+# Créer le nom du fichier de sortie
+nom_fichier_sortie = f"Step4_{nom_fichier_entree}{output_file_suffix}"
+
+# Obtenir le chemin complet du fichier de sortie
+chemin_sortie = os.path.join(os.path.dirname(file_path), nom_fichier_sortie)
+
+# Sauvegarder le DataFrame
+print_notification(f"Sauvegarde du DataFrame dans : {chemin_sortie}")
+df.to_csv(chemin_sortie, sep=';', index=False, encoding='iso-8859-1')
 
 # Afficher les informations dans la console
 print("\n--- Informations des graphiques ---\n")
@@ -113,7 +167,7 @@ fig, axes = plt.subplots(2, 2, figsize=(20, 12))
 # Graphique 1: Camembert de répartition des positions
 ax1 = axes[0, 0]
 sizes = [no_trade, short_trade, long_trade]
-labels = [f'Aucun trade\n{no_trade_count}', f'Trade short\n{short_trade_count}', f'Trade long\n{long_trade_count}']
+labels = [f'Aucun trade\n{no_trade_count}', f'Trade Shorts\n{short_trade_count}', f'Trade longs\n{long_trade_count}']
 wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90,
                                    pctdistance=0.85, labeldistance=1.05)
 plt.setp(texts, size=10, weight="bold")
@@ -141,11 +195,8 @@ ax2.legend()
 ax3 = axes[1, 0]
 colors = ['darkgreen', 'lightgreen', 'darkred', 'salmon']
 ax3.stackplot(monthly_distribution.index,
-              monthly_distribution['Trades réussis long'],
-              monthly_distribution['Trades réussis short'],
-              monthly_distribution['Trades échoués long'],
-              monthly_distribution['Trades échoués short'],
-              labels=['Trades réussis long', 'Trades réussis short', 'Trades échoués long', 'Trades échoués short'],
+              [monthly_distribution[cat] for cat in all_categories],
+              labels=all_categories,
               colors=colors)
 
 ax3.set_ylabel('Pourcentage')
@@ -159,6 +210,15 @@ ax3.set_xticklabels([date.strftime('%b. %y') for date in dates], rotation=90, fo
 
 # Graphique 4: Camembert de répartition globale des trades réussis et échoués
 ax4 = axes[1, 1]
+
+# Déterminer le titre en fonction du choix de l'utilisateur
+if user_choice.lower() == 's':
+    title = 'Répartition des trades Shorts réussis et échoués'
+elif user_choice.lower() == 'l':
+    title = 'Répartition des trades Longs réussis et échoués'
+else:
+    title = 'Répartition des trades réussis et échoués (Longs et Shorts)'
+
 wedges, texts, autotexts = ax4.pie(filtered_class_percentages,
                                    labels=[f'Trades échoués\n{failed_trades}', f'Trades réussis\n{successful_trades}'],
                                    autopct='%1.1f%%',
@@ -169,7 +229,7 @@ wedges, texts, autotexts = ax4.pie(filtered_class_percentages,
 plt.setp(texts, size=10, weight="bold")
 plt.setp(autotexts, size=9, weight="bold")
 
-ax4.set_title('Répartition des trades réussis et échoués')
+ax4.set_title(title)
 ax4.axis('equal')
 
 plt.tight_layout()

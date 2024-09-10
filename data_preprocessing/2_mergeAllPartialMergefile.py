@@ -24,7 +24,7 @@ def generate_output_filename(files):
     end_date = last_file.split('_')[-1].split('.')[0]
 
     # Utiliser "MergedAllFile" comme nom de base du fichier de sortie
-    output_filename = f"MergedAllFile_{start_date}_{end_date}_merged.csv"
+    output_filename = f"Step2_MergedAllFile_{start_date}_{end_date}_merged.csv"
     return output_filename
 
 # Le reste du code reste inchangé

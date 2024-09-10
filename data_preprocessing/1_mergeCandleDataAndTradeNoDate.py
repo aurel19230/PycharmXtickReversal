@@ -54,7 +54,7 @@ start_date = datetime.utcfromtimestamp(start_timestamp).strftime('%d%m%y')
 end_date = datetime.utcfromtimestamp(end_timestamp).strftime('%d%m%y')
 
 # Nom du fichier de sortie avec les dates et le nom de fichier variable
-output_file = f"{start_date}_{end_date}_{output_file_name}"
+output_file = f"Step1_{start_date}_{end_date}_{output_file_name}"
 
 # Fonction optimisée avec Numba pour traiter les données sans la colonne "date"
 @njit(parallel=True)
