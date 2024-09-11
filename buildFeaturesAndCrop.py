@@ -226,13 +226,6 @@ data_processedLabel0_1= processFloorCrop(dataLabel0_1, column_settings)
 
 
 
-# Sauvegarder le dataset après les modifications dans un fichier
-data_processed[['timeStamp', 'deltaTimestamp', 'diffPriceClosePoc_0_0', 'diffPriceCloseHigh_0_0', 'diffPriceCloseLow_0_0',
-                'ratioVolCandleMeanx', 'ratioVolPocVolCandle', 'ratioPocDeltaPocVol', 'ratioVolBlw', 'ratioVolAbv',
-                'ratioDeltaBlw', 'ratioDeltaAbv', 'diffPriceCloseVWAP', 'diffPriceCloseVWAPsd3Top', 'diffPriceCloseVWAPsd3Bot',
-                'imbFactorAskL', 'imbFactorBidH', 'bidVolumeAtBarLow', 'askVolumeAtBarLow', 'bidVolumeAtBarHigh',
-                'askVolumeAtBarHigh', 'diffPocPrice_0_1', 'diffHighPrice_0_1', 'diffLowPrice_0_1', 'diffVolCandle_0_1',
-                'diffVolDelta_0_1', 'tradeDir', 'tradeResult']].to_csv(output_file_after, sep=';', index=False)
 
 
 
