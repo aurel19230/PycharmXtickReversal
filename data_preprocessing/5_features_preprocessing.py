@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from standardFunc import print_notification
+from standardFunc import load_data
+
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
 import os
@@ -9,14 +11,36 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from numba import jit
-diffDivBy0=np.nan
-addDivBy0=np.nan
+diffDivBy0 = np.nan
+addDivBy0 = np.nan
+from sklearn.preprocessing import MinMaxScaler
+
+user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
+                    "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
+                    "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
+
+# Nom du fichier
+file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort.csv"
+
+# Chemin du répertoire
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge13092024"
+
+# Construction du chemin complet du fichier
+file_path = os.path.join(directory_path, file_name)
+
+REPLACE_NAN=False
+REPLACED_NANVALUE_BY=90000.54789
+REPLACED_NANVALUE_BY_INDEX=1
+if REPLACE_NAN:
+    print(f"\nINFO : Implémenter dans le code => les valeurs NaN seront remplacées par {REPLACED_NANVALUE_BY} et un index")
+else:
+    print(f"\nINFO : Implémenter dans le code => les valeurs NaN ne seront pas remplacées par une valeur choisie par l'utilisateur mais laissé à NAN")
 
 # Configuration
 CONFIG = {
     'NUM_GROUPS': 9,
     'MIN_RANGE': 30,  # en minutes
-    'FILE_PATH': r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\Step4_Step3_Step2_MergedAllFile_Step1_0_merged_extractOnlyFullSession.csv",
+    'FILE_PATH': file_path,
     'TRADING_START_TIME': "22:00",
     'FIGURE_SIZE': (20, 10),
     'GRID_ALPHA': 0.7,
@@ -36,11 +60,7 @@ CUSTOM_SECTIONS = [
     {"name": "closing", "start": 1335, "end": 1380, "index": 9},
 ]
 
-def load_data(file_path: str) -> pd.DataFrame:
-    print_notification("Début du chargement des données")
-    df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
-    print_notification("Données chargées avec succès")
-    return df
+
 
 def get_custom_section(minutes: int) -> dict:
     for section in CUSTOM_SECTIONS:
@@ -87,14 +107,94 @@ features_df['diffPriceClosePoc_0_3'] = df['close'] - df['pocPrice'].shift(3)
 features_df['diffHighPrice_0_1'] = df['high'] - df['high'].shift(1)
 features_df['diffHighPrice_0_2'] = df['high'] - df['high'].shift(2)
 features_df['diffHighPrice_0_3'] = df['high'] - df['high'].shift(3)
+features_df['diffHighPrice_0_4'] = df['high'] - df['high'].shift(4)
 features_df['diffLowPrice_0_1'] = df['low'] - df['low'].shift(1)
 features_df['diffLowPrice_0_2'] = df['low'] - df['low'].shift(2)
 features_df['diffLowPrice_0_3'] = df['low'] - df['low'].shift(3)
+features_df['diffLowPrice_0_4'] = df['low'] - df['low'].shift(4)
 features_df['diffPriceCloseVWAP'] = df['close'] - df['VWAP']
 
 features_df['atr'] = df['atr']
 features_df['bandWidthBB'] = df['bandWidthBB']
 features_df['perctBB'] = df['perctBB']
+
+
+import numpy as np
+import pandas as pd
+
+def detect_market_regime(data, period=14, adx_threshold=25):
+    # Calcul de l'ADX
+    data['plus_dm'] = np.where((data['high'] - data['high'].shift(1)) > (data['low'].shift(1) - data['low']),
+                               np.maximum(data['high'] - data['high'].shift(1), 0), 0)
+    data['minus_dm'] = np.where((data['low'].shift(1) - data['low']) > (data['high'] - data['high'].shift(1)),
+                                np.maximum(data['low'].shift(1) - data['low'], 0), 0)
+    data['tr'] = np.maximum(data['high'] - data['low'],
+                            np.maximum(abs(data['high'] - data['close'].shift(1)),
+                                       abs(data['low'] - data['close'].shift(1))))
+    data['plus_di'] = 100 * data['plus_dm'].rolling(period).sum() / data['tr'].rolling(period).sum()
+    data['minus_di'] = 100 * data['minus_dm'].rolling(period).sum() / data['tr'].rolling(period).sum()
+    data['dx'] = 100 * abs(data['plus_di'] - data['minus_di']) / (data['plus_di'] + data['minus_di'])
+    data['adx'] = data['dx'].rolling(period).mean()
+
+
+
+   # data['market_regimeADX'] = np.where(data['adx'] > adx_threshold, data['adx'], data['adx'])
+    data['market_regimeADX'] = np.where(data['adx'] > adx_threshold, data['adx'], 0)
+    data['market_regimeADX'] = data['market_regimeADX'].fillna(addDivBy0)
+    return data
+
+
+def range_strength(data, window=30, atr_multiple=3, min_strength=0.1):
+    data = data.copy()
+    required_columns = ['high', 'low', 'close']
+    missing_cols = [col for col in required_columns if col not in data.columns]
+    if missing_cols:
+        raise ValueError(f"Les colonnes manquantes dans le DataFrame : {missing_cols}")
+
+    for col in required_columns:
+        data[col] = pd.to_numeric(data[col], errors='coerce')
+
+    data['tr'] = np.maximum(
+        data['high'] - data['low'],
+        np.maximum(
+            np.abs(data['high'] - data['close'].shift()),
+            np.abs(data['low'] - data['close'].shift())
+        )
+    )
+
+    data['atr'] = data['tr'].rolling(window=window).mean()
+    data['threshold'] = (data['atr'] / data['close'].replace(0, np.nan)) * atr_multiple
+    data['rolling_high'] = data['high'].rolling(window=window).max()
+    data['rolling_low'] = data['low'].rolling(window=window).min()
+    data['range_width'] = (data['rolling_high'] - data['rolling_low']) / data['rolling_low']
+
+    condition = data['range_width'] <= data['threshold']
+    data['range_duration'] = condition.astype(int).groupby((~condition).cumsum()).cumsum()
+    data['range_strength'] = data['range_duration'] / (1 + data['range_width'])
+
+    # Appliquer un seuil minimum et une transformation logarithmique
+    data['range_strength'] = np.where(data['range_strength'] < min_strength, np.nan, data['range_strength'])
+
+    data['log_range_strength'] = np.log1p(data['range_strength'])
+
+    data.drop(['tr'], axis=1, inplace=True)
+    data['range_strength'] = data['range_strength'].fillna(addDivBy0)
+
+    return data
+
+
+
+# Appliquer range_strength sur une copie de df pour ne pas modifier df
+
+df_with_range_strength = range_strength(df, window=25, atr_multiple=2.5, min_strength=0.01)
+# Ajouter la colonne 'range_strength' à features_df
+features_df['range_strength'] = df_with_range_strength['range_strength']
+# Appliquer detect_market_regime sur une copie de df pour ne pas modifier df
+df_copy = df.copy()
+df_with_regime = detect_market_regime(df_copy)
+# Ajouter la colonne 'market_regime' à features_df
+features_df['market_regimeADX'] = df_with_regime['market_regimeADX']
+
 
 # Nouvelles features - Force du renversement
 features_df['bearish_reversal_force'] = np.where(df['volume'] != 0, df['VolAbv'] / df['volume'], addDivBy0)
@@ -710,7 +810,7 @@ features_df['extrem_ask_bid_imbalance_bullish'] = np.where(
      (df['downTickVolBlwBidDesc_extrem'] + df['repeatUpTickVolBlwBidDesc_extrem'] + df['repeatDownTickVolBlwBidDesc_extrem'])) /
     (df['upTickVolBlwAskAsc_extrem'] + df['repeatUpTickVolBlwAskAsc_extrem'] + df['repeatDownTickVolBlwAskAsc_extrem'] +
      df['downTickVolBlwBidDesc_extrem'] + df['repeatUpTickVolBlwBidDesc_extrem'] + df['repeatDownTickVolBlwBidDesc_extrem']),
-    0)
+    diffDivBy0)
 
 features_df['extrem_asc_dsc_comparison_bullish'] = np.where(
     ( df['VolBlw'] != 0),
@@ -825,7 +925,15 @@ features_df['bullish_repeatAskBid_ratio'] = np.where(
     df['VolBlw'] != 0,
     (repeatUpTickVolBlwAsk + repeatUpTickVolBlwBid + repeatDownTickVolBlwAsk + repeatDownTickVolBlwBid) / df['VolBlw'],
     addDivBy0)
+
+
+features_df['ratio_Count_AbvBlw'] = np.where(
+    features_df['total_count_blw'] != 0,
+    features_df['total_count_abv']/ features_df['total_count_blw'],
+    addDivBy0)
 print_notification("Calcul des features de la zone 6Ticks")
+
+
 
 # a) Ratio de volume _6Tick
 features_df['bearish_volume_ratio_6Tick'] = np.where(df['VolAbv'] != 0, df['VolBlw_6Tick'] / df['VolAbv'], addDivBy0)
@@ -920,7 +1028,7 @@ features_df['bullish_ticks_imbalance_6Tick'] = np.where(df['VolAbv_6Tick'] != 0,
 
 print_notification("Ajout des informations sur les class et les trades")
 
-features_df['class']=df['class']
+features_df['class_binaire']=df['class_binaire']
 features_df['date']=df['date']
 features_df['trade_category']=df['trade_category']
 
@@ -930,217 +1038,216 @@ print_notification("Début de l'enregistrement des fichiers")
 # Extraire le nom du fichier et le répertoire
 file_dir = os.path.dirname(CONFIG['FILE_PATH'])
 file_name = os.path.basename(CONFIG['FILE_PATH'])
+def toBeDisplayed_if_s(user_choice, choice):
+    # Utilisation de l'opérateur ternaire
+    result = True if user_choice == 'd' else (True if user_choice == 's' and choice == True else False)
+    return result
 
-# Créer le nouveau nom de fichier
-new_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat.csv'
-
-# Construire le chemin complet du nouveau fichier
-feat_file = os.path.join(file_dir, new_file_name)
-
-# Sauvegarder le fichier
-features_df.to_csv(feat_file, sep=';', index=False, encoding='iso-8859-1')
-print_notification(f"Fichier de features non modifiées enregistré : {feat_file}")
-
-# Fichier standardisé (_featStand.csv)
+## 0) key nom de la feature / 1) Ative Floor / 2) Active Crop / 3) % à Floored / ') % à Croped / 5) Afficher et/ou inclure Features dans fichiers cibles
+# choix des features à traiter
 column_settings = {
     # Time-based features
-    'deltaTimestampOpening':                  (False, False, 10, 90),
-    'deltaTimestampOpeningSection5min':       (False, False, 10, 90),
-    'deltaTimestampOpeningSection5index':     (False, False, 10, 90),
-    'deltaTimestampOpeningSection30min':      (False, False, 10, 90),
-    'deltaTimestampOpeningSection30index':    (False, False, 10, 90),
-    'deltaCustomSectionMin':                  (False, False, 10, 90),
-    'deltaCustomSectionIndex':                (False, False, 10, 90),
+    'deltaTimestampOpening':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection5min':       (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection5index':     (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection30min':      (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection30index':    (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSectionMin':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSectionIndex':                (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
-    'candleSizeTicks':                        (False, False, 10, 90),
-    'diffPriceClosePoc_0_0':                  (False, False, 10, 90),
-    'diffPriceClosePoc_0_1':                  (False, False, 10, 90),
-    'diffPriceClosePoc_0_2':                  (False, False, 10, 90),
-    'diffPriceClosePoc_0_3':                  (False, False, 10, 90),
-    'diffHighPrice_0_1':                      (False, False, 10, 90),
-    'diffHighPrice_0_2':                      (False, False, 10, 90),
-    'diffHighPrice_0_3':                      (False, False, 10, 90),
-    'diffLowPrice_0_1':                       (False, False, 10, 90),
-    'diffLowPrice_0_2':                       (False, False, 10, 90),
-    'diffLowPrice_0_3':                       (False, False, 10, 90),
-    'diffPriceCloseVWAP':                     (False, False, 10, 90),
+    'candleSizeTicks':                        (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffPriceClosePoc_0_0':                  (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffPriceClosePoc_0_1':                  (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffPriceClosePoc_0_2':                  (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffPriceClosePoc_0_3':                  (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffHighPrice_0_1':                      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffHighPrice_0_2':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffHighPrice_0_3':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffHighPrice_0_4':                        (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffLowPrice_0_1':                       (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffLowPrice_0_2':                       (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffLowPrice_0_3':                       (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffLowPrice_0_4':                         (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffPriceCloseVWAP':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Technical indicators
-    'atr':                                    (False, False, 10, 90),
-    'bandWidthBB':                            (True, True, 10, 90),
-    'perctBB':                                (False, False, 10, 90),
+    'atr':                                    (True, True, 0.1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bandWidthBB':                            (True, True, 0.1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'perctBB':                                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'market_regimeADX':                         (False, False, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),
+    'range_strength':                           (False, True, 0.1, 99.5,toBeDisplayed_if_s(user_choice, False)),
 
     # Reversal and momentum features
-    'bearish_reversal_force':                 (False, False, 10, 90),
-    'bullish_reversal_force':                 (False, False, 10, 90),
-    'bearish_ask_bid_ratio':                  (False, False, 10, 90),
-    'bullish_ask_bid_ratio':                  (False, False, 10, 90),
-    'meanVolx':                               (False, False, 10, 90),
-    'ratioDeltaBlw':                          (False, False, 10, 90),
-    'ratioDeltaAbv':                          (False, False, 10, 90),
-    'diffVolCandle_0_1Ratio':                 (False, False, 10, 90),
-    'diffVolDelta_0_1Ratio':                  (False, False, 10, 90),
-    'cumDiffVolDeltaRatio':                   (False, False, 10, 90),
+    'bearish_reversal_force':                 (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bullish_reversal_force':                 (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bearish_ask_bid_ratio':                  (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bullish_ask_bid_ratio':                  (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'meanVolx':                               (False, True, 1, 99.7,toBeDisplayed_if_s(user_choice, False)),#ok
+    'ratioDeltaBlw':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'ratioDeltaAbv':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffVolCandle_0_1Ratio':                 (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffVolDelta_0_1Ratio':                  (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'cumDiffVolDeltaRatio':                  (True, True, 0.1, 99.1,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Volume profile features
-    'VolPocVolCandleRatio':                   (False, False, 10, 90),
-    'pocDeltaPocVolRatio':                    (False, False, 10, 90),
-    'asymetrie_volume':                       (False, False, 10, 90),
-    'VolCandleMeanxRatio':                    (False, False, 10, 90),
+    'VolPocVolCandleRatio':                  (False, False, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'pocDeltaPocVolRatio':                    (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'asymetrie_volume':                       (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'VolCandleMeanxRatio':                    (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Order flow features
-    'bearish_ask_ratio':                      (False, False, 10, 90),
-    'bearish_bid_ratio':                      (False, False, 10, 90),
-    'bullish_ask_ratio':                      (False, False, 10, 90),
-    'bullish_bid_ratio':                      (False, False, 10, 90),
-    'bearish_ask_score':                      (False, False, 10, 90),
-    'bearish_bid_score':                      (False, False, 10, 90),
-    'bearish_imnbScore_score':                (False, False, 10, 90),
-    'bullish_ask_score':                      (False, False, 10, 90),
-    'bullish_bid_score':                      (False, False, 10, 90),
-    'bullish_imnbScore_score':                (False, False, 10, 90),
+    'bearish_ask_ratio':                      (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bearish_bid_ratio':                      (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bullish_ask_ratio':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_bid_ratio':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_ask_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_bid_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_imnbScore_score':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_ask_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_bid_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_imnbScore_score':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
 
     # Imbalance features
-    'bull_imbalance_low_1':                   (False, False, 10, 90),
-    'bull_imbalance_low_2':                   (False, False, 10, 90),
-    'bull_imbalance_low_3':                   (False, False, 10, 90),
-    'bull_imbalance_high_0':                  (False, False, 10, 90),
-    'bull_imbalance_high_1':                  (False, False, 10, 90),
-    'bull_imbalance_high_2':                  (False, False, 10, 90),
-    'bear_imbalance_low_0':                   (False, False, 10, 90),
-    'bear_imbalance_low_1':                   (False, False, 10, 90),
-    'bear_imbalance_low_2':                   (False, False, 10, 90),
-    'bear_imbalance_high_1':                  (False, False, 10, 90),
-    'bear_imbalance_high_2':                  (False, False, 10, 90),
-    'bear_imbalance_high_3':                  (False, False, 10, 90),
-    'imbalance_score_low':                    (False, False, 10, 90),
-    'imbalance_score_high':                   (False, False, 10, 90),
+    'bull_imbalance_low_1':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_low_2':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_low_3':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_0':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_1':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_2':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_0':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_1':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_2':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_1':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_2':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_3':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'imbalance_score_low':                    (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'imbalance_score_high':                   (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
 
     # Auction features
-    'finished_auction_high':                  (False, False, 10, 90),
-    'finished_auction_low':                   (False, False, 10, 90),
-    'staked00_high':                          (False, False, 10, 90),
-    'staked00_low':                           (False, False, 10, 90),
+    'finished_auction_high':                  (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'finished_auction_low':                   (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'staked00_high':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'staked00_low':                           (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
 
     # Absorption features
-    'bearish_ask_abs_ratio_abv':              (False, False, 10, 90),
-    'bearish_bid_abs_ratio_abv':              (False, False, 10, 90),
-    'bearish_abs_diff_abv':                   (False, False, 10, 90),
-    'bullish_ask_abs_ratio_blw':              (False, False, 10, 90),
-    'bullish_bid_abs_ratio_blw':              (False, False, 10, 90),
-    'bullish_abs_diff_blw':                   (False, False, 10, 90),
+    'bearish_ask_abs_ratio_abv':               (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_bid_abs_ratio_abv':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_abs_diff_abv':                    (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_ask_abs_ratio_blw':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_bid_abs_ratio_blw':               (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_abs_diff_blw':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
 
     # Big trade features
-    'bearish_askBigStand_abs_ratio_abv':      (False, False, 10, 90),
-    'bearish_bidBigStand_abs_ratio_abv':      (False, False, 10, 90),
-    'bearish_bigStand_abs_diff_abv':          (False, False, 10, 90),
-    'bullish_askBigStand_abs_ratio_blw':      (False, False, 10, 90),
-    'bullish_bidBigStand_abs_ratio_blw':      (False, False, 10, 90),
-    'bullish_bigStand_abs_diff_blw':          (False, False, 10, 90),
-    'bearish_askBigHigh_abs_ratio_abv':       (False, False, 10, 90),
-    'bearish_bidBigHigh_abs_ratio_abv':       (False, False, 10, 90),
-    'bearish_bigHigh_abs_diff_abv':           (False, False, 10, 90),
-    'bullish_askBigHigh_abs_ratio_blw':       (False, False, 10, 90),
-    'bullish_bidBigHigh_abs_ratio_blw':       (False, False, 10, 90),
-    'bullish_bigHigh_abs_diff_blw':           (False, False, 10, 90),
+    'bearish_askBigStand_abs_ratio_abv':      (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bearish_bidBigStand_abs_ratio_abv':      (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bearish_bigStand_abs_diff_abv':          (True, False, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_askBigStand_abs_ratio_blw':      (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_bidBigStand_abs_ratio_blw':      (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_bigStand_abs_diff_blw':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bearish_askBigHigh_abs_ratio_abv':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bearish_bidBigHigh_abs_ratio_abv':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bearish_bigHigh_abs_diff_abv':           (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_askBigHigh_abs_ratio_blw':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_bidBigHigh_abs_ratio_blw':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
+    'bullish_bigHigh_abs_diff_blw':           (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
 
     # Extreme zone features
-    'bearish_extrem_revIntensity_ratio':      (False, False, 10, 90),
-    'bullish_extrem_revIntensity_ratio':      (False, False, 10, 90),
-    'bearish_extrem_zone_volume_ratio':       (False, False, 10, 90),
-    'bullish_extrem_zone_volume_ratio':       (False, False, 10, 90),
-    'bearish_extrem_pressure_ratio':          (False, False, 10, 90),
-    'bullish_extrem_pressure_ratio':          (False, False, 10, 90),
-    'bearish_extrem_abs_ratio':               (False, False, 10, 90),
-    'bullish_extrem_abs_ratio':               (False, False, 10, 90),
-    'bearish_extrem_vs_rest_activity':        (False, False, 10, 90),
-    'bullish_extrem_vs_rest_activity':        (False, False, 10, 90),
-    'bearish_continuation_vs_reversal':       (False, False, 10, 90),
-    'bullish_continuation_vs_reversal':       (False, False, 10, 90),
-    'bearish_repeat_ticks_ratio':             (False, False, 10, 90),
-    'bullish_repeat_ticks_ratio':             (False, False, 10, 90),
-    'bearish_big_trade_ratio_extrem':         (False, False, 10, 90),
-    'bearish_big_trade_imbalance':            (False, False, 10, 90),
-    'bullish_big_trade_ratio_extrem':         (False, False, 10, 90),
-    'bullish_big_trade_imbalance':            (False, False, 10, 90),
+    'bearish_extrem_revIntensity_ratio':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_revIntensity_ratio':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_zone_volume_ratio':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_zone_volume_ratio':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_pressure_ratio':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_pressure_ratio':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_abs_ratio':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_abs_ratio':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_vs_rest_activity':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_vs_rest_activity':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_continuation_vs_reversal':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_continuation_vs_reversal':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_repeat_ticks_ratio':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_repeat_ticks_ratio':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_big_trade_ratio_extrem':         (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_big_trade_imbalance':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_big_trade_ratio_extrem':          (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_big_trade_imbalance':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
 
     # Ascending/Descending features
-    'bearish_asc_dsc_ratio':                  (False, False, 10, 90),
-    'bearish_asc_dynamics':                   (False, False, 10, 90),
-    'bearish_dsc_dynamics':                   (False, False, 10, 90),
-    'bullish_asc_dsc_ratio':                  (False, False, 10, 90),
-    'bullish_asc_dynamics':                   (False, False, 10, 90),
-    'bullish_dsc_dynamics':                   (False, False, 10, 90),
+    'bearish_asc_dsc_ratio':                  (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_asc_dynamics':                   (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_dsc_dynamics':                   (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_asc_dsc_ratio':                  (False, True, 1, 97,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_asc_dynamics':                   (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_dsc_dynamics':                   (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
 
     # Ask/Bid imbalance features
-    'bearish_asc_ask_bid_imbalance':          (False, False, 10, 90),
-    'bearish_dsc_ask_bid_imbalance':          (False, False, 10, 90),
-    'bearish_imbalance_evolution':            (False, False, 10, 90),
-    'bearish_asc_ask_bid_delta_imbalance':    (False, False, 10, 90),
-    'bearish_dsc_ask_bid_delta_imbalance':    (False, False, 10, 90),
-    'bullish_asc_ask_bid_imbalance':          (False, False, 10, 90),
-    'bullish_dsc_ask_bid_imbalance':          (False, False, 10, 90),
-    'bullish_imbalance_evolution':            (False, False, 10, 90),
-    'bullish_asc_ask_bid_delta_imbalance':    (False, False, 10, 90),
-    'bullish_dsc_ask_bid_delta_imbalance':    (False, False, 10, 90),
+    'bearish_asc_ask_bid_imbalance':          (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_dsc_ask_bid_imbalance':          (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_imbalance_evolution':            (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_asc_ask_bid_delta_imbalance':    (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bearish_dsc_ask_bid_delta_imbalance':    (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_asc_ask_bid_imbalance':          (False, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_dsc_ask_bid_imbalance':          (False, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_imbalance_evolution':            (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_asc_ask_bid_delta_imbalance':    (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_dsc_ask_bid_delta_imbalance':    (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
 
     # Extreme zone additional features
-    'extrem_asc_ratio_bearish':               (False, False, 10, 90),
-    'extrem_dsc_ratio_bearish':               (False, False, 10, 90),
-    'extrem_zone_significance_bearish':       (False, False, 10, 90),
-    'extrem_ask_bid_imbalance_bearish':       (False, False, 10, 90),
-    'extrem_asc_dsc_comparison_bearish':      (False, False, 10, 90),
-    'extrem_asc_ratio_bullish':               (False, False, 10, 90),
-    'extrem_dsc_ratio_bullish':               (False, False, 10, 90),
-    'extrem_zone_significance_bullish':       (False, False, 10, 90),
-    'extrem_ask_bid_imbalance_bullish':       (False, False, 10, 90),
-    'extrem_asc_dsc_comparison_bullish':      (False, False, 10, 90),
+    'extrem_asc_ratio_bearish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_dsc_ratio_bearish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_zone_significance_bearish':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_ask_bid_imbalance_bearish':       (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_dsc_comparison_bearish':      (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_ratio_bullish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_dsc_ratio_bullish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_zone_significance_bullish':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_ask_bid_imbalance_bullish':      (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_dsc_comparison_bullish':     (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
 
     # Absorption and big trade features
-    'bearish_absorption_ratio':               (False, False, 10, 90),
-    'bullish_absorption_ratio':               (False, False, 10, 90),
-    'bearish_big_trade_ratio2_extrem':        (False, False, 10, 90),
-    'bullish_big_trade_ratio2_extrem':        (False, False, 10, 90),
+    'bearish_absorption_ratio':               (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_absorption_ratio':               (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bearish_big_trade_ratio2_extrem':        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_big_trade_ratio2_extrem':        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
 
     # Absorption and repeat features
-    'total_count_abv':                        (False, False, 10, 90),
-    'absorption_intensity_repeat_bearish_vol':(False, False, 10, 90),
-    'absorption_intensity_repeat_bearish_count':(False, False, 10, 90),
-    'bearish_repeatAskBid_ratio':             (False, False, 10, 90),
-    'total_count_blw':                        (False, False, 10, 90),
-    'absorption_intensity_repeat_bullish_vol':(False, False, 10, 90),
-    'absorption_intensity_repeat_bullish_count':(False, False, 10, 90),
-    'bullish_repeatAskBid_ratio':             (False, False, 10, 90),
-
+    'total_count_abv':                        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'absorption_intensity_repeat_bearish_vol':(False, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'absorption_intensity_repeat_bearish_count':(False, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bearish_repeatAskBid_ratio':             (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'total_count_blw':                        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'absorption_intensity_repeat_bullish_vol':(True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'absorption_intensity_repeat_bullish_count':(True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_repeatAskBid_ratio':             (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'ratio_Count_AbvBlw':                       (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),
     # 6 Ticks zone features
-    'bearish_volume_ratio_6Tick':             (False, False, 10, 90),
-    'bullish_volume_ratio_6Tick':             (False, False, 10, 90),
-    'bearish_relatif_ratio_6Tick':            (False, False, 10, 90),
-    'bullish_relatif_ratio_6Tick':            (False, False, 10, 90),
-    'bearish_relatifDelta_ratio_6Tick':       (False, False, 10, 90),
-    'bullish_relatifDelta_ratio_6Tick':       (False, False, 10, 90),
-    'bearish_buyer_pressure_6Tick':           (False, False, 10, 90),
-    'bullish_buyer_pressure_6Tick': (False, False, 10, 90),
-    'bearish_seller_pressure_6Tick': (False, False, 10, 90),
-    'bullish_seller_pressure_6Tick': (False, False, 10, 90),
-    'bearish_absorption_6Tick': (False, False, 10, 90),
-    'bullish_absorption_6Tick': (False, False, 10, 90),
-    'bearish_repeat_ticks_ratio_6Tick': (False, False, 10, 90),
-    'bullish_repeat_ticks_ratio_6Tick': (False, False, 10, 90),
-    'bearish_price_dynamics_comparison_6Tick': (False, False, 10, 90),
-    'bullish_price_dynamics_comparison_6Tick': (False, False, 10, 90),
-    'bearish_activity_bid_ask_ratio_6Tick': (False, False, 10, 90),
-    'bullish_activity_ask_bid_ratio_6Tick': (False, False, 10, 90),
-    'bearish_repeat_ticks_imbalance_6Tick': (False, False, 10, 90),
-    'bullish_repeat_ticks_imbalance_6Tick': (False, False, 10, 90),
-    'bearish_ticks_imbalance_6Tick': (False, False, 10, 90),
-    'bullish_ticks_imbalance_6Tick': (False, False, 10, 90),
+    'bearish_volume_ratio_6Tick':             (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bullish_volume_ratio_6Tick':             (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'bearish_relatif_ratio_6Tick':            (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_relatif_ratio_6Tick':            (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_relatifDelta_ratio_6Tick':       (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_relatifDelta_ratio_6Tick':       (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_buyer_pressure_6Tick':           (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_buyer_pressure_6Tick':            (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_seller_pressure_6Tick': (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_seller_pressure_6Tick': (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_absorption_6Tick': (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_absorption_6Tick': (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_repeat_ticks_ratio_6Tick': (True, True, 5, 99,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_repeat_ticks_ratio_6Tick': (True, True, 5, 99,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_price_dynamics_comparison_6Tick': (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_price_dynamics_comparison_6Tick': (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_activity_bid_ask_ratio_6Tick': (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_activity_ask_bid_ratio_6Tick': (False, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_repeat_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_repeat_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bearish_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok5
+    'bullish_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok5
 }
-columns_to_standardize = list(column_settings.keys())
+columns_to_process = list(column_settings.keys())
 
 # Vérification de l'existence des colonnes
-missing_columns = [column for column in columns_to_standardize if column not in features_df.columns]
+missing_columns = [column for column in columns_to_process if column not in features_df.columns]
 
 if missing_columns:
     print("Erreur : Les colonnes suivantes sont manquantes :")
@@ -1152,115 +1259,39 @@ if missing_columns:
 print("Toutes les features nécessaires sont présentes. Poursuite du traitement.")
 
 
-@jit(nopython=True)
-def calculate_percentiles(column_values, floorInf_percentage, cropSup_percentage):
-    sorted_values = np.sort(column_values[~np.isnan(column_values)])
-    floor_value = np.percentile(sorted_values, floorInf_percentage)
-    crop_value = np.percentile(sorted_values, cropSup_percentage)
+def calculate_percentiles(df_NANVAlue, columnName, settings, nan_replacement_values=None):
+    floor_enabled, crop_enabled, floorInf_percentage, cropSup_percentage, _ = settings[columnName]
+
+    if nan_replacement_values is not None and columnName in nan_replacement_values:
+        nan_value = nan_replacement_values[columnName]
+        mask = df_NANVAlue[columnName] != nan_value
+        nan_count = (~mask).sum()
+        print(f"   In calculate_percentiles:")
+        print(f"     - Filter out {nan_count} nan replacement value(s) {nan_value} for {columnName}")
+    else:
+        mask = df_NANVAlue[columnName].notna()
+        nan_count = df_NANVAlue[columnName].isna().sum()
+        print(f"   In calculate_percentiles:")
+        print(f"     - {nan_count} NaN value(s) found in {columnName}")
+
+    filtered_values = df_NANVAlue.loc[mask, columnName]
+
+    floor_value = np.percentile(filtered_values, floorInf_percentage) if floor_enabled else None
+    crop_value = np.percentile(filtered_values, cropSup_percentage) if crop_enabled else None
+
+    print(f"     - floor_value: {floor_value}   crop_value: {crop_value}")
+
     return floor_value, crop_value
 
+import numpy as np
+import pandas as pd
 
-def processFloorCrop(data, column_settings, column_settings_selected=None):
-    data_processed = data.copy()
-
-    if column_settings_selected is not None and len(column_settings_selected) > 0:
-        columns = list(column_settings_selected.keys())
-        settings = column_settings_selected
-    else:
-        columns = list(column_settings.keys())
-        settings = column_settings
-
-    for column in columns:
-        floorInf_values, cropSup_values, floorInf_percentage, cropSup_percentage = settings[column]
-        column_values = data[column].values
-        peux etre rajouter dans calculate_percentiles le fait qu'on ignore les NANrepolaceedVAL pour cette features ce qui fait calculer le percentil au bon endroit.
-        floorInf_value, cropSup_value = calculate_percentiles(column_values, floorInf_percentage, cropSup_percentage)
-        if floorInf_values:
-            print(f"...................................floorInf_value  {floorInf_value}")
-            data_processed.loc[data_processed[column] < floorInf_value, column] = floorInf_value
-        if cropSup_values:
-            print(f"...................................cropSup_value  {cropSup_value}")
-            data_processed.loc[data_processed[column] > cropSup_value, column] = cropSup_value
-
-    return data_processed
-
-
-def plot_histograms(data_before, data_after, column_settings, figsize=(32, 24), column_settings_selected=None, nan_replacement_values=None):
-    if column_settings_selected is not None and len(column_settings_selected) > 0:
-        columns = list(column_settings_selected.keys())
-        settings = column_settings_selected
-    else:
-        columns = list(column_settings.keys())
-        settings = column_settings
-
-    n_columns = len(columns)
-    ncols = 6
-    nrows = (n_columns + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
-    axes = axes.flatten()
-
-    for i, column in enumerate(columns):
-        floorInf_values, cropSup_values, floorInf_percent, cropSup_percent = settings[column]
-        floor_value, crop_value = calculate_percentiles(data_before[column].values, floorInf_percent, cropSup_percent)
-
-        ax = axes[i]
-
-        # Filtrer les données pour exclure la valeur de remplacement des NaN
-        if nan_replacement_values and column in nan_replacement_values:
-            nan_value = nan_replacement_values[column]
-            print(
-                f".............................................. Valeur de remplacement NaN pour {column}: {nan_value}")
-
-            data_before_filtered = data_before[data_before[column] != nan_value]
-            data_after_filtered = data_after[data_after[column] != nan_value]
-
-            print(f"Nombre de lignes avant filtrage dans data_after: {len(data_after)}")
-            print(f"Nombre de lignes après filtrage dans data_after_filtered: {len(data_after_filtered)}")
-            print(f"Nombre de valeurs NaN remplacées: {len(data_after) - len(data_after_filtered)}")
-        else:
-            print(f".............................................. Pas de valeur de remplacement NaN pour {column}")
-            data_before_filtered = data_before
-            data_after_filtered = data_after
-
-        # Histogramme avant modifications
-        sns.histplot(data=data_before_filtered, x=column, color="blue", kde=True, ax=ax, label="Avant", alpha=0.7)
-
-        # Histogramme après modifications
-        sns.histplot(data=data_after_filtered, x=column, color="red", kde=True, ax=ax, label="Après", alpha=0.7)
-
-        # Ajouter les lignes verticales pour floor et crop
-        if floorInf_values:
-            ax.axvline(floor_value, color='g', linestyle='--', label=f'Floor ({floorInf_percent}%)')
-        if cropSup_values:
-            ax.axvline(crop_value, color='r', linestyle='--', label=f'Crop ({cropSup_percent}%)')
-
-        ax.set_title(column, fontsize=10)
-        ax.legend(fontsize=8)
-        ax.tick_params(axis='both', which='major', labelsize=8)
-
-        # Ajouter une annotation pour indiquer la valeur de remplacement des NaN
-        if nan_replacement_values and column in nan_replacement_values:
-            ax.annotate(f"NaN replaced by: {nan_replacement_values[column]}",
-                        xy=(0.05, 0.95), xycoords='axes fraction',
-                        fontsize=8, ha='left', va='top')
-
-    # Supprimer les sous-graphiques vides
-    for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
-
-    plt.tight_layout()
-    plt.show()
-
-
-
-
-# Fonction pour remplacer les NaN et les valeurs infinies
-def replace_nan_and_inf(df, columns_to_standardize, start_value, increment):
+def replace_nan_and_inf(df, columns_to_process, start_value, increment, REPLACE_NAN=True):
     current_value = start_value
     nan_replacement_values = {}
     df_replaced = df.copy()
 
-    for column in columns_to_standardize:
+    for column in columns_to_process:
         is_nan = df[column].isna()
         is_inf = np.isinf(df[column])
         nan_count = is_nan.sum()
@@ -1271,76 +1302,283 @@ def replace_nan_and_inf(df, columns_to_standardize, start_value, increment):
             print(f"Nombre de valeurs NaN : {nan_count}")
             print(f"Nombre de valeurs infinies : {inf_count}")
 
-            if start_value != 0 and increment != 0:
-                df_replaced.loc[is_nan | is_inf, column] = current_value
-                nan_replacement_values[column] = current_value
-                print(f"Les valeurs NaN et infinies dans la colonne {column} ont été remplacées par {current_value}")
-                current_value += increment
+            if REPLACE_NAN:  # Effectuer le traitement pour NaN et infinies seulement si REPLACE_NAN est True
+                if start_value != 0:
+                    df_replaced.loc[is_nan | is_inf, column] = current_value
+                    nan_replacement_values[column] = current_value
+                    total_replacements = nan_count + inf_count
+                    print(f"L'option start_value != 0 est activée.")
+                    print(f"Les {total_replacements} valeurs NaN et infinies dans la colonne {column} ont été remplacées par {current_value}")
+                    print(f"Les valeurs NaN sont remplacées par la valeur choisie par l'utilisateur : {current_value}")
+                    if increment != 0:  # Incrémenter seulement si l'incrément est différent de zéro
+                        current_value += increment
+                else:
+                    print(f"Les valeurs NaN et infinies dans la colonne {column} ont été laissées inchangées car start_value est 0")
             else:
-                print(f"Les valeurs NaN et infinies dans la colonne {column} ont été laissées inchangées")
+                # Si REPLACE_NAN est False, remplacer uniquement les valeurs infinies par NaN
+                df_replaced.loc[is_inf, column] = np.nan
+                # Compter combien de valeurs infinies ont été remplacées par NaN
+                inf_replacements = inf_count
+                print(f"REPLACE_NAN est à False.")
+                print(f"Les {inf_replacements} valeurs infinies dans la colonne {column} ont été remplacées par NaN")
+                print(f"Les {nan_count} valeurs NaN dans la colonne {column} ont été laissées inchangées")
+                print(f"Les valeurs NaN ne sont pas remplacées par une valeur choisie par l'utilisateur.")
 
     return df_replaced, nan_replacement_values
 
-######### gestion des NAN et des outliers
+
+
+def winsorize(features_NANReplacedVal_df, column, floor_value, crop_value, floor_enabled, crop_enabled,
+              nan_replacement_values=None):
+    # Créer une copie des données de la colonne spécifiée
+    winsorized_data = features_NANReplacedVal_df[column].copy()
+
+    # Assurez-vous que le nom de la série est préservé
+    winsorized_data.name = column
+
+    # Créer un masque pour exclure la valeur nan_value si spécifiée
+    if nan_replacement_values is not None and column in nan_replacement_values:
+        nan_value = nan_replacement_values[column]
+        mask = features_NANReplacedVal_df[column] != nan_value
+    else:
+        # Si pas de valeur à exclure, on crée un masque qui sélectionne toutes les valeurs non-NaN
+        mask = features_NANReplacedVal_df[column].notna()
+
+    # Appliquer la winsorisation seulement sur les valeurs non masquées
+    if floor_enabled:
+        winsorized_data.loc[mask & (winsorized_data < floor_value)] = floor_value
+
+    if crop_enabled:
+        winsorized_data.loc[mask & (winsorized_data > crop_value)] = crop_value
+
+    # S'assurer qu'il n'y a pas de NaN dans les données winsorisées
+    #winsorized_data = winsorized_data.fillna(nan_replacement_values.get(column, winsorized_data.median()))
+
+    return winsorized_data
+
+
+def cropFloor_dataSource(features_NANReplacedVal_df, columnName, settings, nan_replacement_values=None):
+    floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, _ = settings[columnName]
+
+    floor_valueNANfiltered, crop_valueNANfiltered = calculate_percentiles(
+        features_NANReplacedVal_df, columnName, settings, nan_replacement_values)
+
+    return floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent
+
+
+def plot_single_histogram(values_before, winsorized_values_after, column, floor_value, crop_value,
+                          floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, ax,
+                          nan_replacement_values=None):
+    values_before_clean = values_before.dropna()
+
+
+    sns.histplot(data=pd.DataFrame({column: values_before_clean}), x=column, color="blue", kde=True, ax=ax,
+                 label="Initial", alpha=0.7)
+    sns.histplot(data=pd.DataFrame({column: winsorized_values_after}), x=column, color="red", kde=True, ax=ax,
+                 label="Winsorized", alpha=0.7)
+
+    if floorInf_values:
+        ax.axvline(floor_value, color='g', linestyle='--', label=f'Floor ({floorInf_percent}%)')
+    if cropSup_values:
+        ax.axvline(crop_value, color='r', linestyle='--', label=f'Crop ({cropSup_percent}%)')
+
+    ax.set_title(column, fontsize=8, pad=0)
+    ax.legend(fontsize=6)
+    ax.tick_params(axis='both', which='major', labelsize=6)
+    ax.set_xlabel('')
+    ax.xaxis.set_tick_params(labelsize=7)
+
+    if nan_replacement_values and column in nan_replacement_values:
+        ax.annotate(f"NaN replaced by: {nan_replacement_values[column]}",
+                    xy=(0.05, 0.95), xycoords='axes fraction',
+                    fontsize=8, ha='left', va='top')
+
+    # Fonction pour formater les valeurs
+    def format_value(value):
+        return f"{value:.2f}" if pd.notna(value) else "nan"
+
+    # Afficher les 2 premières et 2 dernières valeurs pour chaque ensemble de données
+    initial_values = values_before_clean.sort_values()
+    winsorized_values = winsorized_values_after.sort_values()
+
+    initial_text = f"[{format_value(initial_values.iloc[0])} {format_value(initial_values.iloc[1])}]\n[{format_value(initial_values.iloc[-2])} {format_value(initial_values.iloc[-1])}]"
+    winsorized_text = f"[{format_value(winsorized_values.iloc[0])} {format_value(winsorized_values.iloc[1])}]\n[{format_value(winsorized_values.iloc[-2])} {format_value(winsorized_values.iloc[-1])}]"
+
+    ax.annotate(initial_text, xy=(0.75, 0.75), xycoords='axes fraction', fontsize=6, ha='left', va='top', color='blue')
+    ax.annotate(winsorized_text, xy=(0.75, 0.65), xycoords='axes fraction', fontsize=6, ha='left', va='top', color='red')
+def plot_histograms(columns, figsize=(32, 24)):
+
+    n_columns = len(columns)
+    ncols = 8
+    nrows = (n_columns + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes = axes.flatten()
+
+    return fig, axes
+
+
+# Utilisation
+
 # Paramètres
-start_value = 90000.54789  # Mettez à 0 pour laisser les NaN inchangés
-increment = 1  # et ou Mettez à 0 pour laisser les NaN inchangés
+start_value = REPLACED_NANVALUE_BY
+increment = REPLACED_NANVALUE_BY_INDEX
 
 # Appliquer la fonction à features_df
-features_NANReplacedVal_df, nan_replacement_values = replace_nan_and_inf(features_df.copy(), columns_to_standardize, start_value, increment)
-# Compter le nombre d'éléments dans column_settings
+features_NANReplacedVal_df, nan_replacement_values = replace_nan_and_inf(features_df.copy(), columns_to_process,
+                                                                         start_value, increment,REPLACE_NAN)
 number_of_elementsnan_replacement_values = len(nan_replacement_values)
-print(f"Le dictionnaire nan_replacement_values contient {number_of_elementsnan_replacement_values } éléments.")
+print(f"Le dictionnaire nan_replacement_values contient {number_of_elementsnan_replacement_values} éléments.")
 
 print(features_NANReplacedVal_df['bearish_bid_score'].describe())
 print("Traitement des valeurs NaN et infinies terminé.")
 
-
 print("Suppression des valeurs NAN ajoutées terminée.")
 
-# Définition de column_settings_selected (exemple)
+print("\n")
 
-column_settings_selected = {
-    'bearish_bid_score': (True, True, 2, 98),
-   # 'deltaTimestampOpeningSection5min': (False, False, 10, 90),
-   # 'deltaTimestampOpeningSection5index': (False, False, 10, 90),
-   # 'deltaTimestampOpeningSection30min': (False, False, 10, 90)
-}
+#recupere la liste du nom des features pour paramettrage
+columns = [col for col, settings in column_settings.items() if
+               settings[4] or all(not s[4] for s in column_settings.values())]
+
+# Initialisation des variables pour l'affichage si nécessaire
+if user_choice.lower() == 'd' or user_choice.lower() == 's':
+    fig, axes = plot_histograms(columns, figsize=(32, 24))
+
+# Créez un DataFrame vide avant la boucle
+winsorized_df = pd.DataFrame()
+winsorized_scaledWithNanValue_df = pd.DataFrame()
+# Initialisation des listes temporaires pour stocker les colonnes
+winsorized_columns = []
+scaled_columns = []
+
+# Parcours la liste des features
+for i, columnName in enumerate(columns):
+    print(f"\n")
+    print(f"Debut de traitement de {columnName}:")
+    floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent = (
+        cropFloor_dataSource( features_NANReplacedVal_df, columnName, column_settings, nan_replacement_values))
+
+    # Winsorisation avec les valeurs NAN
+    winsorized_valuesWithNanValue = winsorize(features_NANReplacedVal_df, columnName, floor_valueNANfiltered, crop_valueNANfiltered,
+                                        floorInf_values, cropSup_values, nan_replacement_values)
+
+    # Stocker la série winsorisée dans la liste
+    winsorized_columns.append(pd.DataFrame({columnName: winsorized_valuesWithNanValue}))
+
+    # Initialiser la colonne dans winsorized_scaledWithNanValue_df
+    scaled_column = winsorized_valuesWithNanValue.copy()
+
+    if nan_replacement_values is not None and columnName in nan_replacement_values:
+        nan_value = nan_replacement_values[columnName]
+        mask = scaled_column != nan_value
+        # Sauvegardons les positions des nan_value
+        nan_positions = ~mask
+    else:
+        mask = slice(None)  # Sélectionne toutes les lignes si pas de nan_value
+        nan_positions = pd.Series(False, index=winsorized_df.index)  # Série de False
+
+    # Normalisation des valeurs
+    scaler = MinMaxScaler()
+    normalized_values = scaler.fit_transform(scaled_column.loc[mask].values.reshape(-1, 1)).flatten()
+
+    # Convertir la colonne en float64 si elle ne l'est pas déjà
+    scaled_column = scaled_column.astype('float64')
+
+    scaled_column.loc[mask] = normalized_values
+
+    # Remettre les nan_value à leur place seulement s'il y en avait
+    if nan_replacement_values is not None and columnName in nan_replacement_values:
+        scaled_column.loc[nan_positions] = nan_value
+
+    # Stocker la série normalisée dans la liste
+    scaled_columns.append(pd.DataFrame({columnName: scaled_column}))
+
+    # Affichage des graphiques si demandé
+    if user_choice.lower() == 'd' or user_choice.lower() == 's':
+        winsorized_values_4Plotting = winsorized_valuesWithNanValue[
+            winsorized_valuesWithNanValue != nan_replacement_values.get(columnName, np.nan)]
+        print(f"   Graphiques de {columnName} avant et après les modifications (colonnes sélectionnées) :")
+        print(f"   Taille de winsorized_values_after (sans NaN) pour plotting: {len(winsorized_values_4Plotting)}")
+        value_before_df = features_df.copy()
+        plot_single_histogram(value_before_df[columnName], winsorized_values_4Plotting, columnName,
+                              floor_valueNANfiltered, crop_valueNANfiltered,
+                              floorInf_values, cropSup_values, floorInf_percent, cropSup_percent,
+                              axes[i], nan_replacement_values)
+
+# Concaténer toutes les colonnes en une seule étape pour chaque DataFrame
+winsorized_df = pd.concat(winsorized_columns, axis=1)
+winsorized_scaledWithNanValue_df = pd.concat(scaled_columns, axis=1)
+
+print(f"\n")
+print("Vérification finale :")
+print(f"   - Nombre de colonnes dans winsorized_df : {len(winsorized_df.columns)}")
+print(f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
+assert len(winsorized_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 
-processedFloorCrop_features_df = processFloorCrop(features_df, column_settings, column_settings_selected)
-print("Application de processFloorCrop pour features_df terminée.")
-## df cible qui servira à la normalisation. on veut faire le floor crop en ignorant les
-processedFloorCrop_NANReplacedVal_features_df = processFloorCrop(features_NANReplacedVal_df, column_settings_selected)
-print("Application de processFloorCrop pour  processedEraseNan_df terminée.")
+print_notification("Ajout de  'class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
+# Colonnes à ajouter
+columns_to_add = ['class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd']
 
-# Utilisation des fonctions
-dataLabel0_1 = None
-# Compter le nombre d'éléments dans column_settings
-number_of_elements = len(column_settings)
+# Vérifiez que toutes les colonnes existent dans df
+missing_columns = [col for col in columns_to_add if col not in df.columns]
+if missing_columns:
+    error_message = f"Erreur: Les colonnes suivantes n'existent pas dans le DataFrame d'entrée: {', '.join(missing_columns)}"
+    print(error_message)
+    raise ValueError(error_message)
 
-# Afficher le résultat
-print(f"Le dictionnaire column_settings contient {number_of_elements} éléments.")
+# Si nous arrivons ici, toutes les colonnes existent
+
+# Créez un DataFrame avec les colonnes à ajouter
+
+columns_df = df[columns_to_add]
+# Ajoutez ces colonnes à features_df, winsorized_df, et winsorized_scaledWithNanValue_df en une seule opération
+features_df = pd.concat([features_df, columns_df], axis=1)
+winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
+winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
+
+print_notification("Colonnes 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' ajoutées")
 
 
 
-# Affichage des histogrammes avec column_settings_selected
-print("Graphiques avant et après les modifications (colonnes sélectionnées) :")
-plot_histograms(features_df, processedFloorCrop_features_df, column_settings, figsize=(32, 24),
-          column_settings_selected=column_settings_selected, nan_replacement_values=nan_replacement_values)
-'''''
-# Affichage des histogrammes avec toutes les colonnes
-print("Graphiques avant et après les modifications (toutes les colonnes) :")
-plot_histograms(features_df, data_processed, column_settings, figsize=(32, 24))
+# Créer le nouveau nom de fichier pour les features originales
+new_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat.csv'
 
-# Vérification si dataLabel0_1 n'est pas nulle avant de la traiter
-if dataLabel0_1 is not None:
-    data_processedLabel0_1 = processFloorCrop(dataLabel0_1, column_settings)
-    print("Graphiques avant et après les modifications pour dataLabel0_1 (colonnes sélectionnées) :")
-    plot_histograms(dataLabel0_1, data_processedLabel0_1, column_settings, figsize=(32, 24),
-                    column_settings_selected=column_settings_selected)
-    print("Graphiques avant et après les modifications pour dataLabel0_1 (toutes les colonnes) :")
-    plot_histograms(dataLabel0_1, data_processedLabel0_1, column_settings, figsize=(32, 24))
+# Construire le chemin complet du nouveau fichier
+feat_file = os.path.join(file_dir, new_file_name)
+
+# Sauvegarder le fichier des features originales
+print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
+features_df.to_csv(feat_file, sep=';', index=False, encoding='iso-8859-1')
+
+
+# Créer le nouveau nom de fichier pour winsorized_df
+winsorized_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat_winsorized.csv'
+
+# Construire le chemin complet du nouveau fichier winsorized
+winsorized_file = os.path.join(file_dir, winsorized_file_name)
+
+# Sauvegarder le fichier winsorized
+print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")
+winsorized_df.to_csv(winsorized_file, sep=';', index=False, encoding='iso-8859-1')
+
+# Créer le nouveau nom de fichier pour winsorized_scaledWithNanValue_df
+scaled_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat_winsorizedScaledWithNanVal.csv'
+
+# Construire le chemin complet du nouveau fichier scaled
+scaled_file = os.path.join(file_dir, scaled_file_name)
+
+# Sauvegarder le fichier scaled
+winsorized_scaledWithNanValue_df.to_csv(scaled_file, sep=';', index=False, encoding='iso-8859-1')
+print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
+
+# Affichage final des graphiques si demandé
+if user_choice.lower() == 'd' or user_choice.lower() == 's':
+    # Supprimer les sous-graphiques vides
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.tight_layout()
+    plt.show()
 else:
-    print("dataLabel0_1 est nulle, aucun traitement supplémentaire n'est effectué.")
-'''''
+    print_notification("Calcul des features terminé. Graphiques non affichés.")

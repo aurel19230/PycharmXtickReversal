@@ -5,20 +5,23 @@ import csv
 from datetime import datetime
 import numpy as np
 from numba import njit, prange
+from standardFunc import print_notification
 
 # Demander à l'utilisateur s'il souhaite ajouter la colonne "date"
 add_date_column = input("Voulez-vous ajouter une colonne 'date' ? (Appuyez sur Entrée pour non, ou tapez 'd' pour oui) : ")
 
 # Répertoire contenant les fichiers d'entrée et de sortie
 directory = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL/"
-directoryMerge = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL/merge"
+directoryMerge = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL/merge13092024"
 
-suffixe="_0"
+# #on suppose les fichiers d'entrée on une base de nom fixe
+#le suffixe permet de les distinguer entre eux.
+#le nom du fichier de sortie est choisi également
+suffixe="_191120_061222"
 if add_date_column.lower() == 'd':
     withDate="_withDate"
 else:
     withDate=""
-# Noms des fichiers d'entrée
 candles_file = "of_raw_candles_dataNew"+suffixe+".csv"
 trades_file = "of_trade_result_dataNew"+suffixe+".csv"
 output_file_name = "4TicksRev"+suffixe+withDate+".csv"
@@ -26,6 +29,7 @@ output_file_name = "4TicksRev"+suffixe+withDate+".csv"
 delimiter = ";"
 
 # Lire les données de of_raw_candles_data
+print_notification("Lecture des données de 'of_raw_candles_data'")
 with open(os.path.join(directory, candles_file), 'r') as file:
     reader = csv.reader(file, delimiter=delimiter)
     headers = next(reader)  # Lire les en-têtes
@@ -36,6 +40,7 @@ with open(os.path.join(directory, candles_file), 'r') as file:
     candles_data = np.array(candles_data, dtype=np.float64)
 
 # Lire les données de trade_result_data
+print_notification("Lecture des données de 'of_trade_result_data'")
 with open(os.path.join(directory, trades_file), 'r') as file:
     reader = csv.reader(file, delimiter=delimiter)
     headers_trade = next(reader)  # Lire les en-têtes
@@ -130,11 +135,14 @@ def process_data_with_date(candles_data, trades_data):
 
 # Traiter les données en fonction de l'option add_date_column
 if add_date_column.lower() == 'd':
+    print_notification("Traitement des données avec ajout de la colonne 'date'")
     merged_data = process_data_with_date(candles_data, trades_data)
 else:
+    print_notification("Traitement des données sans ajout de la colonne 'date'")
     merged_data = process_data_numba(candles_data, trades_data)
 
 # Écrire les données fusionnées dans le fichier de sortie
+print_notification(f"Écriture des données fusionnées dans le fichier : {output_file}")
 with open(os.path.join(directoryMerge, output_file), 'w', newline='') as file:
     writer = csv.writer(file, delimiter=delimiter)
 
@@ -152,4 +160,4 @@ with open(os.path.join(directoryMerge, output_file), 'w', newline='') as file:
         for row in merged_data:
             writer.writerow(row.tolist())
 
-print(f"Fusion des fichiers terminée. Le fichier de sortie '{output_file}' a été créé.")
+print_notification(f"Fusion des fichiers terminée. Le fichier de sortie '{output_file}' a été créé.")

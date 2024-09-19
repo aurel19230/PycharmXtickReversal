@@ -2,6 +2,11 @@ import os
 import pandas as pd
 import re
 
+
+# Chemin spécifique pour les fichiers CSV
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge13092024"
+#merge les fichier terminant par _x dans l'ordre. Pour éviter les erreurs les _x sont à rajouter suite au merge du step 1
+
 def generate_output_filename(files):
     if not files:
         raise ValueError("La liste des fichiers est vide.")
@@ -106,8 +111,6 @@ def merge_files(directory):
     return merged_df
 
 
-# Chemin spécifique pour les fichiers CSV
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge"
 
 # Utilisation de la fonction
 try:

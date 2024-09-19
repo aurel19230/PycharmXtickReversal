@@ -3,25 +3,43 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from standardFunc import timestamp_to_date_utc
-from standardFunc import print_notification
+from standardFunc import print_notification, load_data
 import os
 
 # Charger les données
-file_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge\\Step3_Step2_MergedAllFile_Step1_0_merged_extractOnlyFullSession.csv"
+# Nom du fichier
+file_name = "Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession.csv"
 
-df = pd.read_csv(file_path, delimiter=';')
+# Chemin du répertoire
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge13092024"
+
+# Combiner le chemin du répertoire avec le nom du fichier
+file_path = os.path.join(directory_path, file_name)
+
+# Demander à l'utilisateur de choisir l'option
+user_choice = input("Entrez 'Entrée' pour prendre en compte les shorts et longs, 's' pour les shorts uniquement ou 'l' pour les longs uniquement : ")
+
+# Charger les données
+df = load_data(file_path)
 df['timeStampOpening'] = pd.to_numeric(df['timeStampOpening'], errors='coerce')
 
 # Convertir la colonne timeStamp en datetime
 df['formatted_date'] = timestamp_to_date_utc(df['timeStampOpening'])
 df['date'] = pd.to_datetime(df['formatted_date'])
 
-# Demander à l'utilisateur de choisir l'option
-user_choice = input("Entrez 'Entrée' pour prendre en compte les shorts et longs, 's' pour les shorts uniquement ou 'l' pour les longs uniquement : ")
-
-# Créer la colonne 'class' en fonction du choix de l'utilisateur
+# Créer les colonnes 'class_binaire' et 'class_multi' en fonction du choix de l'utilisateur
 if user_choice.lower() == 's':
-    df['class'] = np.select(
+    # Classification binaire pour les trades "short"
+    df['class_binaire'] = np.select(
+        [
+            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
+        ],
+        [1, 0],
+        default=99
+    )
+    # Classification multi-classe pour les trades "short"
+    df['class_multi'] = np.select(
         [
             (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
             (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
@@ -30,8 +48,19 @@ if user_choice.lower() == 's':
         default=99
     )
     output_file_suffix = "_OnlyShort"
+
 elif user_choice.lower() == 'l':
-    df['class'] = np.select(
+    # Classification binaire pour les trades "long"
+    df['class_binaire'] = np.select(
+        [
+            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == 1) & (df['tradeResult'] == -1)
+        ],
+        [1, 0],
+        default=99
+    )
+    # Classification multi-classe pour les trades "long"
+    df['class_multi'] = np.select(
         [
             (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
             (df['tradeDir'] == 1) & (df['tradeResult'] == -1)
@@ -40,8 +69,10 @@ elif user_choice.lower() == 'l':
         default=99
     )
     output_file_suffix = "_OnlyLong"
+
 else:
-    df['class'] = np.select(
+    # Classification binaire pour tous les trades
+    df['class_binaire'] = np.select(
         [
             (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
             (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
@@ -51,10 +82,22 @@ else:
         [1, 1, 0, 0],
         default=99
     )
+    # Classification multi-classe pour tous les trades
+    df['class_multi'] = np.select(
+        [
+            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
+            (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
+            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
+        ],
+        [0, 1, 2, 3],
+        default=99
+    )
     output_file_suffix = ""
 
+
 # Filtrer les données pour exclure les valeurs 99 dans la colonne 'class'
-filtered_class_counts = df[df['class'] != 99]['class'].value_counts()
+filtered_class_counts = df[df['class_binaire'] != 99]['class_binaire'].value_counts()
 filtered_class_percentages = filtered_class_counts / filtered_class_counts.sum() * 100
 
 # Préparation des données pour le graphique de distribution mensuelle détaillée
@@ -64,7 +107,7 @@ df['month'] = df['date'].dt.strftime('%Y-%m')
 df['trade_category'] = 'Pas de trade'
 
 # Create mask for rows where class is not 99
-mask = df['class'] != 99
+mask = df['class_binaire'] != 99
 
 # Assign trade categories only to rows where class is not 99
 df.loc[mask, 'trade_category'] = np.select(
@@ -122,10 +165,12 @@ for category in all_categories:
 # Obtenir le nom du fichier d'entrée
 nom_fichier_entree = os.path.basename(file_path)
 
-# Créer le nom du fichier de sortie
-nom_fichier_sortie = f"Step4_{nom_fichier_entree}{output_file_suffix}"
 
 # Obtenir le chemin complet du fichier de sortie
+# Enlever l'extension .csv si elle existe
+nom_fichier_entree_sans_extension = os.path.splitext(nom_fichier_entree)[0]
+# Rajouter le suffixe et ajouter .csv à la fin
+nom_fichier_sortie = f"Step4_{nom_fichier_entree_sans_extension}{output_file_suffix}.csv"
 chemin_sortie = os.path.join(os.path.dirname(file_path), nom_fichier_sortie)
 
 # Sauvegarder le DataFrame
