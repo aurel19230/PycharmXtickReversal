@@ -14,8 +14,19 @@ from PyQt5.QtCore import Qt
 import pandas as pd
 from standardFunc import load_data, split_sessions, print_notification
 import os
+import sys
+import os
+import importlib.util
+# Chemin absolu vers le fichier
+module_name = "a6_evalution_InitialModel_bayNewTimeCrossed"
+module_file = os.path.join("..\\data_preprocessing", f"{module_name}.py")  # Ajustez le chemin si nécessaire
 
+spec = importlib.util.spec_from_file_location(module_name, module_file)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
 
+# Maintenant, vous pouvez accéder à la fonction
+train_and_evaluate_XGBOOST_model = module.train_and_evaluate_XGBOOST_model
 class FeatureSelector(QWidget):
     def __init__(self, df, columnToolsVariables_excluded, columnFeatures_excluded, process_function=None):
         super().__init__()
@@ -248,8 +259,31 @@ def process_selected_features(feature_data):
     print("\nAperçu des données de selectedFeatures_df:")
     print(selectedFeatures_df.head())
 
-    # Ici, vous pouvez ajouter votre logique de traitement spécifique
-    # Par exemple, calculer des statistiques, effectuer une analyse, etc.
+
+    # 2. Définition des constantes et paramètres globaux
+    DEVICE_ = 'cuda'  # Utiliser 'cuda' pour GPU, 'cpu' sinon
+    USE_OPTIMIZED_THRESHOLD_ = False  # True pour optimiser le seuil, False pour utiliser un seuil fixe
+    FIXED_THRESHOLD_ = 0.54  # Seuil fixe à utiliser si USE_OPTIMIZED_THRESHOLD est False
+    NUM_BOOST_MIN_ = 400  # Nombre minimum de boosting rounds
+    NUM_BOOST_MAX_ = 1000  # Nombre maximum de boosting rounds
+    N_TRIALS_OPTIMIZATION_ = 7  # Nombre d'essais pour l'optimisation avec Optuna
+    NB_SPLIT_TSCV_ = 8  # Nombre de splits pour la validation croisée temporelle
+    NANVALUE_TO_NEWVAL_ = 0  # Valeur de remplacement pour les NaN si les NAN oont été remplacés par une valeur dans l'étude de procession des featurs
+
+    # 3. Exécution de la fonction principale pour entraîner et évaluer le modèle
+    results = train_and_evaluate_XGBOOST_model(initial_df=initial_df, n_trials_optimization=N_TRIALS_OPTIMIZATION_,
+                                               device=DEVICE_, use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,
+                                               fixed_threshold=FIXED_THRESHOLD_,
+                                               num_boost_min=NUM_BOOST_MIN_, num_boost_max=NUM_BOOST_MAX_,
+                                               nb_split_tscv=NB_SPLIT_TSCV_, nanvalue_to_newval=NANVALUE_TO_NEWVAL_)
+
+    # 4. Utilisation des résultats de l'optimisation
+    if results is not None:
+        print("Meilleurs hyperparamètres trouvés:", results['study'].best_params)
+        print("Meilleur score:", results['study'].best_value)
+        print("Seuil optimal:", results['optimal_threshold'])
+    else:
+        print("L'entraînement n'a pas produit de résultats.")
 
     results = {
         "nombre_features": len(features_list)
@@ -261,9 +295,9 @@ def process_selected_features(feature_data):
 
 # Ajoutez ici votre logiq
 if __name__ == '__main__':
-    user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
-                        "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
-                        "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
+    #user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
+     #                   "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
+      #                  "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
 
     # Nom du fichier
     file_name = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"

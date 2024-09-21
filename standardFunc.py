@@ -1,4 +1,3 @@
-import time
 import calendar
 from datetime import datetime
 import seaborn as sns
@@ -8,7 +7,8 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 import time
-
+from colorama import Fore, Style, init
+import time
 def timestamp_to_date_utc(timestamp):
     date_format = "%Y-%m-%d %H:%M:%S"
     if isinstance(timestamp, pd.Series):
@@ -198,8 +198,31 @@ X_test = test_df.drop(columns=['target'])
 y_test = test_df['target']
 """
 
-def print_notification(message):
-    print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+
+def print_notification(message, color=None):
+    """
+    Affiche un message avec un horodatage. Optionnellement, le message peut être affiché en couleur.
+
+    Args:
+    - message (str): Le message à afficher.
+    - color (str, optionnel): La couleur du texte ('red', 'green', 'yellow', 'blue', etc.).
+    """
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+
+    # Définir les couleurs selon le choix de l'utilisateur pour le message uniquement
+    if color == 'red':
+        color_code = Fore.RED
+    elif color == 'green':
+        color_code = Fore.GREEN
+    elif color == 'yellow':
+        color_code = Fore.YELLOW
+    elif color == 'blue':
+        color_code = Fore.BLUE
+    else:
+        color_code = ''  # Pas de couleur
+
+    # Afficher le message avec le timestamp non coloré et le message coloré si nécessaire
+    print(f"\n[{timestamp}] {color_code}{message}{Style.RESET_ALL}")
 
 def load_data(file_path: str) -> pd.DataFrame:
     print_notification("Début du chargement des données")
