@@ -1,35 +1,7 @@
-"""""
-Les hyperparamètres, y compris num_boost_round, ne sont pas appelés num_boost_round fois dans la fonction objective. Voici une explication plus précise :
-
-Sélection des hyperparamètres :
-
-Au début de chaque appel à objective, Optuna sélectionne un ensemble unique d'hyperparamètres, incluant num_boost_round.
-Ces hyperparamètres sont choisis une seule fois par essai (trial).
-
-
-Utilisation de num_boost_round :
-
-num_boost_round détermine le nombre maximal d'itérations (arbres) pour l'entraînement du modèle XGBoost.
-Il n'est pas "appelé" mais utilisé comme paramètre pour configurer l'entraînement.
-
-
-Processus dans la fonction objective :
-
-Les hyperparamètres sont utilisés pour configurer le modèle XGBoost.
-Le modèle est ensuite entraîné et évalué NB_SPLIT_TSCV fois (validation croisée temporelle).
-Chaque entraînement utilise le même ensemble d'hyperparamètres, y compris num_boost_round.
-
-
-Correction de la note précédente :
-
-Le nombre total d'entraînements est effectivement nTrials_4optimization * NB_SPLIT_TSCV.
-Chaque entraînement implique num_boost_round itérations, mais ce n'est pas un facteur multiplicatif du nombre d'entraînements.
-"""
 import pandas as pd
 import xgboost as xgb
 import shap
-from sklearn.model_selection import TimeSeriesSplit,learning_curve
-
+from sklearn.model_selection import TimeSeriesSplit
 from standardFunc import load_data, split_sessions, print_notification
 
 import optuna
@@ -38,7 +10,7 @@ from sklearn.utils.class_weight import compute_class_weight
 import os
 from numba import njit
 from xgboost.callback import TrainingCallback
-from sklearn.metrics import precision_recall_curve,log_loss
+from sklearn.metrics import precision_recall_curve, log_loss
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import classification_report
 import seaborn as sns
@@ -47,87 +19,12 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-
-
-
+import matplotlib.ticker as ticker
 
 ########################################
 #########    FUNCTION DEF      #########
 ########################################
-def combined_metric(y_true, y_pred_proba, threshold=0.5, profit_ratio=1.1, tp_weight=0.4, fp_penalty=0.2):
-    # Convertir les probabilités en prédictions binaires avec le seuil donné
-    y_pred = (y_pred_proba > threshold).astype(int)
 
-    # Calculer l'AUC directement avec les probabilités
-    auc = roc_auc_score(y_true, y_pred_proba)
-
-    # Calculer les autres métriques avec les prédictions binaires
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    # Calculer la matrice de confusion
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-
-    # Calculer le taux de faux positifs et le taux de vrais positifs
-    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
-    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
-
-    # Calculer le profit potentiel (hypothétique)
-    potential_profit = (tp * profit_ratio - fp) / (tp + fp) if (tp + fp) > 0 else 0
-
-    # Calculer un score pour les vrais positifs et faux positifs
-    tp_score = tpr * tp_weight
-    fp_score = (1 - fpr) * fp_penalty
-
-    # Définir les poids utilisés
-    auc_weight = 0.1
-    precision_weight = 0.1
-    recall_weight = 0.2
-    f1_weight = 0.1
-    potential_profit_weight = 0.2
-    tp_score_weight = tp_weight  # 0.4 par défaut
-    fp_score_weight = fp_penalty  # 0.2 par défaut
-
-    # Calculer la somme de tous les poids
-    sum_of_weights = (auc_weight + precision_weight + recall_weight + f1_weight +
-                      potential_profit_weight + tp_score_weight + fp_score_weight)
-
-    # Calculer le score combiné
-    combined_score = (
-        (auc * auc_weight) +
-        (precision * precision_weight) +
-        (recall * recall_weight) +
-        (f1 * f1_weight) +
-        (potential_profit * potential_profit_weight) +
-        tp_score +
-        fp_score
-    )
-
-    # Normaliser le score
-    normalized_score = combined_score / sum_of_weights
-
-    return normalized_score
-""""
-def combined_metric(y_true, y_pred_proba):
-    from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
-
-    # Convertir les probabilités en prédictions binaires pour precision, recall et f1
-    y_pred = (y_pred_proba > 0.6).astype(int)
-
-    # Calculer l'AUC directement avec les probabilités
-    auc = roc_auc_score(y_true, y_pred_proba)
-
-    # Calculer les autres métriques avec les prédictions binaires
-    precision = precision_score(y_true, y_pred)
-    recall = recall_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred)
-
-    # Combiner les métriques (vous pouvez ajuster les poids selon vos besoins)
-    combined_score = (auc * 0.4) + (precision * 0.3) + (recall * 0.2) + (f1 * 0.1)
-
-    return combined_score
-"""
 def verify_session_integrity(df, context=""):
     starts = df[df['SessionStartEnd'] == 10].index
     ends = df[df['SessionStartEnd'] == 20].index
@@ -168,15 +65,6 @@ def process_values(data, new_val):
                     count_replacements += 1
     return data, count_replacements
 
-class CustomCallback(TrainingCallback):
-    def after_iteration(self, model, epoch, evals_log):
-        train_score = evals_log['train']['aucpr'][-1]
-        valid_score = evals_log['eval']['aucpr'][-1]
-        if epoch % 10 == 0 and train_score - valid_score > 1: # on le met à 1 pour annuler ce test. On se base sur l'early stopping desormais
-            print(f"Arrêt de l'entraînement à l'itération {epoch}. Écart trop important.")
-            return True
-        return False
-
 
 def optimize_threshold(y_true, y_pred_proba):
     # Calcul des courbes de précision et de rappel en fonction du seuil
@@ -194,11 +82,82 @@ def optimize_threshold(y_true, y_pred_proba):
 
     return optimal_threshold
 
-import matplotlib.pyplot as plt
-import numpy as np
 
-import numpy as np
-import matplotlib.pyplot as plt
+def combined_metric(y_true, y_pred_proba, metric_dict):
+    # Extraire les paramètres depuis le dictionnaire
+    threshold = metric_dict.get('threshold', 0.5)
+    profit_ratio = metric_dict.get('profit_ratio', 1.1)
+    tp_weight = metric_dict.get('tp_weight', 0.4)
+    fp_penalty = metric_dict.get('fp_penalty', 0.2)
+
+    # Imprimer les valeurs
+    #print(f"Threshold: {threshold}")
+    #print(f"Profit Ratio: {profit_ratio}")
+    #print(f"TP Weight: {tp_weight}")
+    #print(f"FP Penalty: {fp_penalty}")
+
+    # Convertir les probabilités en prédictions binaires avec le seuil donné
+    y_pred = (y_pred_proba > threshold).astype(int)
+
+    # Calculer l'AUC directement avec les probabilités
+    auc = roc_auc_score(y_true, y_pred_proba)
+
+    # Calculer les autres métriques avec les prédictions binaires
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+
+    # Calculer la matrice de confusion
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+
+    # Calculer le taux de faux positifs et le taux de vrais positifs
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+
+    # Calculer le profit potentiel (hypothétique)
+    potential_profit = (tp * profit_ratio - fp) / (tp + fp) if (tp + fp) > 0 else 0
+
+    # Calculer un score pour les vrais positifs et faux positifs
+    tp_score = tpr * tp_weight
+    fp_score = (1 - fpr) * fp_penalty
+
+    # Définir les poids utilisés
+    auc_weight = 0.05  # Réduit pour laisser plus de place aux métriques financières
+    precision_weight = 0.15
+    recall_weight = 0.25 #accorde une importance significative à la capacité du modèle à capturer des opportunités de trading réussies.
+    f1_weight = 0.05
+    potential_profit_weight = 0.3
+    tp_score_weight = tp_weight
+    fp_score_weight = fp_penalty
+    # Calculer la somme de tous les poids
+    sum_of_weights = (auc_weight + precision_weight + recall_weight + f1_weight +
+                      potential_profit_weight + tp_score_weight + fp_score_weight)
+
+    # Calculer le score combiné
+    combined_score = (
+        (auc * auc_weight) +
+        (precision * precision_weight) +
+        (recall * recall_weight) +
+        (f1 * f1_weight) +
+        (potential_profit * potential_profit_weight) +
+        tp_score +
+        fp_score
+    )
+
+    # Normaliser le score
+    normalized_score = combined_score / sum_of_weights
+
+    return normalized_score
+
+
+class CustomCallback(TrainingCallback):
+    def after_iteration(self, model, epoch, evals_log):
+        train_score = evals_log['train']['aucpr'][-1]
+        valid_score = evals_log['eval']['aucpr'][-1]
+        if epoch % 10 == 0 and train_score - valid_score > 1:  # on le met à 1 pour annuler ce test. On se base sur l'early stopping désormais
+            print(f"Arrêt de l'entraînement à l'itération {epoch}. Écart trop important.")
+            return True
+        return False
 
 
 def plot_learning_curve(learning_curve_data, title='Courbe d\'apprentissage', filename='learning_curve.png'):
@@ -215,86 +174,79 @@ def plot_learning_curve(learning_curve_data, title='Courbe d\'apprentissage', fi
     # Conversion des listes en arrays NumPy pour effectuer des opérations mathématiques
     train_sizes = np.array(learning_curve_data['train_sizes'])
     train_scores_mean = np.array(learning_curve_data['train_scores_mean'])
-    train_scores_std = np.array(learning_curve_data['train_scores_std'])
-    test_scores_mean = np.array(learning_curve_data['test_scores_mean'])
-    test_scores_std = np.array(learning_curve_data['test_scores_std'])
+    val_scores_mean = np.array(learning_curve_data['val_scores_mean'])
 
-    # --- Ajout des prints pour vérifier les écarts types ---
-    print(f"train_scores_std: {train_scores_std}")
-    print(f"test_scores_std: {test_scores_std}")
-
-    # Tracé des courbes et des bandes représentant l'écart-type avec transparence
-    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
-                     train_scores_mean + train_scores_std, alpha=0.1, color="r")  # Bande pour entraînement
-    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
-                     test_scores_mean + test_scores_std, alpha=0.1, color="g")  # Bande pour validation
-
+    # Tracé des courbes sans les bandes représentant l'écart-type
     plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label="Score d'entraînement")
-    plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Score de validation")
+    plt.plot(train_sizes, val_scores_mean, 'o-', color="g", label="Score de validation")
 
     plt.legend(loc="best")
     plt.savefig(filename)
     plt.close()
 
 
-
-
-def calculate_learning_curve_no_cv(model, X_train, y_train, X_val, y_val, weight_dict, combined_metric, threshold):
-    # Création des DMatrix pour l'entraînement et la validation
-    dtrain = xgb.DMatrix(X_train, label=y_train, weight=[weight_dict[label] for label in y_train])
-    dval = xgb.DMatrix(X_val, label=y_val)
-
-    # Prédictions sur l'ensemble d'entraînement et de validation
-    train_pred = model.predict(dtrain)
-    val_pred = model.predict(dval)
-
-    # Calcul des scores pour l'ensemble d'entraînement et l'ensemble de validation
-    train_score = combined_metric(y_train, train_pred, threshold=threshold)
-    val_score = combined_metric(y_val, val_pred, threshold=threshold)
-
-    return {
-        'train_size': len(X_train),
-        'train_score': train_score,
-        'val_score': val_score
-    }
-
 def average_learning_curves(learning_curve_data_list):
     if not learning_curve_data_list:
         return None
 
-    # Regrouper les tailles d'entraînement uniques
-    train_sizes = sorted(list(set(data['train_size'] for data in learning_curve_data_list)))
+    # Extraire toutes les tailles d'entraînement uniques
+    all_train_sizes = sorted(set(size for data in learning_curve_data_list for size in data['train_sizes']))
 
-    # Créer des listes pour stocker les scores
-    train_scores_per_size = {size: [] for size in train_sizes}
-    val_scores_per_size = {size: [] for size in train_sizes}
-
-    # Parcourir les données et stocker les scores pour chaque taille d'entraînement
-    for data in learning_curve_data_list:
-        size = data['train_size']
-        train_scores_per_size[size].append(data['train_score'])
-        val_scores_per_size[size].append(data['val_score'])
-
-    # Calculer les moyennes et les écarts types des scores pour chaque taille d'entraînement
+    # Initialiser les listes pour stocker les scores moyens
     avg_train_scores = []
     avg_val_scores = []
-    std_train_scores = []
-    std_val_scores = []
 
-    for size in train_sizes:
-        avg_train_scores.append(np.mean(train_scores_per_size[size]))
-        avg_val_scores.append(np.mean(val_scores_per_size[size]))
-        std_train_scores.append(np.std(train_scores_per_size[size]))
-        std_val_scores.append(np.std(val_scores_per_size[size]))
+    for size in all_train_sizes:
+        train_scores = []
+        val_scores = []
+        for data in learning_curve_data_list:
+            if size in data['train_sizes']:
+                index = data['train_sizes'].index(size)
+                train_scores.append(data['train_scores_mean'][index])
+                val_scores.append(data['val_scores_mean'][index])
+
+        if train_scores and val_scores:
+            avg_train_scores.append(np.mean(train_scores))
+            avg_val_scores.append(np.mean(val_scores))
 
     return {
-        'train_sizes': train_sizes,
+        'train_sizes': all_train_sizes,
         'train_scores_mean': avg_train_scores,
-        'test_scores_mean': avg_val_scores,
-        'train_scores_std': std_train_scores,
-        'test_scores_std': std_val_scores
+        'val_scores_mean': avg_val_scores
     }
-def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_boost_min, num_boost_max, nb_split_tscv, use_optimized_threshold, fixed_threshold, learning_curve_enabled=False):
+
+def calculate_scores_for_cv_split(params, num_boost_round, X_train, y_train, X_val, y_val, weight_dict, combined_metric,metric_dict):
+    """
+    Calcule les scores d'entraînement et de validation pour un split de validation croisée.
+    """
+    # Créer des DMatrix pour l'entraînement et la validation
+    sample_weights = np.array([weight_dict[label] for label in y_train])
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weights)
+    dval = xgb.DMatrix(X_val, label=y_val)
+
+    # Entraîner le modèle
+    booster = xgb.train(params, dtrain, num_boost_round=num_boost_round)
+
+    # Prédire sur les ensembles d'entraînement et de validation
+    train_pred = booster.predict(dtrain)
+    val_pred = booster.predict(dval)
+
+    # Calculer les scores
+    #train_score = combined_metric(y_train, train_pred, threshold=threshold)
+    #val_score = combined_metric(y_val, val_pred, threshold=threshold)
+
+
+    train_score = combined_metric(y_train, train_pred, metric_dict=metric_dict)
+
+    val_score = combined_metric(y_val, val_pred, metric_dict=metric_dict)
+
+    return {
+        'train_sizes': [len(X_train)],  # Ajout de cette ligne
+        'train_scores_mean': [train_score],  # Modification ici
+        'val_scores_mean': [val_score]  # Modification ici
+    }
+
+def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_boost_min, num_boost_max, nb_split_tscv, use_optimized_threshold, learning_curve_enabled=False, metric_dict=None):
     params = {
         'max_depth': trial.suggest_int('max_depth', 5, 15),
         'learning_rate': trial.suggest_float('learning_rate', 1e-5, 0.001, log=True),
@@ -314,12 +266,24 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_b
         'random_state': 42,
         'scale_pos_weight': class_weights[1] / class_weights[0],
         'tree_method': 'hist',
-        'device': device
+        'device': device,
     }
+
+
+    fixed_threshold = metric_dict.get('threshold', 0.5)
+    # Paramètres supplémentaires optimisables
+
+
+
+    # Vous pouvez choisir de laisser profit_ratio, tp_weight, et fp_penalty fixes ou les inclure dans l'optimisation
+    # Ici, nous les laissons fixes via metric_dict
+
+
     num_boost_round = trial.suggest_int('num_boost_round', num_boost_min, num_boost_max)
 
     tscv = TimeSeriesSplit(n_splits=nb_split_tscv)
-    cv_scores = []
+    scores = []
+    last_score = None
     optimal_thresholds = []
     learning_curve_data_list = []
 
@@ -359,35 +323,53 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_b
             if use_optimized_threshold:
                 optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
                 optimal_thresholds.append(optimal_threshold)
-            else:
-                optimal_threshold = fixed_threshold
 
-            val_score = combined_metric(y_val_cv, y_val_pred_proba, threshold=optimal_threshold, profit_ratio=2,
-                                        tp_weight=0.5, fp_penalty=0.3)
-            cv_scores.append(val_score)
+            # Calcul du score combiné avec les paramètres optimisés
+            val_score = combined_metric(
+                y_val_cv,
+                y_val_pred_proba,
+                metric_dict=metric_dict
+            )
+            scores.append(val_score)
+            last_score = val_score
 
             if learning_curve_enabled:
-                # Calculer la courbe d'apprentissage pour ce split CV
-                learning_curve_data = calculate_learning_curve_no_cv(
-                    model,
-                    X_train_cv, y_train_cv, X_val_cv, y_val_cv,
-                    weight_dict, combined_metric, optimal_threshold
+                # Calculer les scores pour ce split CV
+                split_scores = calculate_scores_for_cv_split(
+                    params,
+                    num_boost_round,
+                    X_train_cv, y_train_cv,
+                    X_val_cv, y_val_cv,
+                    weight_dict, combined_metric,metric_dict
                 )
 
-                # Ajouter les données de la courbe d'apprentissage pour ce split
-                learning_curve_data_list.append(learning_curve_data)
-
-            # Enregistrement du modèle dans les attributs utilisateur pour print_callback
-            trial.set_user_attr('model', model)
+                # Ajouter les données pour ce split
+                learning_curve_data_list.append(split_scores)
 
         except Exception as e:
             print(f"Error during training or evaluation: {e}")
             continue
 
-    if not cv_scores:
+    if not scores:
         return float('-inf')  # Return worst possible score if all folds failed
 
-    mean_cv_score = np.mean(cv_scores)
+    mean_cv_score = np.mean(scores)
+    score_variance = np.var(scores)
+    score_std = np.std(scores)  # Calcul de l'écart-type
+
+    print("Scores:", scores)
+    print(f"Score mean: {mean_cv_score:.6f}")
+    print(f"Score variance: {score_variance:.6f}")
+    print(f"Score standard deviation: {score_std:.6f}")
+
+    trial.set_user_attr('last_score', scores[-1])
+    trial.set_user_attr('score_variance', score_variance)
+    trial.set_user_attr('score_std', score_std)  # Enregistrement de l'écart-type")
+
+
+    trial.set_user_attr('last_score', last_score)
+    mean_cv_score = np.mean(scores)
+
 
     if use_optimized_threshold:
         average_optimal_threshold = np.mean(optimal_thresholds)
@@ -396,14 +378,9 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_b
         trial.set_user_attr('average_optimal_threshold', fixed_threshold)
 
     if learning_curve_enabled and learning_curve_data_list:
-        # Calculer la courbe d'apprentissage moyenne à partir des splits CV
         avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
-
         if avg_learning_curve_data is not None:
-            # Stocker les données de la courbe d'apprentissage dans le trial pour utilisation ultérieure
             trial.set_user_attr('learning_curve_data', avg_learning_curve_data)
-
-            # Optionnel : tracer la courbe si cet essai est le meilleur ou si c'est le premier essai
             if trial.number == 0 or mean_cv_score > trial.study.best_value:
                 plot_learning_curve(
                     avg_learning_curve_data,
@@ -413,99 +390,63 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_b
 
     return mean_cv_score
 
-
-# Définir un callback pour afficher les progrès
 def print_callback(study, trial, X_train, y_train):
-    # Extraction des informations supplémentaires depuis les attributs du trial
+    total_train_size = len(X_train)
     learning_curve_data = trial.user_attrs.get('learning_curve_data')
-    best_train_score = None
     best_val_score = trial.value
-    best_train_size = None
-    total_train_size = len(X_train)  # Taille totale de l'ensemble d'entraînement
-    # Extraire le modèle entraîné depuis trial
-    model = trial.user_attrs.get("model")
+    score_std = trial.user_attrs['score_std']
+    total_train_size = len(X_train)
 
-    if model is None:
-        print("Erreur : Aucun modèle n'a été trouvé pour ce trial.")
-        return
-    # Si les données de la courbe d'apprentissage sont disponibles
+    print(f"\nEssai terminé : {trial.number}")
+    print(f"Score de validation moyen : {best_val_score:.4f}")
+    print(f"Écart-type des scores : {score_std:.4f}")
+    print(
+        f"Intervalle de confiance (±1 écart-type) : [{best_val_score - score_std:.4f}, {best_val_score + score_std:.4f}]")
+    print(f"Score du dernier pli : {trial.user_attrs['last_score']:.4f}")
+    print(f"Variance des scores : {trial.user_attrs['score_variance']:.4f}")
+
+
     if learning_curve_data:
-        train_scores_mean = learning_curve_data['train_scores_mean']
+        train_scores = learning_curve_data['train_scores_mean']
+        val_scores = learning_curve_data['val_scores_mean']
         train_sizes = learning_curve_data['train_sizes']
 
-        # Trouver la dernière taille d'entraînement et le dernier score d'entraînement
-        best_train_size = train_sizes[-1]
-        best_train_score = train_scores_mean[-1]
+        print("\nCourbe d'apprentissage :")
+        for size, train_score, val_score in zip(train_sizes, train_scores, val_scores):
+            print(f"Taille d'entraînement: {size} ({size/total_train_size*100:.2f}%)")
+            print(f"  Score d'entraînement : {train_score:.4f}")
+            print(f"  Score de validation  : {val_score:.4f}")
+            if val_score != 0:
+                diff_percentage = ((train_score - val_score) / val_score) * 100
+                print(f"  Différence en % : {diff_percentage:.2f}%")
+            print()
 
-        # Calculer la différence en pourcentage entre l'entraînement et la validation
-        diff_percentage = ((best_train_score - best_val_score) / best_val_score) * 100
+        max_train_size_index = np.argmax(train_sizes)
+        best_train_size = train_sizes[max_train_size_index]
+        best_train_score = train_scores[max_train_size_index]
+        corresponding_val_score = val_scores[max_train_size_index]
 
-        # Calculer le pourcentage de l'ensemble d'entraînement utilisé
-        train_size_percentage = (best_train_size / total_train_size) * 100
-
-    # --- Calcul des scores sur l'ensemble d'entraînement complet ---
-
-    # Créer un DMatrix pour l'ensemble complet
-    dtrain_full = xgb.DMatrix(X_train, label=y_train)
-
-    # Prédire sur l'ensemble d'entraînement complet
-    train_predictions_full = model.predict(dtrain_full)
-
-    # Calculer le score d'entraînement sur l'ensemble complet
-    full_train_score = combined_metric(y_train, train_predictions_full)
-
-    # --- Analyse du surapprentissage ---
-    if full_train_score > best_val_score:
-        overfitting_warning = "Attention : Possible surapprentissage"
+        print(f"Meilleur score d'entraînement : {best_train_score:.4f}")
+        print(f"Score de validation correspondant : {corresponding_val_score:.4f}")
+        if corresponding_val_score != 0:
+            diff_percentage = ((best_train_score - corresponding_val_score) / corresponding_val_score) * 100
+            print(f"Différence en % entre entraînement et validation : {diff_percentage:.2f}%")
+        print(f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size/total_train_size*100:.2f}% du total)")
     else:
-        overfitting_warning = "Pas de surapprentissage détecté"
+        print("Option Courbe d'Apprentissage non activé")
 
-    # --- Affichage des informations ---
-    print(f"Essai terminé : {trial.number}")
-    print(f"Valeur actuelle (score de validation) : {best_val_score:.4f}")
-    if best_train_score is not None:
-        print(f"Score sur l'ensemble d'entraînement (cross-validation) : {best_train_score:.4f}")
-        print(f"Différence en % entre entraînement (cross-validation) et validation : {diff_percentage:.2f}%")
-        print(
-            f"Nombre d'échantillons utilisés pour obtenir ces scores : {best_train_size} ({train_size_percentage:.2f}% du total)")
-
-    # Afficher le score sur l'ensemble complet
     print(
-        f"Score sur l'ensemble d'entraînement complet : {full_train_score:.4f} (peut être plus élevé si le modèle surapprend)")
-    print(f"Analyse du surapprentissage : {overfitting_warning}")
-
-    print(f"Meilleure valeur jusqu'à présent : {study.best_value:.4f}")
+        f"\nMeilleure valeur jusqu'à présent : {study.best_value:.4f} (obtenue lors de l'essai numéro : {study.best_trial.number})")
     print(f"Meilleurs paramètres jusqu'à présent : {study.best_params}")
     print("------")
 
-
-# 3. Fonction pour analyser les erreurs confiantes
-def analyze_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, important_features, n=10):
-    explainer = shap.TreeExplainer(xgb_classifier)
-    for idx in confident_errors.index[:n]:
-        print(f"-----------------> Analyse de l'erreur à l'index {idx}:")
-        print(f"Vrai label: {confident_errors.loc[idx, 'true_label']}")
-        print(f"Label prédit: {confident_errors.loc[idx, 'predicted_label']}")
-        print(f"Probabilité de prédiction: {confident_errors.loc[idx, 'prediction_probability']:.4f}")
-
-        print("\nValeurs des features importantes:")
-        for feature in important_features:
-            value = X_test.loc[idx, feature]
-            print(f"{feature}: {value:.4f}")
-
-        shap_values = explainer.shap_values(X_test.loc[idx:idx])
-
-        print("\nTop 5 features influentes (SHAP) pour ce cas:")
-        case_feature_importance = pd.DataFrame({
-            'feature': feature_names,
-            'importance': np.abs(shap_values[0])
-        }).sort_values('importance', ascending=False)
-
-        print(case_feature_importance.head())
-        print(f"<----------------- Fin Analyse de l'erreur à l'index {idx}:")
+# Définir un callback pour afficher les progrès
 
 
-# Analyse des erreurs
+
+# Fonctions supplémentaires pour l'analyse des erreurs et SHAP
+
+# 1. Fonction pour analyser les erreurs
 def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
     # Créer un dictionnaire pour stocker toutes les données
     data = {
@@ -539,37 +480,75 @@ def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
     with pd.option_context('display.max_columns', None, 'display.width', None):
         print(feature_means)
 
-    plt.close('all')
-    plt.figure('error_distribution')
-
     # Visualiser la distribution des probabilités de prédiction pour les erreurs
-    plt.close('all')
-    plt.figure('error_distribution', figsize=(10, 6))
+    plt.figure(figsize=(10, 6))
     sns.histplot(data=error_df, x='prediction_probability', hue='true_label', bins=20)
     plt.title('Distribution des probabilités de prédiction pour les erreurs')
     plt.savefig('error_probability_distribution.png')
-    plt.close('error_distribution')
-
-    # Si vous voulez afficher le graphique immédiatement :
-    img = plt.imread('error_probability_distribution.png')
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
+    plt.close()
 
     # Identifier les cas les plus confiants mais erronés
     most_confident_errors = error_df.sort_values('prediction_probability', ascending=False).head(5)
-    print("\nLes 30 erreurs les plus confiantes:")
+    print("\nLes 5 erreurs les plus confiantes:")
     print(most_confident_errors[['true_label', 'predicted_label', 'prediction_probability']])
 
     return results_df, error_df
 
-# 4. Fonction pour visualiser les erreurs confiantes
-def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, n=5):
-    explainer = shap.TreeExplainer(xgb_classifier)
-    fig, axes = plt.subplots(n, 1, figsize=(12, 4 * n))
-    for i, idx in enumerate(confident_errors.index[:n]):
-        plt.figure(figsize=(10, 6))  # Create a new figure for each plot
+# 2. Fonction pour analyser les erreurs confiantes
+def analyze_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, important_features, n=5,explainer=None):
+    if explainer is None:
+        explainer = shap.TreeExplainer(xgb_classifier)
+    for idx in confident_errors.index[:n]:
+        print(f"-----------------> Analyse de l'erreur à l'index {idx}:")
+        print(f"Vrai label: {confident_errors.loc[idx, 'true_label']}")
+        print(f"Label prédit: {confident_errors.loc[idx, 'predicted_label']}")
+        print(f"Probabilité de prédiction: {confident_errors.loc[idx, 'prediction_probability']:.4f}")
+
+        print("\nValeurs des features importantes:")
+        for feature in important_features:
+            value = X_test.loc[idx, feature]
+            print(f"{feature}: {value:.4f}")
+
         shap_values = explainer.shap_values(X_test.loc[idx:idx])
+
+        print("\nTop 5 features influentes (SHAP) pour ce cas:")
+        case_feature_importance = pd.DataFrame({
+            'feature': feature_names,
+            'importance': np.abs(shap_values[0])
+        }).sort_values('importance', ascending=False)
+
+        print(case_feature_importance.head())
+        print(f"<----------------- Fin Analyse de l'erreur à l'index {idx}:")
+
+# 3. Fonction pour visualiser les erreurs confiantes
+import matplotlib.pyplot as plt
+import shap
+from PIL import Image
+import os
+import numpy as np
+
+
+def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, n=5, explainer=None):
+    if explainer is None:
+        explainer = shap.TreeExplainer(xgb_classifier)
+
+    # Vérifier le nombre d'erreurs confiantes disponibles
+    num_errors = len(confident_errors)
+    if num_errors == 0:
+        print("Aucune erreur confiante trouvée.")
+        return
+
+    # Ajuster n si nécessaire
+    n = min(n, num_errors)
+
+    for i, idx in enumerate(confident_errors.index[:n]):
+        plt.figure(figsize=(10, 6))
+        shap_values = explainer.shap_values(X_test.loc[idx:idx])
+
+        # Vérifier si shap_values est une liste (pour les modèles à plusieurs classes)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1]  # Prendre les valeurs SHAP pour la classe positive
+
         shap.summary_plot(shap_values, X_test.loc[idx:idx], plot_type="bar", feature_names=feature_names, show=False)
         plt.title(f"Erreur {i + 1}: Vrai {confident_errors.loc[idx, 'true_label']}, "
                   f"Prédit {confident_errors.loc[idx, 'predicted_label']} "
@@ -578,34 +557,32 @@ def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_name
         plt.savefig(f'confident_error_shap_{i + 1}.png')
         plt.close()
 
-    # Create a summary image combining all individual plots
-    from PIL import Image
-    import os
+    if n > 0:
+        # Create a summary image combining all individual plots
+        images = [Image.open(f'confident_error_shap_{i + 1}.png') for i in range(n)]
+        widths, heights = zip(*(i.size for i in images))
 
-    images = [Image.open(f'confident_error_shap_{i + 1}.png') for i in range(n)]
-    widths, heights = zip(*(i.size for i in images))
+        max_width = max(widths)
+        total_height = sum(heights)
 
-    max_width = max(widths)
-    total_height = sum(heights)
+        new_im = Image.new('RGB', (max_width, total_height))
 
-    new_im = Image.new('RGB', (max_width, total_height))
+        y_offset = 0
+        for im in images:
+            new_im.paste(im, (0, y_offset))
+            y_offset += im.size[1]
 
-    y_offset = 0
-    for im in images:
-        new_im.paste(im, (0, y_offset))
-        y_offset += im.size[1]
+        new_im.save('confident_errors_shap_combined.png')
 
-    new_im.save('confident_errors_shap_combined.png')
+        # Clean up individual images
+        for i in range(n):
+            os.remove(f'confident_error_shap_{i + 1}.png')
 
-    # Clean up individual images
-    for i in range(n):
-        os.remove(f'confident_error_shap_{i + 1}.png')
+        print(f"Image combinée des {n} erreurs confiantes sauvegardée sous 'confident_errors_shap_combined.png'")
+    else:
+        print("Pas assez d'erreurs confiantes pour créer une image combinée.")
 
-
-
-
-
-# 5. Fonction pour comparer les erreurs vs les prédictions correctes
+# 4. Fonction pour comparer les erreurs vs les prédictions correctes
 def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, important_features):
     error_data = X_test.loc[confident_errors.index]
     correct_data = X_test.loc[correct_predictions.index]
@@ -647,113 +624,377 @@ def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, imp
     plt.close()
 
 
+def analyze_xgboost_trees(model, feature_names, nan_value, max_trees=None):
+    """
+    Analyse les arbres XGBoost pour identifier tous les splits et ceux impliquant des NaN.
+
+    :param model: Modèle XGBoost entraîné (Booster ou XGBClassifier/XGBRegressor)
+    :param feature_names: Liste des noms des features
+    :param nan_value: Valeur utilisée pour remplacer les NaN (peut être np.nan)
+    :param max_trees: Nombre maximum d'arbres à analyser (None pour tous les arbres)
+    :return: Tuple (DataFrame de tous les splits, DataFrame des splits NaN)
+    """
+    # Si le modèle est un Booster, l'utiliser directement ; sinon, obtenir le Booster depuis le modèle
+    if isinstance(model, xgb.Booster):
+        booster = model
+    else:
+        booster = model.get_booster()
+
+    # Obtenir les arbres sous forme de DataFrame
+    trees_df = booster.trees_to_dataframe()
+
+    if max_trees is not None:
+        trees_df = trees_df[trees_df['Tree'] < max_trees].copy()
+
+    # Filtrer pour ne garder que les splits (nœuds non-feuilles)
+    all_splits = trees_df[trees_df['Feature'] != 'Leaf'].copy()
+
+    # Check if 'Depth' is already present; if not, calculate it
+    if pd.isna(nan_value):
+        # Lorsque nan_value est np.nan, identifier les splits impliquant des valeurs manquantes
+        nan_splits = all_splits[all_splits['Missing'] != all_splits['Yes']].copy()
+        print(f"Utilisation de la condition pour np.nan. Nombre de splits NaN trouvés : {len(nan_splits)}")
+    else:
+        # Lorsque nan_value est une valeur spécifique, identifier les splits sur cette valeur
+        all_splits.loc[:, 'Split'] = all_splits['Split'].astype(float)
+        nan_splits = all_splits[np.isclose(all_splits['Split'], nan_value, atol=1e-8)].copy()
+        print(
+            f"Utilisation de la condition pour nan_value={nan_value}. Nombre de splits NaN trouvés : {len(nan_splits)}")
+        if len(nan_splits) > 0:
+            print("Exemples de valeurs de split considérées comme NaN:")
+            print(nan_splits['Split'].head())
+
+    return all_splits, nan_splits
+
+
+def extract_decision_rules(model, nan_value, importance_threshold=0.01):
+    """
+    Extrait les règles de décision importantes impliquant la valeur de remplacement des NaN ou les valeurs NaN.
+    :param model: Modèle XGBoost entraîné (Booster ou XGBClassifier/XGBRegressor)
+    :param nan_value: Valeur utilisée pour remplacer les NaN (peut être np.nan)
+    :param importance_threshold: Seuil de gain pour inclure une règle
+    :return: Liste des règles de décision importantes
+    """
+    if isinstance(model, xgb.Booster):
+        booster = model
+    else:
+        booster = model.get_booster()
+
+    trees_df = booster.trees_to_dataframe()
+
+    # Ajouter la colonne Depth en comptant le nombre de tirets dans 'ID'
+    if 'Depth' not in trees_df.columns:
+        trees_df['Depth'] = trees_df['ID'].apply(lambda x: x.count('-'))
+
+    # Vérifiez que les colonnes attendues sont présentes dans chaque ligne avant de traiter
+    expected_columns = ['Tree', 'Depth', 'Feature', 'Gain', 'Split', 'Missing', 'Yes']
+
+    # Filtrer les lignes avec des NaN si c'est nécessaire
+    trees_df = trees_df.dropna(subset=expected_columns, how='any')
+
+    if pd.isna(nan_value):
+        important_rules = trees_df[
+            (trees_df['Missing'] != trees_df['Yes']) & (trees_df['Gain'] > importance_threshold)
+        ]
+    else:
+        important_rules = trees_df[
+            (trees_df['Split'] == nan_value) & (trees_df['Gain'] > importance_threshold)
+        ]
+
+    rules = []
+    for _, row in important_rules.iterrows():
+        try:
+            # Check if necessary columns exist in the row before constructing the rule
+            if all(col in row for col in expected_columns):
+                rule = f"Arbre {row['Tree']}, Profondeur {row['Depth']}"
+                feature = row['Feature']
+                gain = row['Gain']
+
+                if pd.isna(nan_value):
+                    missing_direction = row['Missing']
+                    rule += f": SI {feature} < {row['Split']} OU {feature} est NaN (valeurs manquantes vont vers le nœud {missing_direction}) ALORS ... (gain: {gain:.4f})"
+                else:
+                    rule += f": SI {feature} == {nan_value} ALORS ... (gain: {gain:.4f})"
+
+                rules.append(rule)
+            else:
+                print(f"Colonnes manquantes dans cette ligne : {row.to_dict()}")
+                continue
+
+        except IndexError as e:
+            # Gérer l'erreur d'index hors limites
+            #print(f"Erreur lors de l'extraction des informations de la règle: {e}")
+            continue
+        except Exception as e:
+            # Gérer toute autre erreur inattendue
+            print(f"Erreur inattendue: {e}")
+            continue
+
+    return rules
+
+
+
+
+def analyze_nan_impact(model, X, feature_names, nan_value, shap_values=None):
+    """
+    Analyse l'impact des valeurs NaN ou des valeurs de remplacement des NaN sur le modèle XGBoost en utilisant les valeurs SHAP.
+
+    :param model: Modèle XGBoost entraîné (Booster ou XGBClassifier/XGBRegressor)
+    :param X: Données d'entrée (DataFrame)
+    :param feature_names: Liste des noms des features
+    :param nan_value: Valeur utilisée pour remplacer les NaN (peut être np.nan)
+    :param shap_values: Valeurs SHAP pré-calculées (optionnel)
+    """
+    # 1. Analyser les splits impliquant les valeurs NaN ou la valeur de remplacement
+    all_splits,nan_splits = analyze_xgboost_trees(model, feature_names, nan_value)
+    print(f"Nombre total de splits : {len(all_splits)}")
+    print(f"Nombre de splits impliquant des NaN : {len(nan_splits)}")
+    print(f"Pourcentage de splits impliquant des NaN : {(len(nan_splits) / len(all_splits)) * 100:.2f}%")
+
+    print("\nAperçu de tous les splits :")
+    print(all_splits.head())
+
+    print("\nAperçu des splits impliquant des NaN :")
+    print(nan_splits.head())
+
+    # Analyses supplémentaires possibles
+    print("\nDistribution des features pour tous les splits :")
+    print(all_splits['Feature'].value_counts())
+
+    print("\nDistribution des features pour les splits NaN :")
+    print(nan_splits['Feature'].value_counts())
+
+    # 2. Visualiser la distribution des splits NaN
+    plt.figure(figsize=(12, 6))
+    sns.countplot(x='Feature', data=nan_splits, order=nan_splits['Feature'].value_counts().index)
+    plt.title("Distribution des splits impliquant des valeurs NaN par feature")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig('nan_splits_distribution.png')
+    plt.close()
+
+    # 3. Analyze the depth of NaN splits
+    if 'Depth' not in nan_splits.columns:
+        if 'ID' in nan_splits.columns:
+            # Calculate depth from ID column
+            nan_splits['Depth'] = nan_splits['ID'].apply(lambda x: x.count('-'))
+            print("'Depth' column added based on 'ID' column.")
+        else:
+            print("Warning: 'Depth' column is missing and cannot be calculated. Skipping depth analysis.")
+
+    if 'Depth' in nan_splits.columns:
+        plt.figure(figsize=(12, 6))
+        sns.boxplot(x='Feature', y='Depth', data=nan_splits)
+        plt.title("Depth of splits involving NaN values by feature")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig('nan_splits_depth.png')
+        plt.close()
+    else:
+        print("Skipping creation of 'nan_splits_depth.png' due to missing 'Depth' column.")
+
+    # 4. Extraire les règles de décision importantes
+    all_splits, nan_splits = analyze_xgboost_trees(model, feature_names, nan_value)
+    total_trees = len(set(all_splits['Tree']))
+    trees_with_nan = len(set(nan_splits['Tree']))
+
+    important_rules = extract_decision_rules(model, nan_value)
+    print("\nRègles de décision importantes impliquant des valeurs NaN :")
+    verbose_nan_rule = True
+    if verbose_nan_rule:
+        print("\nRègles de décision importantes impliquant des valeurs NaN :")
+        for rule in important_rules:
+            # Safely split and parse depth
+            parts = rule.split(', ')
+
+            try:
+                # Check if parts[1] has a valid depth value (should be an integer)
+                depth_str = parts[1].split()[1].replace(':', '')  # Remove any colon or special characters
+                if depth_str.isdigit():
+                    depth = int(depth_str)
+                   #XXX print(f"Parsed depth: {depth}")
+                else:
+                    # If the depth contains invalid characters, raise an error
+                    raise ValueError(f"Invalid depth value encountered: {parts[1]}")
+            except (IndexError, ValueError) as e:
+                print(f"Erreur lors du parsing de la règle: {e}")
+                continue
+
+        print("\nAnalyse des règles de décision importantes:")
+        feature_counts = {}
+        depth_counts = {}
+        gain_sum = 0
+        print('ERROR SUR LES RULES 0 CORRGIGER XXX')
+        for rule in important_rules:
+            # Extraction des informations de la règle
+            parts = rule.split(', ')
+
+            try:
+                tree = int(parts[0].split()[1])
+
+                # Same parsing for depth with error handling
+                depth_str = parts[1].split()[1].replace(':', '')
+                if depth_str.isdigit():
+                    depth = int(depth_str)
+                else:
+                    raise ValueError(f"Invalid depth value encountered in rule: {rule}")
+
+                feature = parts[2].split()[1]
+                gain = float(parts[-1].split()[-1].strip(')'))
+
+                # Comptage des features
+                feature_counts[feature] = feature_counts.get(feature, 0) + 1
+
+                # Comptage des profondeurs
+                depth_counts[depth] = depth_counts.get(depth, 0) + 1
+
+                # Somme des gains
+                gain_sum += gain
+
+            except (IndexError, ValueError) as e:
+                #print(f"Erreur lors de l'extraction des informations de la règle: {e}")
+                continue
+    print(f"\nStatistiques sur les règles de décision impliquant des NaN :")
+    print(f"Nombre total d'arbres : {total_trees}")
+    print(f"Nombre d'arbres impliquant des NaN : {trees_with_nan}")
+    print(f"Pourcentage d'arbres impliquant des NaN : {(trees_with_nan / total_trees) * 100:.2f}%")
+    print(f"Nombre de règles de décision importantes impliquant des NaN : {len(important_rules)}")
+    print(f"Nombre moyen de règles importantes par arbre impliqué : {len(important_rules) / trees_with_nan:.2f}")
+
+    # 5. Analyser l'importance des features avec des valeurs NaN en utilisant les valeurs SHAP
+    # Calcul des valeurs SHAP si elles ne sont pas fournies
+    if shap_values is None:
+        print("Calcul des valeurs SHAP...")
+        # Si le modèle est un Booster, convertir en XGBClassifier pour utiliser SHAP
+        if isinstance(model, xgb.Booster):
+            # Créer un XGBClassifier et charger le Booster
+            xgb_classifier = xgb.XGBClassifier()
+            xgb_classifier._Booster = model
+        else:
+            xgb_classifier = model
+        explainer = shap.TreeExplainer(xgb_classifier)
+        shap_values = explainer.shap_values(X)
+    else:
+        print("Utilisation des valeurs SHAP fournies.")
+
+    # Calcul de l'importance moyenne absolue des valeurs SHAP pour chaque feature
+    shap_mean = np.abs(shap_values).mean(axis=0)
+    shap_importance_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': shap_mean
+    })
+
+    # Identifier les features avec des valeurs NaN ou la valeur de remplacement
+    if pd.isna(nan_value):
+        nan_features = X.columns[X.isna().any()].tolist()
+    else:
+        nan_features = X.columns[(X == nan_value).any()].tolist()
+
+    # Calculer le nombre total de valeurs par feature
+    total_counts = X.shape[0]
+
+    # Calculer le nombre de NaN par feature
+    if pd.isna(nan_value):
+        nan_counts = X.isna().sum()
+    else:
+        nan_counts = (X == nan_value).sum()
+
+    # Calculer le pourcentage de NaN par feature
+    nan_percentages = (nan_counts / total_counts) * 100
+
+    # Créer un DataFrame avec ces informations
+    nan_info_df = pd.DataFrame({
+        'Feature': X.columns,
+        'Total_NaN': nan_counts,
+        'Percentage_NaN': nan_percentages
+    })
+
+    # Filtrer les features avec au moins une valeur NaN
+    nan_info_df = nan_info_df[nan_info_df['Total_NaN'] > 0]
+
+    # Joindre les importances SHAP avec les informations sur les NaN
+    nan_fi_df = pd.merge(nan_info_df, shap_importance_df, on='Feature', how='left')
+    nan_fi_df['Importance'] = nan_fi_df['Importance'].fillna(0)
+
+    # Trier par ordre décroissant d'importance
+    nan_fi_df = nan_fi_df.sort_values('Importance', ascending=False)
+
+    # Paramètres pour la division des features
+    num_features = len(nan_fi_df)
+    features_per_plot = 35
+    num_plots = (num_features + features_per_plot - 1) // features_per_plot  # Calcul du nombre de graphiques
+
+    # Générer les graphiques par lots
+    for i in range(num_plots):
+        start_idx = i * features_per_plot
+        end_idx = start_idx + features_per_plot
+        subset_df = nan_fi_df.iloc[start_idx:end_idx]
+
+        fig, ax1 = plt.subplots(figsize=(14, 8))
+        sns.barplot(x='Feature', y='Importance', data=subset_df, ax=ax1, color='skyblue')
+        ax1.set_xlabel('Feature', fontsize=12)
+        ax1.set_ylabel('Importance (SHAP)', color='blue', fontsize=12)
+        ax1.tick_params(axis='y', labelcolor='blue')
+
+        ax1.set_xticks(range(len(subset_df)))
+        ax1.set_xticklabels(subset_df['Feature'], rotation=45, ha='right')
+
+        ax2 = ax1.twinx()
+        sns.lineplot(x='Feature', y='Percentage_NaN', data=subset_df, ax=ax2, color='red', marker='o')
+        ax2.set_ylabel('Pourcentage de NaN (%)', color='red', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='red')
+        ax2.yaxis.set_major_formatter(ticker.PercentFormatter())
+
+        plt.title(
+            f"Importance des features (SHAP) et pourcentage de NaN (Features {start_idx + 1} à {min(end_idx, num_features)} \n (ensemble d'entrainement avec model final))",
+            fontsize=14)
+        plt.tight_layout()
+        plt.savefig(f'nan_features_shap_importance_percentage_{i + 1}.png')
+        plt.close()
+
+    # Calcul de la corrélation entre l'importance (SHAP) et le pourcentage de NaN
+    correlation = nan_fi_df['Importance'].corr(nan_fi_df['Percentage_NaN'])
+    print(f"\nCorrélation entre l'importance des features (SHAP) et le pourcentage de NaN : {correlation:.4f}")
+
+    # Visualisation de la relation entre l'importance (SHAP) et le pourcentage de NaN
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(x='Percentage_NaN', y='Importance', data=nan_fi_df)
+    plt.title('Relation entre le pourcentage de NaN et l\'importance des features (SHAP)')
+    plt.xlabel('Pourcentage de NaN (%)')
+    plt.ylabel('Importance (SHAP)')
+    plt.tight_layout()
+    plt.savefig('shap_importance_vs_percentage_nan.png')
+    plt.close()
+
+
+
 ########################################
 #########   END FUNCTION DEF   #########
 ########################################
-
-
-""""
-# Sélectionner uniquement les colonnes de type int et float
-df_numeric = df.select_dtypes(include=[np.number])
-
-# Sélectionner uniquement les colonnes de type int et float
-df_numeric = df.select_dtypes(include=[np.number])
-
-# Compter les valeurs égales à NANVALUE_TO_NEWVAL dans le DataFrame d'entrée
-count_nanvalue_newval_before = (df_numeric == NANVALUE_TO_NEWVAL).sum().sum()
-print(f"Nombre de valeurs égales à {NANVALUE_TO_NEWVAL} avant traitement : {count_nanvalue_newval_before}")
-
-# Convertir le DataFrame en tableau NumPy
-data_numeric = df_numeric.to_numpy()
-
-
-
-# Appliquer la fonction Numba
-data_numeric, count_replacements = process_values(data_numeric, NANVALUE_TO_NEWVAL)
-
-# Reconvertir le tableau NumPy en DataFrame avec les mêmes colonnes et index que l'original
-df_numeric_processed = pd.DataFrame(data_numeric, columns=df_numeric.columns, index=df_numeric.index)
-
-# Remplacer le DataFrame source par le DataFrame traité
-df[df_numeric.columns] = df_numeric_processed
-
-# Afficher le nombre de remplacements pendant le traitement
-print(f"Nombre de valeurs correspondant aux critères et remplacées : {count_replacements}")
-
-# Compter les valeurs égales à NANVALUE_TO_NEWVAL dans le DataFrame après traitement
-count_nanvalue_newval_after = (df[df_numeric.columns] == NANVALUE_TO_NEWVAL).sum().sum()
-print(f"Nombre de valeurs égales à {NANVALUE_TO_NEWVAL} après traitement : {count_nanvalue_newval_after}")
-"""
-
-# DEVICE = 'cpu'
-# USE_OPTIMIZED_THRESHOLD = False  # Mettre à True pour optimiser le seuil, False pour utiliser un seuil fixe
-
-# FIXED_THRESHOLD = 0.54  # Définissez ici le seuil que vous souhaitez utiliser
-
-# num_boost_round représente le nombre maximal d'itérations (ou arbres) dans le modèle XGBoost.
-# NUM_BOOST_MIN=400
-# NUM_BOOST_MAX=1000
-
-# Nombre d'itérations de la fonction objective
-# Chaque objectif est appelé nTrials_4optimization fois par Optuna
-# Cela représente le nombre total d'essais d'hyperparamètres différents qui seront testés
-# N_TRIAL_OPTIMIZATION =5
-
-
-# Nombre de splits pour la validation croisée temporelle
-# Ce paramètre détermine combien de fois l'ensemble d'entraînement sera divisé
-# Pour rappel, dans TimeSeriesSplit, l'ensemble d'entraînement grandit progressivement :
-# - Le premier split utilise une petite partie des données pour l'entraînement
-# - Chaque split suivant ajoute plus de données à l'ensemble d'entraînement
-# - Le dernier split utilise presque toutes les données disponibles pour l'entraînement
-# NB_SPLIT_TSCV = 12
-
-# Pour chaque essai (nTrials_4optimization) :
-#   - Un ensemble d'hyperparamètres est choisi, incluant num_boost_round
-#   - Le modèle est entraîné et évalué NB_SPLIT_TSCV fois
-#   - Chaque entraînement utilise num_boost_round itérations
-## Nombre total d'entraînements = nTrials_4optimization * NB_SPLIT_TSCV * num_boost_round
-
-# NANVALUE_TO_NEWVAL=0
-
-
-
 
 def train_and_evaluate_XGBOOST_model(
         initial_df,
         n_trials_optimization=4,
         device='cuda',
         use_optimized_threshold=False,
-        fixed_threshold=0.54,
         num_boost_min=400,
         num_boost_max=1000,
         nb_split_tscv=12,
-        nanvalue_to_newval=0,
-        learning_curve_enabled=False
+        nanvalue_to_newval=None,
+        learning_curve_enabled=False,
+        metric_dict=None  # Nouvel argument pour les paramètres supplémentaires
+
 ):
-    """
-    Fonction principale pour entraîner et évaluer le modèle XGBoost.
-
-    Args:
-    file_path (str): Chemin vers le fichier de données.
-    n_trials (int): Nombre d'essais pour l'optimisation Bayésienne.
-    device (str): Dispositif à utiliser ('cpu' ou 'cuda').
-    use_optimized_threshold (bool): Utiliser un seuil optimisé ou fixe.
-    fixed_threshold (float): Seuil fixe à utiliser si use_optimized_threshold est False.
-    num_boost_min (int): Nombre minimum de boosting rounds.
-    num_boost_max (int): Nombre maximum de boosting rounds.
-    nb_split_tscv (int): Nombre de splits pour la validation croisée temporelle.
-    nanvalue_to_newval (float): Valeur de remplacement pour les NaN.
-
-    Returns:
-    dict: Un dictionnaire contenant les résultats et les objets importants.
-    """
     # Chargement et préparation des données
-   # print("Chargement des données...")
-    df=initial_df
-    # Remplacement des valeurs NaN
-    REPLACEMENT_VALUE = 90000.54789
-    df = df.fillna(REPLACEMENT_VALUE)
+    df = initial_df
+    # Gestion des valeurs NaN
+    if nanvalue_to_newval is not None:
+        # Remplacer les NaN par la valeur spécifiée
+        df = df.fillna(nanvalue_to_newval)
+        nan_value = nanvalue_to_newval
+    else:
+        # Garder les NaN tels quels
+        nan_value = np.nan
 
     # Affichage des informations sur les NaN dans chaque colonne
     for column in df.columns:
@@ -781,6 +1022,9 @@ def train_and_evaluate_XGBOOST_model(
     y_train = train_df['class_binaire']
     X_test = test_df[feature_columns]
     y_test = test_df['class_binaire']
+
+    print(
+        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train={y_train.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test={y_test.isna().sum()}\n")
 
     # Calcul des poids des classes
     class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
@@ -810,17 +1054,11 @@ def train_and_evaluate_XGBOOST_model(
     else:
         print(f"Les classes sont considérées comme équilibrées (différence : {class_difference:.2f})")
 
-    ###### FIN: CHARGER ET PREPARER LES DONNEES  ##########
     print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
 
-
-    ###### DEBUT: OPTIMISATION BAYESIENNE ##########
+    # Début de l'optimisation
     print_notification('###### DEBUT: OPTIMISATION BAYESIENNE ##########', color="blue")
-
-    # Début du chronomètre
     start_time = time.time()
-
-    # Exécution de l'optimisation bayésienne avec le callback
 
     study = optuna.create_study(direction='maximize')
     study.optimize(
@@ -835,49 +1073,40 @@ def train_and_evaluate_XGBOOST_model(
             num_boost_max,
             nb_split_tscv,
             use_optimized_threshold,
-            fixed_threshold,
-            learning_curve_enabled=LEARNING_CURVE_ENABLED
+            learning_curve_enabled=learning_curve_enabled,
+            metric_dict=metric_dict  # Passer les paramètres supplémentaires
+
         ),
         n_trials=n_trials_optimization,
         callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train)]
     )
 
-    # Fin du chronomètre
     end_time = time.time()
-
-    # Calcul du temps d'exécution
     execution_time = end_time - start_time
 
     print("Optimisation terminée.")
     print("Meilleurs hyperparamètres trouvés: ", study.best_params)
     print("Meilleur score: ", study.best_value)
     print(f"Temps d'exécution total : {execution_time:.2f} secondes")
+    print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
 
-    ###### FIN: OPTIMISATION BAYESIENNE ##########
-
-    ###### DEBUT: ENTRAINEMENT DU MODELE FINAL ##########
-
-    # Après l'optimisation
+    # Entraînement du modèle final
     best_trial = study.best_trial
     optimal_threshold = best_trial.user_attrs['average_optimal_threshold']
     print(f"Seuil utilisé : {optimal_threshold:.4f}")
 
-    # Création et entraînement du modèle final
-    best_params = study.best_params.copy()  # Copie pour éviter de modifier l'original
+    best_params = study.best_params.copy()
     best_params['objective'] = 'binary:logistic'
     best_params['eval_metric'] = 'auc'
-    best_params['tree_method'] = 'hist'  # 'gpu_hist' for GPU
+    best_params['tree_method'] = 'hist'
     best_params['device'] = device
 
-    # Extraction de num_boost_round
     num_boost_round = best_params.pop('num_boost_round')
 
-    # Préparation des données avec poids
     sample_weights = np.array([weight_dict[label] for label in y_train])
     dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weights)
     dtest = xgb.DMatrix(X_test, label=y_test)
 
-    # Entraînement du modèle final
     final_model = xgb.train(
         best_params,
         dtrain,
@@ -886,15 +1115,21 @@ def train_and_evaluate_XGBOOST_model(
         verbose_eval=False
     )
     print_notification('###### FIN: ENTRAINEMENT DU MODELE FINAL ##########', color="blue")
-    ###### FIN: ENTRAINEMENT DU MODELE FINAL ##########
+    # Analyser l'impact des valeurs NaN
+    print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
 
-    ###### DEBUT: PREDICTION ET EVALUATION DU MODELE ##########
-    print_notification('###### DEBUT: PREDICTION ET EVALUATION DU MODELE ##########', color="blue")
-    # Prédiction finale
+    feature_names = X_train.columns.tolist()
+
+    # Appeler la fonction d'analyse
+    analyze_nan_impact(final_model, X_train, feature_names, nan_value)
+
+    print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
+
+    # Prédiction et évaluation
+    print_notification('###### DEBUT: PREDICTION ET EVALUATION DU MOBEL FINAL (TEST) ##########', color="blue")
     y_pred_proba = final_model.predict(dtest)
     y_pred = (y_pred_proba > optimal_threshold).astype(int)
 
-    # Évaluation des performances
     accuracy = accuracy_score(y_test, y_pred)
     auc = roc_auc_score(y_test, y_pred_proba)
 
@@ -902,8 +1137,9 @@ def train_and_evaluate_XGBOOST_model(
     print("AUC-ROC sur les données de test:", auc)
     print("\nRapport de classification:")
     print(classification_report(y_test, y_pred))
-    print_notification('###### FIN: PREDICTION ET EVALUATION DU MODELE ##########', color="blue")
-    ###### FIN: PREDICTION ET EVALUATION DU MODELE ##########
+    print_notification('###### FIN: PREDICTION ET EVALUATION DU MODELE FINAL (TEST) ##########', color="blue")
+
+
 
     ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ##########
     print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ##########', color="blue")
@@ -924,16 +1160,50 @@ def train_and_evaluate_XGBOOST_model(
     for i in range(len(ranges) - 1):
         print(f"Probabilité {ranges[i]:.2f} - {ranges[i+1]:.2f} : {hist[i]} prédictions")
 
-    # Visualiser la distribution des probabilités
+    # Ajoutez ceci juste après le calcul de y_pred_proba
+    print("Statistiques de y_pred_proba:")
+    print(f"Nombre d'éléments: {len(y_pred_proba)}")
+    print(f"Min: {np.min(y_pred_proba)}")
+    print(f"Max: {np.max(y_pred_proba)}")
+    print(f"Valeurs uniques: {np.unique(y_pred_proba)}")
+    print(f"Y a-t-il des NaN?: {np.isnan(y_pred_proba).any()}")
+
+    # Plotting the distribution of predicted probabilities with color-coded bins
     plt.figure(figsize=(10, 6))
-    plt.hist(y_pred_proba, bins=20, edgecolor='black')
-    plt.title('Distribution des probabilités prédites')
+
+    # Define bins
+    bins = np.linspace(y_pred_proba.min(), y_pred_proba.max(), 100)
+
+    # Histogram for predictions below the threshold
+    plt.hist(y_pred_proba[y_pred_proba <= optimal_threshold], bins=bins, color='orange',
+             label=f'Prédictions ≤ {optimal_threshold:.4f}', alpha=0.7)
+
+    # Histogram for predictions above the threshold
+    plt.hist(y_pred_proba[y_pred_proba > optimal_threshold], bins=bins, color='blue',
+             label=f'Prédictions > {optimal_threshold:.4f}', alpha=0.7)
+
+    # Adding threshold line
+    plt.axvline(x=optimal_threshold, color='r', linestyle='--', label=f'Seuil de décision ({optimal_threshold:.4f})')
+
+    # Add title and labels
+    plt.title('Distribution des probabilités prédites avec seuil de décision')
     plt.xlabel('Probabilité')
     plt.ylabel('Nombre de prédictions')
-    plt.axvline(x=optimal_threshold, color='r', linestyle='--', label=f'Seuil de décision ({optimal_threshold:.4f})')
+
+    # Adding text annotations for counts
+    num_below = np.sum(y_pred_proba <= optimal_threshold)
+    num_above = np.sum(y_pred_proba > optimal_threshold)
+    plt.text(0.45, 1500, f'Count ≤ {optimal_threshold:.4f}: {num_below}', color='orange')
+    plt.text(0.55, 1500, f'Count > {optimal_threshold:.4f}: {num_above}', color='blue')
+
+    # Adding legend
     plt.legend()
-    plt.savefig('probability_distribution.png')
+
+    # Saving and showing the plot
+    plt.savefig('probability_distribution_colored.png')
+    plt.show()
     plt.close()
+
     print_notification('###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ##########', color="blue")
     ###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ##########
 
@@ -999,26 +1269,44 @@ def train_and_evaluate_XGBOOST_model(
     # Identification des erreurs
     errors = X_test[y_test != y_pred]
     print("Nombre d'erreurs:", len(errors))
+    # Ensure all figures are closed before generating a new one
 
+    plt.close('all')
     # Courbe ROC des prédictions
-    fpr, tpr, _ = roc_curve(y_test, y_pred)
-    plt.figure()
-    plt.plot(fpr, tpr)
-    plt.xlabel('Taux de faux positifs')
-    plt.ylabel('Taux de vrais positifs')
-    plt.title('Courbe ROC')
+    # Calculate the false positive rate and true positive rate
+    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+    auc_score = roc_auc_score(y_test, y_pred_proba)
+
+    # Create the ROC plot with customizations
+    plt.figure(figsize=(8, 6))
+
+    # Plot the ROC curve
+    plt.plot(fpr, tpr, color='blue', linestyle='-', linewidth=2, label=f'ROC Curve (AUC = {auc_score:.2f})')
+
+    # Add a dashed diagonal (random classifier)
+    plt.plot([0, 1], [0, 1], color='gray', linestyle='--', linewidth=2)
+
+    # Customize the labels and title
+    plt.title('ROC Curve with Custom Design', fontsize=14, fontweight='bold')
+    plt.xlabel('False Positive Rate', fontsize=12)
+    plt.ylabel('True Positive Rate', fontsize=12)
+
+    # Adding gridlines
+    plt.grid(True)
+
+    # Add legend to the plot
+    plt.legend(loc='lower right', fontsize=12)
+
+    # Show the plot
+    plt.tight_layout()
     plt.show()
+    plt.close()
     print_notification('###### FIN: ANALYSE DES ERREURS ##########', color="blue")
     ###### FIN: ANALYSE DES ERREURS ##########
 
-
-
     ###### DEBUT: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########
     print_notification('###### DEBUT: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########', color="blue")
-    # Assurez-vous que ces variables sont déjà définies dans votre code :
-    # results_df, X_test, y_test, y_pred, y_pred_proba, xgb_classifier, feature_importance_df
-
-    # 0. Conversion du modèle en XGBClassifier:
+    # Conversion du modèle en XGBClassifier:
     print("Conversion du modèle en XGBClassifier:")
     # Copier les meilleurs hyperparamètres optimisés pour les utiliser avec XGBClassifier.
     best_params_sklearn = best_params.copy()
@@ -1032,8 +1320,8 @@ def train_and_evaluate_XGBOOST_model(
     xgb_classifier.fit(X_train, y_train, sample_weight=sample_weights)
 
     # Utilisation de SHAP pour évaluer l'importance des features
-    explainer = shap.TreeExplainer(xgb_classifier)
-    shap_values = explainer.shap_values(X_test)
+    explainer_Test = shap.TreeExplainer(xgb_classifier)
+    shap_values = explainer_Test.shap_values(X_test)
 
     feature_importance = np.abs(shap_values).mean(axis=0)
     feature_importance_df = pd.DataFrame({
@@ -1049,12 +1337,20 @@ def train_and_evaluate_XGBOOST_model(
     important_features = feature_importance_df['feature'].head(10).tolist()
 
     print("Visualisation des erreurs confiantes:")
-    plot_confident_errors(xgb_classifier, confident_errors, X_test, X_test.columns)
+    plot_confident_errors(
+        xgb_classifier=xgb_classifier,
+        confident_errors=confident_errors,
+        X_test=X_test,
+        feature_names=feature_names,
+        n=5,
+        explainer=explainer_Test)
+    #plot_confident_errors(xgb_classifier, confident_errors, X_test, X_test.columns,explainer_Test)
+
 
     # Exécution des analyses
     print("\nAnalyse des erreurs confiantes:")
-    analyze_confident_errors(xgb_classifier, confident_errors, X_test, X_test.columns, important_features)
 
+    analyze_confident_errors(xgb_classifier=xgb_classifier,confident_errors=confident_errors,X_test=X_test,feature_names=feature_names,important_features=important_features,n=5,explainer=explainer_Test)
     correct_predictions = results_df[results_df['true_label'] == results_df['predicted_label']]
     print("\nComparaison des erreurs vs prédictions correctes:")
     compare_errors_vs_correct(confident_errors.head(30), correct_predictions, X_test, important_features)
@@ -1065,8 +1361,6 @@ def train_and_evaluate_XGBOOST_model(
 
     ###### DEBUT: ANALYSE SHAP ##########
     print_notification('###### DEBUT: ANALYSE SHAP ##########', color="blue")
-
-
 
     # Calcul des valeurs SHAP moyennes pour chaque feature
     shap_mean = np.abs(shap_values).mean(0)
@@ -1287,40 +1581,50 @@ def train_and_evaluate_XGBOOST_model(
     }
 
 if __name__ == "__main__":
-    # 1. Définition des chemins et fichiers
-    FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort_feat_winsorizedScaledWithNanVal.csv"
+    FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
     DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge13092024"
     FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
 
-    # 2. Définition des constantes et paramètres globaux
-    DEVICE_ = 'cuda'  # Utiliser 'cuda' pour GPU, 'cpu' sinon
-    USE_OPTIMIZED_THRESHOLD_ = False  # True pour optimiser le seuil, False pour utiliser un seuil fixe
-    FIXED_THRESHOLD_ = 0.54  # Seuil fixe à utiliser si USE_OPTIMIZED_THRESHOLD est False
-    NUM_BOOST_MIN_ = 400  # Nombre minimum de boosting rounds
-    NUM_BOOST_MAX_ = 1000  # Nombre maximum de boosting rounds
-    N_TRIALS_OPTIMIZATION_ = 7  # Nombre d'essais pour l'optimisation avec Optuna
-    NB_SPLIT_TSCV_ = 8  # Nombre de splits pour la validation croisée temporelle
-    NANVALUE_TO_NEWVAL_ = 0  # Valeur de remplacement pour les NaN si les NAN oont été remplacés par une valeur dans l'étude de procession des featurs
-    LEARNING_CURVE_ENABLED = True # ou False, selon vos besoins
+    DEVICE_ = 'cuda'
+    USE_OPTIMIZED_THRESHOLD_ = False
+    FIXED_THRESHOLD_VALUE_ = 0.54
+    NUM_BOOST_MIN_ = 400
+    NUM_BOOST_MAX_ = 1200
+    N_TRIALS_OPTIMIZATION_ =10
+    NB_SPLIT_TSCV_ = 10
+    NANVALUE_TO_NEWVAL_ = np.nan #900000.123456789
+    LEARNING_CURVE_ENABLED = False
 
+    # Définir les paramètres supplémentaires pour combined_metric
+    METRIC_DICT = {
+        'threshold': FIXED_THRESHOLD_VALUE_,
+        'profit_ratio': 1 / 1.1,  # ≈ 0.909 (si profit donne 1 unité monétaire et perte 1.1)
+        'tp_weight': 0.4,
+        'fp_penalty': 1.1
+    }
 
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-    ###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########
-    file_path=FILE_PATH_
+    file_path = FILE_PATH_
     initial_df = load_data(file_path)
     print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-    # 3. Exécution de la fonction principale pour entraîner et évaluer le modèle
-    results = train_and_evaluate_XGBOOST_model(initial_df=initial_df,n_trials_optimization=N_TRIALS_OPTIMIZATION_,
-                                               device=DEVICE_,use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,fixed_threshold=FIXED_THRESHOLD_,
-                                               num_boost_min=NUM_BOOST_MIN_,num_boost_max=NUM_BOOST_MAX_,nb_split_tscv=NB_SPLIT_TSCV_,nanvalue_to_newval=NANVALUE_TO_NEWVAL_,learning_curve_enabled=LEARNING_CURVE_ENABLED)
 
-    # 4. Utilisation des résultats de l'optimisation
+    results = train_and_evaluate_XGBOOST_model(
+        initial_df=initial_df,
+        n_trials_optimization=N_TRIALS_OPTIMIZATION_,
+        device=DEVICE_,
+        use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,
+        num_boost_min=NUM_BOOST_MIN_,
+        num_boost_max=NUM_BOOST_MAX_,
+        nb_split_tscv=NB_SPLIT_TSCV_,
+        nanvalue_to_newval=NANVALUE_TO_NEWVAL_,
+        learning_curve_enabled=LEARNING_CURVE_ENABLED,
+        metric_dict=METRIC_DICT  # Passer les paramètres supplémentaires
+
+    )
+
     if results is not None:
         print("Meilleurs hyperparamètres trouvés:", results['study'].best_params)
         print("Meilleur score:", results['study'].best_value)
         print("Seuil optimal:", results['optimal_threshold'])
     else:
         print("L'entraînement n'a pas produit de résultats.")
-
-
-
