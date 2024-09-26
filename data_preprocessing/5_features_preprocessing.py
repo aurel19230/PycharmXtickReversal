@@ -13,7 +13,8 @@ import seaborn as sns
 from numba import jit
 diffDivBy0 = np.nan
 addDivBy0 = np.nan
-valueX=0
+valueX=np.nan
+valueY=np.nan
 from sklearn.preprocessing import MinMaxScaler
 DEFAULT_DIV_BY0=False #max_ratio or valuex
 user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
@@ -21,9 +22,14 @@ user_choice = input("Appuyez sur Entrée pour calculer les features sans la affi
                     "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
 if user_choice.lower() == 'd':
     fig_range_input = input("Entrez la plage des figures à afficher au format x_y (par exemple 2_5) : \n")
+
+# Demander à l'utilisateur s'il souhaite ajuster l'axe des abscisses
+adjust_xaxis_input = input("Voulez-vous afficher les graphiques entre les valeurs de floor et crop ? (o/n) : ").lower()
+adjust_xaxis = adjust_xaxis_input == 'o'
+
 # Nom du fichier
-#file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnly50LastFullSession_OnlyShort.csv"
-file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnly50LastFullSession_OnlyShort.csv"
+#file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort.csv"
 
 
 # Chemin du répertoire
@@ -103,6 +109,8 @@ custom_section_to_index = {section: index for index, section in enumerate(unique
 features_df['deltaCustomSectionIndex'] = features_df['deltaCustomSectionMin'].map(custom_section_to_index)
 
 # Features précédentes
+features_df['VolAbvState'] = np.where(df['VolAbv'] == 0, 0, 1)
+features_df['VolBlwState'] = np.where(df['VolBlw'] == 0, 0, 1)
 features_df['candleSizeTicks'] = df['candleSizeTicks']
 features_df['diffPriceClosePoc_0_0'] = df['close'] - df['pocPrice']
 features_df['diffPriceClosePoc_0_1'] = df['close'] - df['pocPrice'].shift(1)
@@ -464,6 +472,8 @@ repeatDownTickVolBlwBid_bigStand_extrem = df['repeatDownTickVolBlwBidDesc_bigSta
 # Définition de la fonction calculate_max_ratio
 def calculate_max_ratio(values, condition):
     valid_ratios = values[condition]
+    # Exclure les NaN des calculs
+    valid_ratios = valid_ratios[~np.isnan(valid_ratios)]
     return valid_ratios.max() if len(valid_ratios) > 0 else 0
 
 # Calcul des nouvelles features
@@ -475,17 +485,14 @@ vol_ask_abv_bigStand = upTickVolAbvAsk_bigStand + repeatUpTickVolAbvAsk_bigStand
 ratio_bearish = np.where(vol_ask_abv != 0, vol_ask_abv_bigStand / vol_ask_abv, 0)
 max_ratio_bearish = calculate_max_ratio(ratio_bearish, vol_ask_abv != 0)
 features_df['bearish_askBigStand_abs_ratio_abv'] = np.where(
-    df['VolAbv'] == 0, 0,  # Si VolAbv est nul, le ratio d'absorption est 0
+    df['VolAbv'] == 0, valueY,  # Si VolAbv est nul, le ratio d'absorption est 0
     np.where(
         vol_ask_abv != 0,
         ratio_bearish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bearish_askBigStand_abs_ratio_abv_special'] = np.where(
-    df['VolAbv'] == 0, 1,  # Marque les cas où VolAbv est nul
-    np.where(vol_ask_abv == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolAbv n'est pas nul
-)
+features_df['bearish_askBigStand_abs_ratio_abv_special']=np.where(vol_ask_abv == 0, 2,0)
 #-----
 #----- Calcul de bearish_bidBigStand_abs_ratio_abv et bearish_bidBigStand_abs_ratio_abv_special
 vol_bid_abv = upTickVolAbvBid + repeatUpTickVolAbvBid + repeatDownTickVolAbvBid
@@ -493,17 +500,14 @@ vol_bid_abv_bigStand = upTickVolAbvBid_bigStand + repeatUpTickVolAbvBid_bigStand
 ratio_bearish_bid = np.where(vol_bid_abv != 0, vol_bid_abv_bigStand / vol_bid_abv, 0)
 max_ratio_bearish_bid = calculate_max_ratio(ratio_bearish_bid, vol_bid_abv != 0)
 features_df['bearish_bidBigStand_abs_ratio_abv'] = np.where(
-    df['VolAbv'] == 0, 0,  # Si VolAbv est nul, le ratio d'absorption est 0
+    df['VolAbv'] == 0, valueY,  # Si VolAbv est nul, le ratio d'absorption est 0
     np.where(
         vol_bid_abv != 0,
         ratio_bearish_bid,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_bid  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bearish_bidBigStand_abs_ratio_abv_special'] = np.where(
-    df['VolAbv'] == 0, 1,  # Marque les cas où VolAbv est nul
-    np.where(vol_bid_abv == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolAbv n'est pas nul
-)
+features_df['bearish_bidBigStand_abs_ratio_abv_special'] =np.where(vol_bid_abv == 0, 3, 0)
 #-----
 
 features_df['bearish_bigStand_abs_diff_abv'] = np.where(
@@ -519,17 +523,15 @@ vol_ask_blw_bigStand = upTickVolBlwAsk_bigStand + repeatUpTickVolBlwAsk_bigStand
 ratio_bullish_ask = np.where(vol_ask_blw != 0, vol_ask_blw_bigStand / vol_ask_blw, 0)
 max_ratio_bullish_ask = calculate_max_ratio(ratio_bullish_ask, vol_ask_blw != 0)
 features_df['bullish_askBigStand_abs_ratio_blw'] = np.where(
-    df['VolBlw'] == 0, 0,  # Si VolBlw est nul, le ratio d'absorption est 0
+    df['VolBlw'] == 0, valueY,  # Si VolBlw est nul, le ratio d'absorption est 0
     np.where(
         vol_ask_blw != 0,
         ratio_bullish_ask,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_ask  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bullish_askBigStand_abs_ratio_blw_special'] = np.where(
-    df['VolBlw'] == 0, 1,  # Marque les cas où VolBlw est nul
-    np.where(vol_ask_blw == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
-)
+features_df['bullish_askBigStand_abs_ratio_blw_special'] =np.where(vol_ask_blw == 0, 4, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
+
 
 #----- Calcul de bullish_bidBigStand_abs_ratio_blw et bullish_bidBigStand_abs_ratio_blw_special
 vol_bid_blw = upTickVolBlwBid + repeatUpTickVolBlwBid + repeatDownTickVolBlwBid
@@ -537,17 +539,15 @@ vol_bid_blw_bigStand = upTickVolBlwBid_bigStand + repeatUpTickVolBlwBid_bigStand
 ratio_bullish_bid = np.where(vol_bid_blw != 0, vol_bid_blw_bigStand / vol_bid_blw, 0)
 max_ratio_bullish_bid = calculate_max_ratio(ratio_bullish_bid, vol_bid_blw != 0)
 features_df['bullish_bidBigStand_abs_ratio_blw'] = np.where(
-    df['VolBlw'] == 0, 0,  # Si VolBlw est nul, le ratio d'absorption est 0
+    df['VolBlw'] == 0, valueY,  # Si VolBlw est nul, le ratio d'absorption est 0
     np.where(
         vol_bid_blw != 0,
         ratio_bullish_bid,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_bid  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bullish_bidBigStand_abs_ratio_blw_special'] = np.where(
-    df['VolBlw'] == 0, 1,  # Marque les cas où VolBlw est nul
-    np.where(vol_bid_blw == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
-)
+features_df['bullish_bidBigStand_abs_ratio_blw_special'] =np.where(vol_bid_blw == 0, 5, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
+
 #-----
 
 
@@ -565,7 +565,7 @@ ratio_bearish_askBigHigh = np.where(vol_ask_abv_bighigh != 0, vol_ask_abv_bighig
 max_ratio_bearish_askBigHigh = calculate_max_ratio(ratio_bearish_askBigHigh, vol_ask_abv_bighigh != 0)
 
 features_df['bearish_askBigHigh_abs_ratio_abv'] = np.where(
-    df['VolAbv'] == 0, 0,  # Si vol_ask_abv_bighigh est nul, le ratio est 0
+    df['VolAbv'] == 0, valueY,  # Si vol_ask_abv_bighigh est nul, le ratio est 0
     np.where(
         vol_ask_abv_bighigh != 0,
         ratio_bearish_askBigHigh,  # Calcul normal
@@ -573,10 +573,7 @@ features_df['bearish_askBigHigh_abs_ratio_abv'] = np.where(
     )
 )
 
-features_df['bearish_askBigHigh_abs_ratio_abv_special'] = np.where(
-    df['VolAbv'] == 0, 1,  # Marque les cas où vol_ask_abv_bighigh est nul
-    np.where(vol_ask_abv_bighigh_high == 0, 2, 0)  # Marque les cas où vol_ask_abv_bighigh_high est nul mais vol_ask_abv_bighigh n'est pas nul
-)
+features_df['bearish_askBigHigh_abs_ratio_abv_special'] =np.where(vol_ask_abv_bighigh_high == 0, 6, 0)  # Marque les cas où vol_ask_abv_bighigh_high est nul mais vol_ask_abv_bighigh n'est pas nul
 
 #----- Calcul de bearish_bidBigHigh_abs_ratio_abv et bearish_bidBigHigh_abs_ratio_abv_special
 vol_bid_abv_bighigh = upTickVolAbvBid + repeatUpTickVolAbvBid + repeatDownTickVolAbvBid
@@ -585,7 +582,7 @@ ratio_bearish_bidBigHigh = np.where(vol_bid_abv_bighigh != 0, vol_bid_abv_bighig
 max_ratio_bearish_bidBigHigh = calculate_max_ratio(ratio_bearish_bidBigHigh, vol_bid_abv_bighigh != 0)
 
 features_df['bearish_bidBigHigh_abs_ratio_abv'] = np.where(
-    df['VolAbv']==0, 0,  # Si vol_bid_abv_bighigh est nul, le ratio est 0
+    df['VolAbv'] == 0, valueY,  # Si vol_bid_abv_bighigh est nul, le ratio est 0
     np.where(
         vol_bid_abv_bighigh != 0,
         ratio_bearish_bidBigHigh,  # Calcul normal
@@ -593,10 +590,7 @@ features_df['bearish_bidBigHigh_abs_ratio_abv'] = np.where(
     )
 )
 
-features_df['bearish_bidBigHigh_abs_ratio_abv_special'] = np.where(
-    df['VolAbv'] == 0, 1,  # Marque les cas où vol_bid_abv_bighigh est nul
-    np.where(vol_bid_abv_bighigh_high == 0, 2, 0)  # Marque les cas où vol_bid_abv_bighigh_high est nul mais vol_bid_abv_bighigh n'est pas nul
-)
+features_df['bearish_bidBigHigh_abs_ratio_abv_special'] =np.where(vol_bid_abv_bighigh_high == 0, 7, 0)
 
 
 features_df['bearish_bigHigh_abs_diff_abv'] = np.where(
@@ -612,17 +606,14 @@ vol_ask_blw_bigHigh = upTickVolBlwAsk_bigHigh + repeatUpTickVolBlwAsk_bigHigh + 
 ratio_bullish_ask = np.where(vol_ask_blw != 0, vol_ask_blw_bigHigh / vol_ask_blw, 0)
 max_ratio_bullish_ask = calculate_max_ratio(ratio_bullish_ask, vol_ask_blw != 0)
 features_df['bullish_askBigHigh_abs_ratio_blw'] = np.where(
-    df['VolBlw'] == 0, 0,  # Si VolBlw est nul, le ratio d'absorption est 0
+    df['VolBlw'] == 0, valueY,  # Si VolBlw est nul, le ratio d'absorption est 0
     np.where(
         vol_ask_blw != 0,
         ratio_bullish_ask,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_ask  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bullish_askBigHigh_abs_ratio_blw_special'] = np.where(
-    df['VolBlw'] == 0, 1,  # Marque les cas où VolBlw est nul
-    np.where(vol_ask_blw == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
-)
+features_df['bullish_askBigHigh_abs_ratio_blw_special'] =np.where(vol_ask_blw == 0, 8, 0)
 
 #----- Calcul de bullish_bidBigHigh_abs_ratio_blw et bullish_bidBigHigh_abs_ratio_blw_special
 vol_bid_blw = upTickVolBlwBid + repeatUpTickVolBlwBid + repeatDownTickVolBlwBid
@@ -630,17 +621,14 @@ vol_bid_blw_bigHigh = upTickVolBlwBid_bigHigh + repeatUpTickVolBlwBid_bigHigh + 
 ratio_bullish_bid = np.where(vol_bid_blw != 0, vol_bid_blw_bigHigh / vol_bid_blw, 0)
 max_ratio_bullish_bid = calculate_max_ratio(ratio_bullish_bid, vol_bid_blw != 0)
 features_df['bullish_bidBigHigh_abs_ratio_blw'] = np.where(
-    df['VolBlw'] == 0, 0,  # Si VolBlw est nul, le ratio d'absorption est 0
+    df['VolBlw'] == 0, valueY,  # Si VolBlw est nul, le ratio d'absorption est 0
     np.where(
         vol_bid_blw != 0,
         ratio_bullish_bid,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_bid  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
-features_df['bullish_bidBigHigh_abs_ratio_blw_special'] = np.where(
-    df['VolBlw'] == 0, 1,  # Marque les cas où VolBlw est nul
-    np.where(vol_bid_blw == 0, 2, 0)  # Marque les cas où le dénominateur est nul mais VolBlw n'est pas nul
-)
+features_df['bullish_bidBigHigh_abs_ratio_blw_special'] = np.where(vol_bid_blw == 0, 9, 0)
 #-----
 
 features_df['bullish_bigHigh_abs_diff_blw'] = np.where(
@@ -680,17 +668,14 @@ vol_bid_extrem_abv = downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem +
 ratio_bearish_pressure = np.where(vol_ask_extrem_abv != 0, vol_bid_extrem_abv / vol_ask_extrem_abv, 0)
 max_ratio_bearish_pressure = calculate_max_ratio(ratio_bearish_pressure, vol_ask_extrem_abv != 0)
 features_df['bearish_extrem_pressure_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         vol_ask_extrem_abv != 0,
         ratio_bearish_pressure,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_pressure
     )
 )
-features_df['bearish_extrem_pressure_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(vol_bid_extrem_abv == 0, 2, 0)
-)
+features_df['bearish_extrem_pressure_ratio_special'] =np.where(vol_bid_extrem_abv == 0, 10, 0)
 
 #----- Calcul de bullish_extrem_pressure_ratio et bullish_extrem_pressure_ratio_special
 vol_bid_extrem_blw = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
@@ -698,17 +683,14 @@ vol_ask_extrem_blw = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + rep
 ratio_bullish_pressure = np.where(vol_bid_extrem_blw != 0, vol_ask_extrem_blw / vol_bid_extrem_blw, 0)
 max_ratio_bullish_pressure = calculate_max_ratio(ratio_bullish_pressure, vol_bid_extrem_blw != 0)
 features_df['bullish_extrem_pressure_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         vol_bid_extrem_blw != 0,
         ratio_bullish_pressure,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_pressure
     )
 )
-features_df['bullish_extrem_pressure_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(vol_ask_extrem_blw == 0, 2, 0)
-)
+features_df['bullish_extrem_pressure_ratio_special'] =np.where(vol_ask_extrem_blw == 0, 11, 0)
 #-----
 
 
@@ -719,17 +701,15 @@ vol_ask_abs_extrem_abv = upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem +
 ratio_bearish_abs = np.where(vol_bid_abs_extrem_abv != 0, vol_ask_abs_extrem_abv / vol_bid_abs_extrem_abv, 0)
 max_ratio_bearish_abs = calculate_max_ratio(ratio_bearish_abs, vol_bid_abs_extrem_abv != 0)
 features_df['bearish_extrem_abs_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         vol_bid_abs_extrem_abv != 0,
         ratio_bearish_abs,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_abs
     )
 )
-features_df['bearish_extrem_abs_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(vol_ask_abs_extrem_abv == 0, 2, 0)
-)
+
+features_df['bearish_extrem_abs_ratio_special'] =np.where(vol_ask_abs_extrem_abv == 0, 12, 0)
 
 #----- Calcul de bullish_extrem_abs_ratio et bullish_extrem_abs_ratio_special
 vol_bid_abs_extrem_blw = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
@@ -737,17 +717,14 @@ vol_ask_abs_extrem_blw = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem +
 ratio_bullish_abs = np.where(vol_bid_abs_extrem_blw != 0, vol_ask_abs_extrem_blw / vol_bid_abs_extrem_blw, 0)
 max_ratio_bullish_abs = calculate_max_ratio(ratio_bullish_abs, vol_bid_abs_extrem_blw != 0)
 features_df['bullish_extrem_abs_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         vol_bid_abs_extrem_blw != 0,
         ratio_bullish_abs,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_abs
     )
 )
-features_df['bullish_extrem_abs_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(vol_ask_abs_extrem_blw == 0, 2, 0)
-)
+features_df['bullish_extrem_abs_ratio_special'] = np.where(vol_ask_abs_extrem_blw == 0, 13, 0)
 #-----
 
 
@@ -761,17 +738,14 @@ rest_vol_bearish = df['VolAbv'] - vol_extrem_bearish
 ratio_bearish_activity = np.where(rest_vol_bearish != 0, vol_extrem_bearish / rest_vol_bearish, 0)
 max_ratio_bearish_activity = calculate_max_ratio(ratio_bearish_activity, rest_vol_bearish != 0)
 features_df['bearish_extrem_vs_rest_activity'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         rest_vol_bearish != 0,
         ratio_bearish_activity,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_activity
     )
 )
-features_df['bearish_extrem_vs_rest_activity_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(rest_vol_bearish == 0, 2, 0)
-)
+features_df['bearish_extrem_vs_rest_activity_special'] = np.where(rest_vol_bearish == 0, 14, 0)
 
 #----- Calcul de bullish_extrem_vs_rest_activity et bullish_extrem_vs_rest_activity_special
 vol_extrem_bullish = (
@@ -782,17 +756,14 @@ rest_vol_bullish = df['VolBlw'] - vol_extrem_bullish
 ratio_bullish_activity = np.where(rest_vol_bullish != 0, vol_extrem_bullish / rest_vol_bullish, 0)
 max_ratio_bullish_activity = calculate_max_ratio(ratio_bullish_activity, rest_vol_bullish != 0)
 features_df['bullish_extrem_vs_rest_activity'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         rest_vol_bullish != 0,
         ratio_bullish_activity,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_activity
     )
 )
-features_df['bullish_extrem_vs_rest_activity_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(rest_vol_bullish == 0, 2, 0)
-)
+features_df['bullish_extrem_vs_rest_activity_special'] = np.where(rest_vol_bullish == 0, 15, 0)
 #-----
 
 # e) Indicateur de continuation vs. renversement dans la zone extrême
@@ -807,17 +778,15 @@ continuation_vol_bearish_extrem = (
 ratio_bearish_continuation = np.where(total_vol_bearish_extrem != 0, continuation_vol_bearish_extrem / total_vol_bearish_extrem, 0)
 max_ratio_bearish_continuation = calculate_max_ratio(ratio_bearish_continuation, total_vol_bearish_extrem != 0)
 features_df['bearish_continuation_vs_reversal'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
         ratio_bearish_continuation,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_continuation
     )
 )
-features_df['bearish_continuation_vs_reversal_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(continuation_vol_bearish_extrem == 0, 2, 0)
-)
+features_df['bearish_continuation_vs_reversal_special'] = np.where(continuation_vol_bearish_extrem == 0, 16, 0)
+
 
 #----- Calcul de bullish_continuation_vs_reversal et bullish_continuation_vs_reversal_special
 total_vol_bullish_extrem = (
@@ -830,17 +799,14 @@ continuation_vol_bullish_extrem = (
 ratio_bullish_continuation = np.where(total_vol_bullish_extrem != 0, continuation_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_continuation = calculate_max_ratio(ratio_bullish_continuation, total_vol_bullish_extrem != 0)
 features_df['bullish_continuation_vs_reversal'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
         ratio_bullish_continuation,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_continuation
     )
 )
-features_df['bullish_continuation_vs_reversal_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(continuation_vol_bullish_extrem == 0, 2, 0)
-)
+features_df['bullish_continuation_vs_reversal_special'] =np.where(continuation_vol_bullish_extrem == 0, 17, 0)
 #-----
 
 
@@ -857,17 +823,14 @@ repeat_vol_bearish_extrem = (
 ratio_bearish_repeat_ticks = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
 max_ratio_bearish_repeat_ticks = calculate_max_ratio(ratio_bearish_repeat_ticks, total_vol_bearish_extrem != 0)
 features_df['bearish_repeat_ticks_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
         ratio_bearish_repeat_ticks,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_repeat_ticks
     )
 )
-features_df['bearish_repeat_ticks_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(repeat_vol_bearish_extrem == 0, 2, 0)
-)
+features_df['bearish_repeat_ticks_ratio_special'] =np.where(repeat_vol_bearish_extrem == 0, 18, 0)
 
 #----- Calcul de bullish_repeat_ticks_ratio et bullish_repeat_ticks_ratio_special
 total_vol_bullish_extrem = (
@@ -881,18 +844,14 @@ repeat_vol_bullish_extrem = (
 ratio_bullish_repeat_ticks = np.where(total_vol_bullish_extrem != 0, repeat_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_repeat_ticks = calculate_max_ratio(ratio_bullish_repeat_ticks, total_vol_bullish_extrem != 0)
 features_df['bullish_repeat_ticks_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
         ratio_bullish_repeat_ticks,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_repeat_ticks
     )
 )
-features_df['bullish_repeat_ticks_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(repeat_vol_bullish_extrem == 0, 2, 0)
-)
-#-----
+features_df['bullish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bullish_extrem == 0, 19, 0)
 
 
 # g) Big trades dans la zone extrême
@@ -911,18 +870,14 @@ big_trade_vol_bearish_extrem = (
 ratio_bearish_big_trade = np.where(total_vol_bearish_extrem != 0, big_trade_vol_bearish_extrem / total_vol_bearish_extrem, 0)
 max_ratio_bearish_big_trade = calculate_max_ratio(ratio_bearish_big_trade, total_vol_bearish_extrem != 0)
 features_df['bearish_big_trade_ratio_extrem'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
         ratio_bearish_big_trade,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade
     )
 )
-features_df['bearish_big_trade_ratio_extrem_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(big_trade_vol_bearish_extrem == 0, 2, 0)
-)
-
+features_df['bearish_big_trade_ratio_extrem_special'] =np.where(big_trade_vol_bearish_extrem == 0, 21, 0)
 #----- Calcul de bearish_big_trade_imbalance et bearish_big_trade_imbalance_special
 imbalance_vol_bearish_big_trade = (
     (upTickVolAbvAsk_bigStand_extrem + repeatUpTickVolAbvAsk_bigStand_extrem + repeatDownTickVolAbvAsk_bigStand_extrem) -
@@ -935,17 +890,14 @@ total_vol_bearish_big_trade = (
 ratio_bearish_big_trade_imbalance = np.where(total_vol_bearish_big_trade != 0, imbalance_vol_bearish_big_trade / total_vol_bearish_big_trade, 0)
 max_ratio_bearish_big_trade_imbalance = calculate_max_ratio(ratio_bearish_big_trade_imbalance, total_vol_bearish_big_trade != 0)
 features_df['bearish_big_trade_imbalance'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_big_trade != 0,
         ratio_bearish_big_trade_imbalance,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade_imbalance
     )
 )
-features_df['bearish_big_trade_imbalance_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(imbalance_vol_bearish_big_trade == 0, 2, 0)
-)
+features_df['bearish_big_trade_imbalance_special'] = np.where(imbalance_vol_bearish_big_trade == 0, 22, 0)
 #-----
 
 
@@ -962,18 +914,14 @@ big_trade_vol_bullish_extrem = (
 ratio_bullish_big_trade = np.where(total_vol_bullish_extrem != 0, big_trade_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_big_trade = calculate_max_ratio(ratio_bullish_big_trade, total_vol_bullish_extrem != 0)
 features_df['bullish_big_trade_ratio_extrem'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
         ratio_bullish_big_trade,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade
     )
 )
-features_df['bullish_big_trade_ratio_extrem_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(big_trade_vol_bullish_extrem == 0, 2, 0)
-)
-
+features_df['bullish_big_trade_ratio_extrem_special'] = np.where(big_trade_vol_bullish_extrem == 0, 23, 0)
 #----- Calcul de bullish_big_trade_imbalance et bullish_big_trade_imbalance_special
 imbalance_vol_bullish_big_trade = (
     (upTickVolBlwAsk_bigStand_extrem + repeatUpTickVolBlwAsk_bigStand_extrem + repeatDownTickVolBlwAsk_bigStand_extrem) -
@@ -986,17 +934,14 @@ total_vol_bullish_big_trade = (
 ratio_bullish_big_trade_imbalance = np.where(total_vol_bullish_big_trade != 0, imbalance_vol_bullish_big_trade / total_vol_bullish_big_trade, 0)
 max_ratio_bullish_big_trade_imbalance = calculate_max_ratio(ratio_bullish_big_trade_imbalance, total_vol_bullish_big_trade != 0)
 features_df['bullish_big_trade_imbalance'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_big_trade != 0,
         ratio_bullish_big_trade_imbalance,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade_imbalance
     )
 )
-features_df['bullish_big_trade_imbalance_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(imbalance_vol_bullish_big_trade == 0, 2, 0)
-)
+features_df['bullish_big_trade_imbalance_special'] =np.where(imbalance_vol_bullish_big_trade == 0, 24, 0)
 #-----
 
 
@@ -1010,17 +955,14 @@ vol_ask_asc_bearish = df['upTickVolAbvAskAsc'] + df['repeatUpTickVolAbvAskAsc'] 
 ratio_bearish_asc_dsc = np.where(vol_bid_desc_bearish != 0, vol_ask_asc_bearish / vol_bid_desc_bearish, 0)
 max_ratio_bearish_asc_dsc = calculate_max_ratio(ratio_bearish_asc_dsc, vol_bid_desc_bearish != 0)
 features_df['bearish_asc_dsc_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         vol_bid_desc_bearish != 0,
         ratio_bearish_asc_dsc,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_asc_dsc
     )
 )
-features_df['bearish_asc_dsc_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(vol_ask_asc_bearish == 0, 2, 0)
-)
+features_df['bearish_asc_dsc_ratio_special'] = np.where(vol_ask_asc_bearish == 0, 25, 0)
 #-----
 
 
@@ -1040,17 +982,14 @@ vol_ask_asc_bullish = df['upTickVolBlwAskAsc'] + df['repeatUpTickVolBlwAskAsc'] 
 ratio_bullish_asc_dsc = np.where(vol_bid_desc_bullish != 0, vol_ask_asc_bullish / vol_bid_desc_bullish, 0)
 max_ratio_bullish_asc_dsc = calculate_max_ratio(ratio_bullish_asc_dsc, vol_bid_desc_bullish != 0)
 features_df['bullish_asc_dsc_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         vol_bid_desc_bullish != 0,
         ratio_bullish_asc_dsc,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_asc_dsc
     )
 )
-features_df['bullish_asc_dsc_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(vol_ask_asc_bullish == 0, 2, 0)
-)
+features_df['bullish_asc_dsc_ratio_special'] = np.where(vol_ask_asc_bullish == 0, 26, 0)
 #-----
 
 
@@ -1153,17 +1092,14 @@ imbalance_vol_extrem_bearish = (
 ratio_extrem_ask_bid_imbalance_bearish = np.where(total_vol_extrem_bearish != 0, imbalance_vol_extrem_bearish / total_vol_extrem_bearish, 0)
 max_ratio_extrem_ask_bid_imbalance_bearish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bearish, total_vol_extrem_bearish != 0)
 features_df['extrem_ask_bid_imbalance_bearish'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_extrem_bearish != 0,
         ratio_extrem_ask_bid_imbalance_bearish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_extrem_ask_bid_imbalance_bearish
     )
 )
-features_df['extrem_ask_bid_imbalance_bearish_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(imbalance_vol_extrem_bearish == 0, 2, 0)
-)
+features_df['extrem_ask_bid_imbalance_bearish_special'] = np.where(imbalance_vol_extrem_bearish == 0, 27, 0)
 #-----
 
 
@@ -1184,17 +1120,14 @@ repeat_vol_bearish_extrem = (
 ratio_bearish_repeat_ticks = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
 max_ratio_bearish_repeat_ticks = calculate_max_ratio(ratio_bearish_repeat_ticks, total_vol_bearish_extrem != 0)
 features_df['bearish_repeat_ticks_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
         ratio_bearish_repeat_ticks,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_repeat_ticks
     )
 )
-features_df['bearish_repeat_ticks_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(repeat_vol_bearish_extrem == 0, 2, 0)
-)
+features_df['bearish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bearish_extrem == 0, 28, 0)
 #-----
 
 
@@ -1227,17 +1160,14 @@ imbalance_vol_extrem_bullish = (
 ratio_extrem_ask_bid_imbalance_bullish = np.where(total_vol_extrem_bullish != 0, imbalance_vol_extrem_bullish / total_vol_extrem_bullish, 0)
 max_ratio_extrem_ask_bid_imbalance_bullish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bullish, total_vol_extrem_bullish != 0)
 features_df['extrem_ask_bid_imbalance_bullish'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_extrem_bullish != 0,
         ratio_extrem_ask_bid_imbalance_bullish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_extrem_ask_bid_imbalance_bullish
     )
 )
-features_df['extrem_ask_bid_imbalance_bullish_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(imbalance_vol_extrem_bullish == 0, 2, 0)
-)
+features_df['extrem_ask_bid_imbalance_bullish_special'] = np.where(imbalance_vol_extrem_bullish == 0, 29, 0)
 #-----
 
 
@@ -1258,17 +1188,14 @@ repeat_vol_bullish_extrem = (
 ratio_bullish_repeat_ticks = np.where(total_vol_bullish_extrem != 0, repeat_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_repeat_ticks = calculate_max_ratio(ratio_bullish_repeat_ticks, total_vol_bullish_extrem != 0)
 features_df['bullish_repeat_ticks_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
         ratio_bullish_repeat_ticks,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_repeat_ticks
     )
 )
-features_df['bullish_repeat_ticks_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(repeat_vol_bullish_extrem == 0, 2, 0)
-)
+features_df['bullish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bullish_extrem == 0, 30, 0)
 #-----
 
 #----- Calcul de bearish_absorption_ratio et bearish_absorption_ratio_special
@@ -1277,17 +1204,14 @@ vol_bid_desc_bearish = df['downTickVolAbvBidDesc'] + df['repeatUpTickVolAbvBidDe
 ratio_bearish_absorption = np.where(vol_ask_asc_bearish != 0, vol_bid_desc_bearish / vol_ask_asc_bearish, 0)
 max_ratio_bearish_absorption = calculate_max_ratio(ratio_bearish_absorption, vol_ask_asc_bearish != 0)
 features_df['bearish_absorption_ratio'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         vol_ask_asc_bearish != 0,
         ratio_bearish_absorption,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_absorption
     )
 )
-features_df['bearish_absorption_ratio_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(vol_bid_desc_bearish == 0, 2, 0)
-)
+features_df['bearish_absorption_ratio_special'] =np.where(vol_bid_desc_bearish == 0, 31, 0)
 
 #----- Calcul de bullish_absorption_ratio et bullish_absorption_ratio_special
 vol_bid_desc_bullish = df['downTickVolBlwBidDesc'] + df['repeatUpTickVolBlwBidDesc'] + df['repeatDownTickVolBlwBidDesc']
@@ -1295,17 +1219,14 @@ vol_ask_asc_bullish = df['upTickVolBlwAskAsc'] + df['repeatUpTickVolBlwAskAsc'] 
 ratio_bullish_absorption = np.where(vol_bid_desc_bullish != 0, vol_ask_asc_bullish / vol_bid_desc_bullish, 0)
 max_ratio_bullish_absorption = calculate_max_ratio(ratio_bullish_absorption, vol_bid_desc_bullish != 0)
 features_df['bullish_absorption_ratio'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         vol_bid_desc_bullish != 0,
         ratio_bullish_absorption,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_absorption
     )
 )
-features_df['bullish_absorption_ratio_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(vol_ask_asc_bullish == 0, 2, 0)
-)
+features_df['bullish_absorption_ratio_special'] = np.where(vol_ask_asc_bullish == 0, 32, 0)
 #-----
 
 
@@ -1322,17 +1243,14 @@ big_trade_vol_bearish_extrem = (
 ratio_bearish_big_trade2 = np.where(total_vol_bearish_extrem != 0, big_trade_vol_bearish_extrem / total_vol_bearish_extrem, 0)
 max_ratio_bearish_big_trade2 = calculate_max_ratio(ratio_bearish_big_trade2, total_vol_bearish_extrem != 0)
 features_df['bearish_big_trade_ratio2_extrem'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
         ratio_bearish_big_trade2,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade2
     )
 )
-features_df['bearish_big_trade_ratio2_extrem_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(big_trade_vol_bearish_extrem == 0, 2, 0)
-)
+features_df['bearish_big_trade_ratio2_extrem_special'] = np.where(big_trade_vol_bearish_extrem == 0, 33, 0)
 
 #----- Calcul de bullish_big_trade_ratio2_extrem et bullish_big_trade_ratio2_extrem_special
 total_vol_bullish_extrem = upTickVolBlwAsk_extrem + downTickVolBlwBid_extrem
@@ -1343,17 +1261,14 @@ big_trade_vol_bullish_extrem = (
 ratio_bullish_big_trade2 = np.where(total_vol_bullish_extrem != 0, big_trade_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_big_trade2 = calculate_max_ratio(ratio_bullish_big_trade2, total_vol_bullish_extrem != 0)
 features_df['bullish_big_trade_ratio2_extrem'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
         ratio_bullish_big_trade2,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade2
     )
 )
-features_df['bullish_big_trade_ratio2_extrem_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(big_trade_vol_bullish_extrem == 0, 2, 0)
-)
+features_df['bullish_big_trade_ratio2_extrem_special'] = np.where(big_trade_vol_bullish_extrem == 0, 34, 0)
 #-----
 
 
@@ -1386,17 +1301,14 @@ total_count_bearish = features_df['total_count_abv']
 ratio_absorption_intensity_repeat_bearish = np.where(total_count_bearish != 0, repeat_count_bearish / total_count_bearish, 0)
 max_ratio_absorption_intensity_repeat_bearish = calculate_max_ratio(ratio_absorption_intensity_repeat_bearish, total_count_bearish != 0)
 features_df['absorption_intensity_repeat_bearish_count'] = np.where(
-    df['VolAbv'] == 0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_count_bearish != 0,
         ratio_absorption_intensity_repeat_bearish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_absorption_intensity_repeat_bearish
     )
 )
-features_df['absorption_intensity_repeat_bearish_count_special'] = np.where(
-    df['VolAbv'] == 0, 1,
-    np.where(repeat_count_bearish == 0, 2, 0)
-)
+features_df['absorption_intensity_repeat_bearish_count_special'] = np.where(repeat_count_bearish == 0, 35, 0)
 #-----
 
 
@@ -1436,17 +1348,14 @@ total_count_bullish = features_df['total_count_blw']
 ratio_absorption_intensity_repeat_bullish = np.where(total_count_bullish != 0, repeat_count_bullish / total_count_bullish, 0)
 max_ratio_absorption_intensity_repeat_bullish = calculate_max_ratio(ratio_absorption_intensity_repeat_bullish, total_count_bullish != 0)
 features_df['absorption_intensity_repeat_bullish_count'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_count_bullish != 0,
         ratio_absorption_intensity_repeat_bullish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_absorption_intensity_repeat_bullish
     )
 )
-features_df['absorption_intensity_repeat_bullish_count_special'] = np.where(
-    df['VolBlw']==0, 1,
-    np.where(repeat_count_bullish == 0, 2, 0)
-)
+features_df['absorption_intensity_repeat_bullish_count_special'] = np.where(repeat_count_bullish == 0, 36, 0)
 #-----
 
 
@@ -1502,17 +1411,14 @@ vol_ask_6ticks_bearish = df['upTickVol6TicksBlwAsk'] + df['repeatUpTickVol6Ticks
 ratio_bearish_absorption_6Tick = np.where(vol_bid_6ticks_bearish != 0, vol_ask_6ticks_bearish / vol_bid_6ticks_bearish, 0)
 max_ratio_bearish_absorption_6Tick = calculate_max_ratio(ratio_bearish_absorption_6Tick, vol_bid_6ticks_bearish != 0)
 features_df['bearish_absorption_6Tick'] = np.where(
-    df['VolBlw'] == 0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         vol_bid_6ticks_bearish != 0,
         ratio_bearish_absorption_6Tick,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_absorption_6Tick
     )
 )
-features_df['bearish_absorption_6Tick_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(vol_ask_6ticks_bearish == 0, 2, 0)
-)
+features_df['bearish_absorption_6Tick_special'] = np.where(vol_ask_6ticks_bearish == 0, 37, 0)
 
 #----- Calcul de bullish_absorption_6Tick et bullish_absorption_6Tick_special
 vol_ask_6ticks_bullish = df['upTickVol6TicksAbvAsk'] + df['repeatUpTickVol6TicksAbvAsk'] + df['repeatDownTickVol6TicksAbvAsk']
@@ -1520,17 +1426,14 @@ vol_bid_6ticks_bullish = df['downTickVol6TicksAbvBid'] + df['repeatDownTickVol6T
 ratio_bullish_absorption_6Tick = np.where(vol_ask_6ticks_bullish != 0, vol_bid_6ticks_bullish / vol_ask_6ticks_bullish, 0)
 max_ratio_bullish_absorption_6Tick = calculate_max_ratio(ratio_bullish_absorption_6Tick, vol_ask_6ticks_bullish != 0)
 features_df['bullish_absorption_6Tick'] = np.where(
-    df['VolAbv']==0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         vol_ask_6ticks_bullish != 0,
         ratio_bullish_absorption_6Tick,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_absorption_6Tick
     )
 )
-features_df['bullish_absorption_6Tick_special'] = np.where(
-    df['VolAbv']==0, 1,
-    np.where(vol_bid_6ticks_bullish == 0, 2, 0)
-)
+features_df['bullish_absorption_6Tick_special'] = np.where(vol_bid_6ticks_bullish == 0, 38, 0)
 #-----
 
 
@@ -1557,17 +1460,14 @@ price_dynamics_bearish = (
 ratio_bearish_price_dynamics_6Tick = np.where(total_vol_6ticks_bearish != 0, price_dynamics_bearish / total_vol_6ticks_bearish, 0)
 max_ratio_bearish_price_dynamics_6Tick = calculate_max_ratio(ratio_bearish_price_dynamics_6Tick, total_vol_6ticks_bearish != 0)
 features_df['bearish_price_dynamics_comparison_6Tick'] = np.where(
-    df['VolBlw']==0, 0,
+    df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_6ticks_bearish != 0,
         ratio_bearish_price_dynamics_6Tick,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_price_dynamics_6Tick
     )
 )
-features_df['bearish_price_dynamics_comparison_6Tick_special'] = np.where(
-    df['VolBlw'] == 0, 1,
-    np.where(price_dynamics_bearish == 0, 2, 0)
-)
+features_df['bearish_price_dynamics_comparison_6Tick_special'] = np.where(price_dynamics_bearish == 0, 39, 0)
 
 #----- Calcul de bullish_price_dynamics_comparison_6Tick et bullish_price_dynamics_comparison_6Tick_special
 total_vol_6ticks_bullish = upTickVol6TicksAbv + downTickVol6TicksAbv
@@ -1577,17 +1477,14 @@ price_dynamics_bullish = (
 ratio_bullish_price_dynamics_6Tick = np.where(total_vol_6ticks_bullish != 0, price_dynamics_bullish / total_vol_6ticks_bullish, 0)
 max_ratio_bullish_price_dynamics_6Tick = calculate_max_ratio(ratio_bullish_price_dynamics_6Tick, total_vol_6ticks_bullish != 0)
 features_df['bullish_price_dynamics_comparison_6Tick'] = np.where(
-    df['VolAbv']==0, 0,
+    df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_6ticks_bullish != 0,
         ratio_bullish_price_dynamics_6Tick,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_price_dynamics_6Tick
     )
 )
-features_df['bullish_price_dynamics_comparison_6Tick_special'] = np.where(
-    df['VolAbv']==0, 1,
-    np.where(price_dynamics_bullish == 0, 2, 0)
-)
+features_df['bullish_price_dynamics_comparison_6Tick_special'] = np.where(price_dynamics_bullish == 0, 40, 0)
 #-----
 
 # i) Ratio d'activité Ask vs Bid dans la zone _6Tick
@@ -1646,6 +1543,8 @@ column_settings = {
     'deltaCustomSectionIndex':                (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
+    'VolAbvState': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'VolBlwState': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'candleSizeTicks':                        (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffPriceClosePoc_0_0':                  (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffPriceClosePoc_0_1':                  (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
@@ -1675,14 +1574,14 @@ column_settings = {
     # Reversal and momentum features
     'bearish_reversal_force':                 (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
     'bullish_reversal_force':                 (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
-    'bearish_ask_bid_ratio':                  (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
-    'bullish_ask_bid_ratio':                  (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bearish_ask_bid_ratio':                  (False, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bullish_ask_bid_ratio':                  (False, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok
     'meanVolx':                               (False, True, 1, 99.7,toBeDisplayed_if_s(user_choice, False)),#ok
     'ratioDeltaBlw':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'ratioDeltaAbv':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolCandle_0_1Ratio':                 (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolDelta_0_1Ratio':                  (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
-    'cumDiffVolDeltaRatio':                  (True, True, 0.1, 99.1,toBeDisplayed_if_s(user_choice, False)),#ok
+    'cumDiffVolDeltaRatio':                  (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Volume profile features
     'VolPocVolCandleRatio':                  (False, False, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
@@ -1691,30 +1590,30 @@ column_settings = {
     'VolCandleMeanxRatio':                    (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Order flow features
-    'bearish_ask_ratio':                      (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
+    'bearish_ask_ratio':                      (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'bearish_bid_ratio':                      (False, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
     'bullish_ask_ratio':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
     'bullish_bid_ratio':                     (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bearish_ask_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bearish_bid_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bearish_imnbScore_score':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bullish_ask_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bullish_bid_score':                      (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bullish_imnbScore_score':                (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_ask_score':                      (True, True, 3, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_bid_score':                      (True, True, 3, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bearish_imnbScore_score':                (True, True, 3, 98,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_ask_score':                      (True, True, 3, 98,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_bid_score':                      (True, True, 3, 98,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bullish_imnbScore_score':                (True, True, 3, 98,toBeDisplayed_if_s(user_choice, False)),#ok1
 
     # Imbalance features
-    'bull_imbalance_low_1':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bull_imbalance_low_2':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bull_imbalance_low_3':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bull_imbalance_high_0':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bull_imbalance_high_1':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bull_imbalance_high_2':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_low_0':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_low_1':                  (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_low_2':                   (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_high_1':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_high_2':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
-    'bear_imbalance_high_3':                 (False, True, 1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_low_1':                   (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_low_2':                  (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_low_3':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_0':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_1':                  (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bull_imbalance_high_2':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_0':                   (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_1':                  (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_low_2':                   (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_1':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_2':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
+    'bear_imbalance_high_3':                 (False, True, 1, 96.5,toBeDisplayed_if_s(user_choice, False)),#ok1
     'imbalance_score_low':                    (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
     'imbalance_score_high':                   (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok1
 
@@ -1936,39 +1835,39 @@ def replace_nan_and_inf(df, columns_to_process, start_value, increment, REPLACE_
     df_replaced = df.copy()
 
     for column in columns_to_process:
-        is_nan = df[column].isna()
-        is_inf = np.isinf(df[column])
-        nan_count = is_nan.sum()
-        inf_count = is_inf.sum()
+        # Combiner les masques pour NaN et Inf en une seule opération
+        is_nan_or_inf = df[column].isna() | np.isinf(df[column])
+        total_replacements = is_nan_or_inf.sum()
 
-        if nan_count > 0 or inf_count > 0:
+        if total_replacements > 0:
+            nan_count = df[column].isna().sum()
+            inf_count = np.isinf(df[column]).sum()
+
             print(f"Colonne problématique : {column}")
             print(f"Nombre de valeurs NaN : {nan_count}")
             print(f"Nombre de valeurs infinies : {inf_count}")
 
-            if REPLACE_NAN:  # Effectuer le traitement pour NaN et infinies seulement si REPLACE_NAN est True
+            if REPLACE_NAN:
                 if start_value != 0:
-                    df_replaced.loc[is_nan | is_inf, column] = current_value
+                    df_replaced.loc[is_nan_or_inf, column] = current_value
                     nan_replacement_values[column] = current_value
-                    total_replacements = nan_count + inf_count
                     print(f"L'option start_value != 0 est activée.")
-                    print(f"Les {total_replacements} valeurs NaN et infinies dans la colonne {column} ont été remplacées par {current_value}")
-                    print(f"Les valeurs NaN sont remplacées par la valeur choisie par l'utilisateur : {current_value}")
-                    if increment != 0:  # Incrémenter seulement si l'incrément est différent de zéro
+                    print(f"Les {total_replacements} valeurs NaN et infinies dans la colonne '{column}' ont été remplacées par {current_value}")
+                    if increment != 0:
                         current_value += increment
                 else:
-                    print(f"Les valeurs NaN et infinies dans la colonne {column} ont été laissées inchangées car start_value est 0")
+                    print(f"Les valeurs NaN et infinies dans la colonne '{column}' ont été laissées inchangées car start_value est 0")
             else:
-                # Si REPLACE_NAN est False, remplacer uniquement les valeurs infinies par NaN
-                df_replaced.loc[is_inf, column] = np.nan
-                # Compter combien de valeurs infinies ont été remplacées par NaN
+                # Remplacer uniquement les valeurs infinies par NaN
+                df_replaced.loc[np.isinf(df[column]), column] = np.nan
                 inf_replacements = inf_count
                 print(f"REPLACE_NAN est à False.")
-                print(f"Les {inf_replacements} valeurs infinies dans la colonne {column} ont été remplacées par NaN")
-                print(f"Les {nan_count} valeurs NaN dans la colonne {column} ont été laissées inchangées")
-                print(f"Les valeurs NaN ne sont pas remplacées par une valeur choisie par l'utilisateur.")
+                print(f"Les {inf_replacements} valeurs infinies dans la colonne '{column}' ont été remplacées par NaN")
+                print(f"Les {nan_count} valeurs NaN dans la colonne '{column}' ont été laissées inchangées")
+                print("Les valeurs NaN ne sont pas remplacées par une valeur choisie par l'utilisateur.")
 
     return df_replaced, nan_replacement_values
+
 
 
 
@@ -2010,9 +1909,16 @@ def cropFloor_dataSource(features_NANReplacedVal_df, columnName, settings, nan_r
     return floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent
 
 
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 def plot_single_histogram(values_before, winsorized_values_after, column, floor_value, crop_value,
                           floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, ax,
-                          nan_replacement_values=None, range_strength_percent_in_range_10_32=None,regimeAdx_pct_infThreshold=None):
+                          nan_replacement_values=None, range_strength_percent_in_range_10_32=None,
+                          range_strength_percent_in_range_5_23=None, regimeAdx_pct_infThreshold=None,
+                          adjust_xaxis=True):
     values_before_clean = values_before.dropna()
 
     sns.histplot(data=pd.DataFrame({column: values_before_clean}), x=column, color="blue", kde=True, ax=ax,
@@ -2025,6 +1931,11 @@ def plot_single_histogram(values_before, winsorized_values_after, column, floor_
     if cropSup_values:
         ax.axvline(crop_value, color='r', linestyle='--', label=f'Crop ({cropSup_percent}%)')
 
+    if adjust_xaxis:
+        x_min = min(0, floor_value) if floorInf_values else 0
+        x_max = crop_value if cropSup_values else None
+        ax.set_xlim(left=x_min, right=x_max)
+
     ax.set_title(column, fontsize=8, pad=0)
     ax.legend(fontsize=6)
     ax.tick_params(axis='both', which='major', labelsize=6)
@@ -2034,58 +1945,61 @@ def plot_single_histogram(values_before, winsorized_values_after, column, floor_
     if nan_replacement_values and column in nan_replacement_values:
         ax.annotate(f"NaN replaced by: {nan_replacement_values[column]}",
                     xy=(0.05, 0.95), xycoords='axes fraction',
-                    fontsize=8, ha='left', va='top')
+                    fontsize=6, ha='left', va='top')
 
-    # Fonction pour formater les valeurs
     def format_value(value):
         return f"{value:.2f}" if pd.notna(value) else "nan"
 
-    # Afficher les 2 premières et 2 dernières valeurs non-NaN pour chaque ensemble de données
     initial_values = values_before_clean.sort_values()
     winsorized_values = winsorized_values_after.dropna().sort_values()
 
     initial_text = f"[{format_value(initial_values.iloc[0])} {format_value(initial_values.iloc[1])}]\n[{format_value(initial_values.iloc[-2])} {format_value(initial_values.iloc[-1])}]"
-
-    # Obtenir les deux dernières valeurs non-NaN
     last_two_non_nan = winsorized_values.iloc[-2:]
     winsorized_text = f"[{format_value(winsorized_values.iloc[0])} {format_value(winsorized_values.iloc[1])}]\n[{format_value(last_two_non_nan.iloc[0])} {format_value(last_two_non_nan.iloc[1])}]"
 
     ax.annotate(initial_text, xy=(0.75, 0.75), xycoords='axes fraction', fontsize=6, ha='left', va='top', color='blue')
-    ax.annotate(winsorized_text, xy=(0.75, 0.65), xycoords='axes fraction', fontsize=6, ha='left', va='top',
-                color='red')
+    ax.annotate(winsorized_text, xy=(0.75, 0.65), xycoords='axes fraction', fontsize=6, ha='left', va='top', color='red')
 
-    # Compter et afficher le nombre de NaN restants
     nan_count = winsorized_values_after.isna().sum()
     inf_count = np.isinf(winsorized_values_after).sum()
+    nan_proportion = nan_count / len(winsorized_values_after)
+    color_proportion = 'green' if nan_proportion < 0.3 else 'red'
 
-    ax.annotate(f"Winsorized column:\n Remaining NaN: {nan_count} and Inf: {inf_count} // nb period: {len(winsorized_values_after)}",
-                xy=(0.05, 0.85), xycoords='axes fraction',
-                fontsize=8, ha='left', va='top', color='red')
+    # Créer le texte d'annotation principal sans la proportion de NaN
+    nan_count = winsorized_values_after.isna().sum()
+    inf_count = np.isinf(winsorized_values_after).sum()
+    nan_proportion = nan_count / len(winsorized_values_after)
+    color_proportion = 'green' if nan_proportion < 0.3 else 'red'
 
+    # Créer le texte d'annotation de base
+    annotation_text = (
+        f"Winsorized column:\n"
+        f"Remaining NaN: {nan_count}\n"
+        f"Remaining Inf: {inf_count}\n"
+        f"nb period: {len(winsorized_values_after)}\n"
+        f"% de np.nan : {nan_proportion:.2%}"
+    )
+
+    # Ajouter les informations supplémentaires en fonction de la colonne
     if column == 'range_strength_10_32' and range_strength_percent_in_range_10_32 is not None:
-        ax.annotate(f"% time in range: {range_strength_percent_in_range_10_32:.2f}%",
-                    xy=(0.05, 0.75), xycoords='axes fraction',
-                    fontsize=8, ha='left', va='top', color='green')
-    if column == 'range_strength_5_23' and range_strength_percent_in_range_5_23 is not None:
-        ax.annotate(f"% time in range: {range_strength_percent_in_range_5_23:.2f}%",
-                    xy=(0.05, 0.75), xycoords='axes fraction',
-                    fontsize=8, ha='left', va='top', color='green')
-    if column == 'market_regimeADX' and regimeAdx_pct_infThreshold is not None:
-        ax.annotate(f"% ADX < threshold: {regimeAdx_pct_infThreshold:.2f}%",
-                    xy=(0.05, 0.65), xycoords='axes fraction',
-                    fontsize=8, ha='left', va='top', color='green')
+        annotation_text += f"\n% time in range: {range_strength_percent_in_range_10_32:.2f}%"
+    elif column == 'range_strength_5_23' and range_strength_percent_in_range_5_23 is not None:
+        annotation_text += f"\n% time in range: {range_strength_percent_in_range_5_23:.2f}%"
+    elif column == 'market_regimeADX' and regimeAdx_pct_infThreshold is not None:
+        annotation_text += f"\n% ADX < threshold: {regimeAdx_pct_infThreshold:.2f}%"
 
-"""
-def plot_histograms(columns, figsize=(32, 24)):
+    # Ajouter l'annotation principale
+    ax.annotate(
+        annotation_text,
+        xy=(0.05, 0.85),
+        xycoords='axes fraction',
+        fontsize=6,
+        ha='left',
+        va='top',
+        color=color_proportion,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.5)
+    )
 
-    n_columns = len(columns)
-    ncols = 8
-    nrows = (n_columns + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
-    axes = axes.flatten()
-
-    return fig, axes
-"""
 
 def plot_histograms_multi_figure(columns, figsize=(28, 20), graphs_per_figure=40):
     n_columns = len(columns)
@@ -2127,68 +2041,92 @@ print("Suppression des valeurs NAN ajoutées terminée.")
 
 print("\n")
 
-#recupere la liste du nom des features pour paramettrage
-columns = [col for col, settings in column_settings.items() if
+# Récupérer la liste du nom des features pour paramétrage
+all_columns = [col for col, settings in column_settings.items() if
                settings[4] or all(not s[4] for s in column_settings.values())]
 
+# Déterminer les colonnes à traiter en fonction du choix de l'utilisateur
+if user_choice.lower() == 'd':
+    try:
+        x, y = map(int, fig_range_input.split('_'))
+        start_index = (x - 1) * 28  # 28 graphiques par figure
+        end_index = y * 28
+        columns_to_process = all_columns[start_index:end_index]
+    except ValueError:
+        print("Erreur : Format invalide. Traitement de toutes les colonnes.")
+        columns_to_process = all_columns
+elif user_choice.lower() == 's':
+    columns_to_process = all_columns
+else:
+    columns_to_process = all_columns  # Traiter toutes les colonnes si aucun affichage n'est demandé
+
 # Initialisation des variables pour l'affichage si nécessaire
-if user_choice.lower() == 'd' or user_choice.lower() == 's':
-    figures, all_axes = plot_histograms_multi_figure(columns, figsize=(28, 20))
+if user_choice.lower() in ['d', 's']:
+    figures, all_axes = plot_histograms_multi_figure(columns_to_process, figsize=(28, 20))
 
+# Initialisation des DataFrames avec le même index que le DataFrame d'entrée
+winsorized_df = pd.DataFrame(index=features_NANReplacedVal_df.index)
+winsorized_scaledWithNanValue_df = pd.DataFrame(index=features_NANReplacedVal_df.index)
+total_features = len(columns_to_process)
 
-# Créez un DataFrame vide avant la boucle
-winsorized_df = pd.DataFrame()
-winsorized_scaledWithNanValue_df = pd.DataFrame()
-# Initialisation des listes temporaires pour stocker les colonnes
-winsorized_columns = []
-scaled_columns = []
+# Parcours de la liste des features
+for i, columnName in enumerate(columns_to_process):
+    current_feature = i+1
+    print(f"\nFeature ({current_feature}/{total_features}) -> Début du traitement de {columnName}:")
 
-# Parcours la liste des features
-for i, columnName in enumerate(columns):
-    print(f"\n")
-    print(f"Debut de traitement de {columnName}:")
+    # Récupérer les valeurs pour la winsorisation
     floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent = (
-        cropFloor_dataSource( features_NANReplacedVal_df, columnName, column_settings, nan_replacement_values))
+        cropFloor_dataSource(features_NANReplacedVal_df, columnName, column_settings, nan_replacement_values)
+    )
 
-    # Winsorisation avec les valeurs NAN
-    winsorized_valuesWithNanValue = winsorize(features_NANReplacedVal_df, columnName, floor_valueNANfiltered, crop_valueNANfiltered,
-                                        floorInf_values, cropSup_values, nan_replacement_values)
+    # Winsorisation avec les valeurs NaN
+    winsorized_valuesWithNanValue = winsorize(
+        features_NANReplacedVal_df,
+        columnName,
+        floor_valueNANfiltered,
+        crop_valueNANfiltered,
+        floorInf_values,
+        cropSup_values,
+        nan_replacement_values
+    )
 
-    # Stocker la série winsorisée dans la liste
-    winsorized_columns.append(pd.DataFrame({columnName: winsorized_valuesWithNanValue}))
+    # Assignation directe de la série winsorisée au DataFrame
+    winsorized_df[columnName] = winsorized_valuesWithNanValue
 
-    # Initialiser la colonne dans winsorized_scaledWithNanValue_df
+    # Préparation de la colonne pour la normalisation
     scaled_column = winsorized_valuesWithNanValue.copy()
 
     if nan_replacement_values is not None and columnName in nan_replacement_values:
         nan_value = nan_replacement_values[columnName]
         mask = scaled_column != nan_value
-        # Sauvegardons les positions des nan_value
+        # Sauvegarde des positions des nan_value
         nan_positions = ~mask
     else:
-        mask = slice(None)  # Sélectionne toutes les lignes si pas de nan_value
-        nan_positions = pd.Series(False, index=winsorized_df.index)  # Série de False
+        mask = scaled_column.notna()  # Sélectionne les lignes non-NaN
+        nan_positions = scaled_column.isna()  # Positions des valeurs NaN (si nécessaire)
 
     # Normalisation des valeurs
     scaler = MinMaxScaler()
     normalized_values = scaler.fit_transform(scaled_column.loc[mask].values.reshape(-1, 1)).flatten()
 
-    # Convertir la colonne en float64 si elle ne l'est pas déjà
+    # Convertir la colonne en float64 si ce n'est pas déjà le cas
     scaled_column = scaled_column.astype('float64')
 
+    # Assignation des valeurs normalisées aux positions correspondantes
     scaled_column.loc[mask] = normalized_values
 
     # Remettre les nan_value à leur place seulement s'il y en avait
     if nan_replacement_values is not None and columnName in nan_replacement_values:
         scaled_column.loc[nan_positions] = nan_value
 
-    # Stocker la série normalisée dans la liste
-    scaled_columns.append(pd.DataFrame({columnName: scaled_column}))
+    # Assignation directe de la colonne normalisée au DataFrame
+    winsorized_scaledWithNanValue_df[columnName] = scaled_column
 
     # Affichage des graphiques si demandé
-    if user_choice.lower() == 'd' or user_choice.lower() == 's':
+    if user_choice.lower() in ['d', 's']:
         winsorized_values_4Plotting = winsorized_valuesWithNanValue[
-            winsorized_valuesWithNanValue != nan_replacement_values.get(columnName, np.nan)]
+            winsorized_valuesWithNanValue != nan_replacement_values.get(columnName, np.nan)
+            ]
         print(f"   Graphiques de {columnName} avant et après les modifications (colonnes sélectionnées) :")
         print(f"   Taille de winsorized_values_after (sans NaN) pour plotting: {len(winsorized_values_4Plotting)}")
 
@@ -2205,14 +2143,25 @@ for i, columnName in enumerate(columns):
             cropSup_percent,
             all_axes[i],
             nan_replacement_values,
-            (range_strength_percent_in_range_10_32 if columnName == 'range_strength_10_32' else
-             range_strength_percent_in_range_5_23 if columnName == 'range_strength_5_23' else
-             None),
-            regimeAdx_pct_infThreshold if columnName == 'market_regimeADX' else None
+            range_strength_percent_in_range_10_32=(
+                range_strength_percent_in_range_10_32 if columnName == 'range_strength_10_32' else None
+            ),
+            range_strength_percent_in_range_5_23=(
+                range_strength_percent_in_range_5_23 if columnName == 'range_strength_5_23' else None
+            ),
+            regimeAdx_pct_infThreshold=(
+                regimeAdx_pct_infThreshold if columnName == 'market_regimeADX' else None
+            ),
+            adjust_xaxis=adjust_xaxis
         )
-# Concaténer toutes les colonnes en une seule étape pour chaque DataFrame
-winsorized_df = pd.concat(winsorized_columns, axis=1)
-winsorized_scaledWithNanValue_df = pd.concat(scaled_columns, axis=1)
+
+print("\n")
+print("Vérification finale :")
+print(f"   - Nombre de colonnes dans winsorized_df : {len(winsorized_df.columns)}")
+print(
+    f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
+assert len(winsorized_df.columns) == len(
+    winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 print(f"\n")
 print("Vérification finale :")
@@ -2278,7 +2227,7 @@ scaled_file = os.path.join(file_dir, scaled_file_name)
 print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
 
 # Affichage final des graphiques si demandé
-if user_choice.lower() == 'd' or user_choice.lower() == 's':
+if user_choice.lower() in ['d', 's']:
     if user_choice.lower() == 'd':
         try:
             x, y = map(int, fig_range_input.split('_'))
