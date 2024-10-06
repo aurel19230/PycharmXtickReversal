@@ -229,3 +229,120 @@ def load_data(file_path: str) -> pd.DataFrame:
     df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
     print_notification("Données chargées avec succès")
     return df
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+def plot_calibration_curve(y_true, y_pred_proba, n_bins=200, strategy='uniform', optimal_threshold=None,
+                           show_histogram=True):
+    """
+    Plots an improved calibration curve and distribution of predicted probabilities with TP, FP, TN, FN counts per bin.
+
+    Parameters:
+    - y_true: array-like, True binary labels (0 or 1).
+    - y_pred_proba: array-like, Predicted probabilities for the positive class.
+    - n_bins: int, Number of bins for the histogram and calibration curve (default=200).
+    - strategy: str, Strategy for calibration curve ('uniform' or 'quantile').
+    - optimal_threshold: float, The optimal decision threshold.
+    - show_histogram: bool, Whether to display the histogram.
+
+    Returns:
+    - None
+    """
+    y_true = np.array(y_true)
+    y_pred_proba = np.array(y_pred_proba)
+
+    if optimal_threshold is None:
+        raise ValueError("The 'optimal_threshold' parameter must be provided.")
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 10))
+
+    # Calibration curve
+    prob_true, prob_pred = calibration_curve(y_true, y_pred_proba, n_bins=10, strategy=strategy)
+    brier_score = brier_score_loss(y_true, y_pred_proba)
+
+    ax1.plot(prob_pred, prob_true, marker='o', linewidth=1, color='blue', label='Calibration curve')
+    ax1.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly calibrated')
+    ax1.set_title(f'Calibration Curve (Reliability Diagram)\nBrier Score: {brier_score:.4f}', fontsize=14)
+    ax1.set_xlabel('Mean Predicted Probability', fontsize=12)
+    ax1.set_ylabel('Fraction of Positives', fontsize=12)
+    ax1.legend(loc='upper left', fontsize=10)
+    ax1.grid(True)
+
+    if show_histogram:
+        bins = np.linspace(0, 1, n_bins + 1)
+        bin_width = bins[1] - bins[0]
+        bin_centers = bins[:-1] + bin_width / 2
+
+        # Initialize counts
+        tp_counts = np.zeros(n_bins)
+        fp_counts = np.zeros(n_bins)
+        tn_counts = np.zeros(n_bins)
+        fn_counts = np.zeros(n_bins)
+
+        # Assign each sample to a bin
+        bin_indices = np.digitize(y_pred_proba, bins) - 1  # Subtract 1 to get zero-based index
+        bin_indices = np.clip(bin_indices, 0, n_bins - 1)  # Ensure indices are within valid range
+
+        # Compute TP, FP, TN, FN counts per bin
+        for i in range(len(y_true)):
+            bin_idx = bin_indices[i]
+            actual = y_true[i]
+            predicted_proba = y_pred_proba[i]
+            predicted_label = int(predicted_proba >= optimal_threshold)
+
+            if actual == 1 and predicted_label == 1:
+                tp_counts[bin_idx] += 1
+            elif actual == 0 and predicted_label == 1:
+                fp_counts[bin_idx] += 1
+            elif actual == 0 and predicted_label == 0:
+                tn_counts[bin_idx] += 1
+            elif actual == 1 and predicted_label == 0:
+                fn_counts[bin_idx] += 1
+
+        # Stack the counts for plotting
+        bottom_tn = np.zeros(n_bins)
+        bottom_fp = tn_counts
+        bottom_fn = tn_counts + fp_counts
+        bottom_tp = tn_counts + fp_counts + fn_counts
+
+        # Plotting
+        ax2.bar(bin_centers, tn_counts, width=bin_width, label='TN', alpha=0.7, color='green')
+        ax2.bar(bin_centers, fp_counts, width=bin_width, bottom=bottom_tn, label='FP', alpha=0.7, color='red')
+        ax2.bar(bin_centers, fn_counts, width=bin_width, bottom=bottom_fp, label='FN', alpha=0.7, color='orange')
+        ax2.bar(bin_centers, tp_counts, width=bin_width, bottom=bottom_fn, label='TP', alpha=0.7, color='blue')
+
+        ax2.axvline(x=optimal_threshold, color='black', linestyle='--', label=f'Threshold ({optimal_threshold:.2f})')
+        ax2.set_title('Distribution of Predicted Probabilities with TP, FP, TN, FN per Bin', fontsize=14)
+        ax2.set_xlabel('Predicted Probability', fontsize=12)
+        ax2.set_ylabel('Count', fontsize=12)
+        ax2.legend(loc='upper center', fontsize=10, ncol=5)
+        ax2.grid(True)
+
+        # Add summary annotations
+        total_tp = int(np.sum(tp_counts))
+        total_fp = int(np.sum(fp_counts))
+        total_tn = int(np.sum(tn_counts))
+        total_fn = int(np.sum(fn_counts))
+        total_samples = len(y_true)
+        accuracy = (total_tp + total_tn) / total_samples
+        precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+        recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+        annotation_text = (f'Total Samples: {total_samples}\n'
+                           f'TP: {total_tp}\nFP: {total_fp}\nTN: {total_tn}\nFN: {total_fn}\n'
+                           f'Accuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Score: {f1_score:.4f}')
+
+        ax2.text(0.02, 0.98, annotation_text,
+                 transform=ax2.transAxes, va='top', ha='left', fontsize=10,
+                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+        # Adjust y-axis scale if necessary
+        max_count = max(np.max(tn_counts + fp_counts + fn_counts + tp_counts), 1)
+       # if max_count > 1000:
+        #    ax2.set_yscale('log')
+         #   ax2.set_ylabel('Count (log scale)', fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig('improved_calibration_and_distribution.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    plt.close()

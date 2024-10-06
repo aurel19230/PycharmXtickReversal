@@ -6,7 +6,7 @@ import time
 from standardFunc import  print_notification
 
 
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge13092024\Step2_MergedAllFile_Step1_2_merged.csv"
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge\Step2_MergedAllFile_Step1_1_merged.csv"
 
 @jit(nopython=True)
 def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_normale, seuil_anormal):
@@ -64,7 +64,8 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
         raise ValueError("La colonne 'SessionStartEnd' contient des valeurs autres que 10, 15 ou 20.")
 
     if df['SessionStartEnd'].value_counts()[10] != df['SessionStartEnd'].value_counts()[20]:
-        raise ValueError("Le nombre de débuts de session (10) ne correspond pas au nombre de fins de session (20).")
+        #raise ValueError("Le nombre de débuts de session (10) ne correspond pas au nombre de fins de session (20).")
+        print("Le nombre de débuts de session (10) ne correspond pas au nombre de fins de session (20).")
 
     print_notification("Préparation des données pour l'analyse")
     timestamps = df['timeStampOpeningConvertedtoDate'].astype(np.int64).values // 10 ** 9

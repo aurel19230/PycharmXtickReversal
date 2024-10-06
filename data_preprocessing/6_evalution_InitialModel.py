@@ -34,7 +34,7 @@ def verify_session_integrity(df, context=""):
     return True
 
 # Chemin du fichier
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge13092024\Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_feat_winsorized.csv"
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_30092024\merge\Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_feat_winsorized.csv"
 method = input("Choisissez la méthode (appuyez sur Entrée pour non ancrée, 'a' pour ancrée): ").lower()
 
 # 1. Chargement des données

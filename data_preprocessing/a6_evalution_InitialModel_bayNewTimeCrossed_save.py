@@ -2,7 +2,7 @@ import pandas as pd
 import xgboost as xgb
 import shap
 from sklearn.model_selection import TimeSeriesSplit
-from standardFunc import load_data, split_sessions, print_notification,plot_calibration_curve
+from standardFunc import load_data, split_sessions, print_notification, plot_calibration_curve
 
 import optuna
 import time
@@ -26,9 +26,29 @@ class CombinedMetric(Enum):
     # Constantes numériques
     PR_RECALL_TP = 1
     PROFIT_BASED =2
+
 ########################################
 #########    FUNCTION DEF      #########
 ########################################
+
+
+
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+
+
+
+
 def analyze_predictions_by_range(X_test, y_pred_proba, xgb_classifier, prob_min=0.90, prob_max=1.00,
                                  top_n_features=None, output_dir=r'C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_02102024\proba_predictions_analysis'):
     import numpy as np
@@ -255,6 +275,10 @@ def average_learning_curves(learning_curve_data_list):
     }
 
 
+
+
+
+
 def calculate_scores_for_cv_split(params, num_boost_round, X_train, y_train, X_val, y_val, weight_dict, combined_metric,metric_dict):
     """
     Calcule les scores d'entraînement et de validation pour un split de validation croisée.
@@ -301,16 +325,7 @@ def print_callback(study, trial, X_train, y_train):
     print(f"Score du dernier pli : {trial.user_attrs['last_score']:.4f}")
     print(f"Variance des scores : {trial.user_attrs['score_variance']:.4f}")
 
-    # Récupérer les valeurs de TP et FP
-    total_tp = trial.user_attrs.get('total_tp', 0)
-    total_fp = trial.user_attrs.get('total_fp', 0)
-    tp_difference = trial.user_attrs.get('tp_difference', 0)
-    tp_percentage = trial.user_attrs.get('tp_percentage', 0)
 
-    print(f"\nNombre de TP (True Positives) : {total_tp}")
-    print(f"Nombre de FP (False Positives): {total_fp}")
-    print(f"Différence (TP - FP)          : {tp_difference}")
-    print(f"Pourcentage de TP             : {tp_percentage:.2f}%")
     if learning_curve_data:
         train_scores = learning_curve_data['train_scores_mean']
         val_scores = learning_curve_data['val_scores_mean']
@@ -871,70 +886,64 @@ def analyze_nan_impact(model, X, feature_names, nan_value, shap_values=None):
     plt.savefig('shap_importance_vs_percentage_nan.png')
     plt.close()
 
+def combined_metric(y_true, y_pred_proba, metric_dict):
+    # Initialiser metric_dict s'il n'est pas fourni
+    if metric_dict is None:
+        metric_dict = {}
+    # Extraire les paramètres depuis le dictionnaire avec des valeurs par défaut
+    threshold = metric_dict.get('threshold', 0.4)
+    tp_weight = metric_dict.get('tp_weight', 0.6)
+    fp_penalty = metric_dict.get('fp_penalty', 0.1)
+    recall_weight = metric_dict.get('recall_weight', 0.5)
+    precision_weight = metric_dict.get('precision_weight', 0.0)
+    f1_weight = metric_dict.get('f1_weight', 0.0)
+    auc_weight = metric_dict.get('auc_weight', 0.0)
+    potential_profit_weight = metric_dict.get('potential_profit_weight', 0.0)
 
+    print("--- combined_metric ---")
 
-def combined_metric_precision_recall_tp_ratio(y_true, y_pred_proba, metric_dict):
-
-
-
-    threshold = metric_dict.get('threshold', 0.7)
-    print(f"--- combined_metric_precision_recall_tp_ratio avec {threshold}---")
+    # Calcul des métriques
     y_pred = (y_pred_proba > threshold).astype(int)
-
+    auc = roc_auc_score(y_true, y_pred_proba)
     precision = precision_score(y_true, y_pred, zero_division=0)
     recall = recall_score(y_true, y_pred, zero_division=0)
-    tp_ratio = np.sum((y_true == 1) & (y_pred == 1)) / len(y_true)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+    potential_profit = 0.9  # Non utilisé ici
+    tp_score = tpr * tp_weight
+    fp_score = (1 - fpr) * fp_penalty
 
-    precision_weight = metric_dict.get('precision_weight', 0.4)
-    recall_weight = metric_dict.get('recall_weight', 0.3)
-    tp_ratio_weight = metric_dict.get('tp_ratio_weight', 0.3)
-
-    combined_score = (
-        (precision * precision_weight) +
-        (recall * recall_weight) +
-        (tp_ratio * tp_ratio_weight)
+    # Calcul de la somme des poids
+    sum_of_weights = (
+        auc_weight + precision_weight + recall_weight + f1_weight +
+        potential_profit_weight + tp_weight + fp_penalty
     )
 
-    sum_of_weights = precision_weight + recall_weight + tp_ratio_weight
+    # Calcul du score combiné
+    combined_score = (
+        (auc * auc_weight) +
+        (precision * precision_weight) +
+        (recall * recall_weight) +
+        (f1 * f1_weight) +
+        (potential_profit * potential_profit_weight) +
+        tp_score +
+        fp_score
+    )
+
+    # Normaliser le score
     normalized_score = combined_score / sum_of_weights
 
     return normalized_score
-
-def combined_metric_profit_based(y_true, y_pred_proba, metric_dict):
-
-
-
-    # Extraire le seuil
-    threshold = metric_dict.get('threshold', 0.7)
-    print(f"--- combined_metric_profit_based avec {threshold}---")
-
-    # Convertir les probabilités en prédictions binaires
-    y_pred = (y_pred_proba > threshold).astype(int)
-
-    # Calculer les composants de la matrice de confusion
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-
-    # Récupérer les valeurs monétaires
-    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
-    loss_per_fp = metric_dict.get('loss_per_fp', -1.0)
-
-    # Calculer le profit attendu
-    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp)
-
-    # Normaliser par le nombre total d'échantillons
-    normalized_profit = total_profit / len(y_true)
-    return normalized_profit
-
-def objective(trial, class_weights, weight_dict, X_train, y_train, device,
-              num_boost_min, num_boost_max, nb_split_tscv,fixed_threhold_value,
-              use_optimized_threshold, learning_curve_enabled=False,
-              use_auc_roc=False, combined_metric_method=CombinedMetric.PR_RECALL_TP):
+def objective(trial, class_weights, weight_dict, X_train, y_train, device, num_boost_min, num_boost_max, nb_split_tscv,
+              use_optimized_threshold, learning_curve_enabled=False, metric_dict=None, use_auc_roc=False):
     params = {
-        'max_depth': trial.suggest_int('max_depth', 5, 12),
+        'max_depth': trial.suggest_int('max_depth', 4, 12),
         'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.05, log=True),
         'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
         'subsample': trial.suggest_float('subsample', 0.75, 1),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.3, 0.7),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.3, 0.70),
         'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.3, 0.9),
         'objective': 'binary:logistic',
         'eval_metric': 'auc',
@@ -943,45 +952,6 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
         'tree_method': 'hist',
         'device': device,
     }
-
-    # Initialiser les compteurs de TP et FP
-    total_tp = 0
-    total_fp = 0
-    total_samples = 0
-
-    print(fixed_threhold_value)
-    # Sélection de la fonction de métrique appropriée
-    if combined_metric_method == CombinedMetric.PR_RECALL_TP:
-        selected_metric = combined_metric_precision_recall_tp_ratio
-        # Suggérer les poids pour la métrique combinée
-        precision_weight = trial.suggest_float('precision_weight', 0.2, 0.7)
-        recall_weight = trial.suggest_float('recall_weight', 0, 0)
-        tp_ratio_weight = trial.suggest_float('tp_ratio_weight', 0.2, 0.7)
-
-        # Normaliser les poids pour qu'ils somment à 1
-        total_weight = precision_weight + recall_weight + tp_ratio_weight
-        precision_weight /= total_weight
-        recall_weight /= total_weight
-        tp_ratio_weight /= total_weight
-
-        # Créer le metric_dict avec les poids
-        metric_dict = {
-            'threshold': fixed_threhold_value,  # Seuil fixe
-            'precision_weight': precision_weight,
-            'recall_weight': recall_weight,
-            'tp_ratio_weight': tp_ratio_weight,
-        }
-    elif combined_metric_method == CombinedMetric.PROFIT_BASED:
-        selected_metric = combined_metric_profit_based
-
-
-        metric_dict = {
-            'threshold': fixed_threhold_value,
-            'profit_per_tp': 1,
-            'loss_per_fp': -1.1,
-        }
-    else:
-        raise ValueError(f"Méthode de métrique combinée non reconnue: {combined_metric_method}")
 
     num_boost_round = trial.suggest_int('num_boost_round', num_boost_min, num_boost_max)
 
@@ -1019,13 +989,6 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
             )
 
             y_val_pred_proba = model.predict(dval)
-            y_val_pred = (y_val_pred_proba > metric_dict['threshold']).astype(int)
-
-            # Calculer la matrice de confusion
-            tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
-            total_tp += tp
-            total_fp += fp
-            total_samples += len(y_val_cv)
 
             if use_optimized_threshold:
                 optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
@@ -1034,7 +997,7 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
             if use_auc_roc:
                 val_score = roc_auc_score(y_val_cv, y_val_pred_proba)
             else:
-                val_score = selected_metric(
+                val_score = combined_metric(
                     y_val_cv,
                     y_val_pred_proba,
                     metric_dict=metric_dict
@@ -1079,12 +1042,7 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
                 )
 
                 y_val_pred_proba = model.predict(dval)
-                y_val_pred = (y_val_pred_proba > metric_dict['threshold']).astype(int)
-                # Calculer la matrice de confusion
-                tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
-                total_tp += tp
-                total_fp += fp
-                total_samples += len(y_val_cv)
+
                 if use_optimized_threshold:
                     optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
                     optimal_thresholds.append(optimal_threshold)
@@ -1092,7 +1050,7 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
                 if use_auc_roc:
                     val_score = roc_auc_score(y_val_cv, y_val_pred_proba)
                 else:
-                    val_score = selected_metric(
+                    val_score = combined_metric(
                         y_val_cv,
                         y_val_pred_proba,
                         metric_dict=metric_dict
@@ -1107,7 +1065,7 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
                         num_boost_round,
                         X_train_cv, y_train_cv,
                         X_val_cv, y_val_cv,
-                        weight_dict, selected_metric, metric_dict
+                        weight_dict, combined_metric, metric_dict
                     )
 
                     # Ajouter les données pour ce split
@@ -1133,18 +1091,6 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
     trial.set_user_attr('score_variance', score_variance)
     trial.set_user_attr('score_std', score_std)
 
-    # Après la boucle de validation croisée
-    if total_samples > 0:
-        tp_percentage = (total_tp / total_samples) * 100
-    else:
-        tp_percentage = 0
-
-    # Stocker les valeurs dans trial.user_attrs
-    trial.set_user_attr('total_tp', total_tp)
-    trial.set_user_attr('total_fp', total_fp)
-    trial.set_user_attr('tp_difference', total_tp - total_fp)
-    trial.set_user_attr('tp_percentage', tp_percentage)
-
     if use_optimized_threshold and optimal_thresholds:
         average_optimal_threshold = np.mean(optimal_thresholds)
         trial.set_user_attr('average_optimal_threshold', average_optimal_threshold)
@@ -1163,8 +1109,6 @@ def objective(trial, class_weights, weight_dict, X_train, y_train, device,
                 )
 
     return mean_cv_score
-
-
 ########################################
 #########   END FUNCTION DEF   #########
 ########################################
@@ -1173,7 +1117,6 @@ def train_and_evaluate_XGBOOST_model(
         df=None,
         n_trials_optimization=4,
         device='cuda',
-        fixed_threhold_value=0.7,
         use_optimized_threshold=False,
         num_boost_min=400,
         num_boost_max=1000,
@@ -1185,7 +1128,6 @@ def train_and_evaluate_XGBOOST_model(
         top_N_features=None,  # Nouvel argument,
         feature_columns=None,
         combined_metric_method=CombinedMetric.PR_RECALL_TP
-
 ):
 
     # Gestion des valeurs NaN
@@ -1252,8 +1194,10 @@ def train_and_evaluate_XGBOOST_model(
     feature_names = X_train.columns.tolist()
 
     # **Ajout de la réduction des features ici, avant l'optimisation**
-
-    feature_names = X_train.columns.tolist()
+    if top_N_features is not None:
+        X_train, X_test, feature_names = combined_metric(X_train, y_train, X_test, top_N_features,n_trials=7)
+    else:
+        feature_names = X_train.columns.tolist()
 
     print_notification('###### FIN: CHARGER ET PRÉPARER LES DONNÉES  ##########', color="blue")
 
@@ -1273,12 +1217,10 @@ def train_and_evaluate_XGBOOST_model(
             num_boost_min,
             num_boost_max,
             nb_split_tscv,
-            fixed_threhold_value,
             use_optimized_threshold,
             learning_curve_enabled=learning_curve_enabled,
-            use_auc_roc=use_auc_roc ,
-            combined_metric_method=combined_metric_method
-
+            metric_dict=metric_dict,
+            use_auc_roc=use_auc_roc
         ),
         n_trials=n_trials_optimization,
         callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train)]
@@ -1298,36 +1240,17 @@ def train_and_evaluate_XGBOOST_model(
     optimal_threshold = best_trial.user_attrs['average_optimal_threshold']
     print(f"Seuil utilisé : {optimal_threshold:.4f}")
 
-    # Créer une copie de best_params
     best_params = study.best_params.copy()
-
-    # Extraire num_boost_round de best_params
-    num_boost_round = best_params.pop('num_boost_round', None)
-
-    if num_boost_round is None:
-        raise ValueError("num_boost_round n'est pas présent dans best_params")
-
-    # Filtrer best_params pour ne conserver que les paramètres reconnus par XGBoost
-    xgb_valid_params = [
-        'max_depth', 'learning_rate', 'min_child_weight', 'subsample',
-        'colsample_bytree', 'colsample_bylevel', 'objective', 'eval_metric',
-        'random_state', 'scale_pos_weight', 'tree_method', 'device'
-    ]
-
-    best_params = {key: value for key, value in best_params.items() if key in xgb_valid_params}
-
-    # Ajouter les autres paramètres nécessaires si besoin
     best_params['objective'] = 'binary:logistic'
     best_params['eval_metric'] = 'auc'
     best_params['tree_method'] = 'hist'
     best_params['device'] = device
 
-    # Afficher les paramètres finaux pour vérification
-    print("Paramètres utilisés pour l'entraînement du modèle final:")
-    print(best_params)
+    num_boost_round = best_params.pop('num_boost_round')
 
     sample_weights = np.array([weight_dict[label] for label in y_train])
     dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weights)
+    dtest = xgb.DMatrix(X_test, label=y_test)
 
     final_model = xgb.train(
         best_params,
@@ -1336,7 +1259,6 @@ def train_and_evaluate_XGBOOST_model(
         evals=[(dtrain, 'train')],
         verbose_eval=False
     )
-
     print_notification('###### FIN: ENTRAINEMENT DU MODÈLE FINAL ##########', color="blue")
     # Analyser l'impact des valeurs NaN
     print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
@@ -1349,7 +1271,6 @@ def train_and_evaluate_XGBOOST_model(
 
     # Prédiction et évaluation
     print_notification('###### DEBUT: PREDICTION ET EVALUATION DU MOBEL FINAL (TEST) ##########', color="blue")
-    dtest = xgb.DMatrix(X_test, label=y_test)
     y_pred_proba = final_model.predict(dtest)
     y_pred = (y_pred_proba > optimal_threshold).astype(int)
 
@@ -1364,16 +1285,12 @@ def train_and_evaluate_XGBOOST_model(
 
 
 
-    ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur XTEST ##########
+    ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur XTRAIN ##########
 
     plot_calibration_curve(y_test, y_pred_proba, n_bins=50, strategy='uniform',optimal_threshold=optimal_threshold)
 
-
     print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ET COURBE ROC ##########',
                        color="blue")
-
-
-
     print("\nDistribution des probabilités prédites sur XTest:")
     print(f"Min : {y_pred_proba.min():.4f}")
     print(f"Max : {y_pred_proba.max():.4f}")
@@ -1745,7 +1662,7 @@ def train_and_evaluate_XGBOOST_model(
     # Masquer la diagonale (interactions d'une feature avec elle-même)
     np.fill_diagonal(interaction_df.values, 0)
 
-    # Sélection des top N interactions (par exemple, top 10)
+    # Sélection des top N interactions (par exemple, top 30)
     N = 30
     top_interactions = interaction_df.unstack().sort_values(ascending=False).head(N)
 
@@ -1767,26 +1684,15 @@ def train_and_evaluate_XGBOOST_model(
 
     # Heatmap des interactions pour les top features
     top_features = interaction_df.sum().sort_values(ascending=False).head(N).index
-    plt.figure(figsize=(26, 20))  # Augmenter la taille de la figure
-
-    # Créer la heatmap avec des paramètres ajustés
-    sns.heatmap(interaction_df.loc[top_features, top_features],
-                annot=True,
-                cmap='coolwarm',
-                fmt='d',#'.2f',
-                annot_kws={'size': 7},  # Réduire la taille de la police des annotations
-                square=True,  # Assurer que les cellules sont carrées
-                linewidths=0.5,  # Ajouter des lignes entre les cellules
-                cbar_kws={'shrink': .8})  # Ajuster la taille de la barre de couleur
-
-    plt.title(f"SHAP Interaction Values for Top {N} Features", fontsize=16)
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(interaction_df.loc[top_features, top_features], annot=True, cmap='coolwarm', fmt='.2f')
+    plt.title("SHAP Interaction Values for Top 10 Features", fontsize=16)
     plt.tight_layout()
-    plt.xticks(rotation=90, ha='center')  # Rotation verticale des labels de l'axe x
-    plt.yticks(rotation=0)  # S'assurer que les labels de l'axe y sont horizontaux
     plt.savefig('feature_interaction_heatmap.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    print("Graphique d'interaction sauvegardé sous 'feature_interaction_heatmap.png'")
+    print(
+        "Graphiques d'interaction sauvegardés sous 'top_feature_interactions.png' et 'feature_interaction_heatmap.png'")
     print_notification("###### FIN: CALCUL DES VALEURS D'INTERACTION SHAP ##########", color="blue")
     ###### FIN: CALCUL DES VALEURS D'INTERACTION SHAP ##########
 
@@ -1810,18 +1716,27 @@ if __name__ == "__main__":
     FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
 
     DEVICE_ = 'cuda'
-    FIXED_THREHOLD_VALUE=0.5
     USE_OPTIMIZED_THRESHOLD_ = False
-    COMBINED_METRIC_METHOD=CombinedMetric.PROFIT_BASED
-    NUM_BOOST_MIN_ = 400
-    NUM_BOOST_MAX_ = 1000
-    N_TRIALS_OPTIMIZATION_ =200
+    COMBINED_METRIC_METHOD=CombinedMetric.PR_RECALL_TP
+    NUM_BOOST_MIN_ = 300
+    NUM_BOOST_MAX_ = 900
+    N_TRIALS_OPTIMIZATION_ =10
     NB_SPLIT_TSCV_ = 6
     NANVALUE_TO_NEWVAL_ = np.nan #900000.123456789
     LEARNING_CURVE_ENABLED = False
     random_state_seed = 30
     USE_AUC_ROC = False  # False combined metric
     # Définir les paramètres supplémentaires pour combined_metric
+    METRIC_DICT = {
+        'threshold': 0.5,
+        'tp_weight': 0.65,
+        'fp_penalty': 0.1,
+        'recall_weight': 0.,
+        'precision_weight': 0.6,
+        'f1_weight': 0.0,
+        'auc_weight': 0.0,
+        'potential_profit_weight': 0.4
+    }
 
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
     file_path = FILE_PATH_
@@ -1872,6 +1787,7 @@ if __name__ == "__main__":
             ]]
 
 
+    #for top_N in [10, 20, 30, 50]:
     for top_N in [200]:
         top_N=None
         print(f"\n\n### Entraînement avec les top {top_N} features ###\n")
@@ -1879,13 +1795,13 @@ if __name__ == "__main__":
             df=df,
             n_trials_optimization=N_TRIALS_OPTIMIZATION_,
             device=DEVICE_,
-            fixed_threhold_value=FIXED_THREHOLD_VALUE,
             use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,
             num_boost_min=NUM_BOOST_MIN_,
             num_boost_max=NUM_BOOST_MAX_,
             nb_split_tscv=NB_SPLIT_TSCV_,
             nanvalue_to_newval=NANVALUE_TO_NEWVAL_,
             learning_curve_enabled=LEARNING_CURVE_ENABLED,
+            metric_dict=METRIC_DICT,
             use_auc_roc=USE_AUC_ROC,
             top_N_features=top_N,
             feature_columns=feature_columns,

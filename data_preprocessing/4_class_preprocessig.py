@@ -8,10 +8,10 @@ import os
 
 # Charger les données
 # Nom du fichier
-file_name = "Step3_Step2_MergedAllFile_Step1_2_merged_extractOnly220LastFullSession.csv"
+file_name = "Step3_Step2_MergedAllFile_Step0_4_merged_extractOnly220LastFullSession.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge13092024"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_30092024\\merge"
 
 # Combiner le chemin du répertoire avec le nom du fichier
 file_path = os.path.join(directory_path, file_name)
