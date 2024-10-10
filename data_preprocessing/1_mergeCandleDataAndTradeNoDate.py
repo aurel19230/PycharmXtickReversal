@@ -96,7 +96,7 @@ def main():
     directory = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL_04102024/"
     directoryMerge = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_4TP_1SL_04102024/merge"
 
-    suffixe = "_0"
+    suffixe = "_4"
     withDate = "_withDate" if add_date_column.lower() == 'd' else ""
     candles_file = f"of_raw_candles_dataNew{suffixe}.csv"
     trades_file = f"of_trade_result_dataNew{suffixe}.csv"

@@ -231,14 +231,25 @@ def load_data(file_path: str) -> pd.DataFrame:
     return df
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
-def plot_calibration_curve(y_true, y_pred_proba, n_bins=200, strategy='uniform', optimal_threshold=None,
-                           show_histogram=True):
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+
+
+def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None, n_bins=200, strategy='uniform',
+                           optimal_threshold=None, show_histogram=True,user_input=None):
     """
-    Plots an improved calibration curve and distribution of predicted probabilities with TP, FP, TN, FN counts per bin.
+    Plots an improved calibration curve, distribution of predicted probabilities,
+    and optionally FP/TP rates by a specified feature.
 
     Parameters:
     - y_true: array-like, True binary labels (0 or 1).
     - y_pred_proba: array-like, Predicted probabilities for the positive class.
+    - X_test: DataFrame, optional, Test features containing the column specified by feature_name.
+    - feature_name: str, optional, Name of the feature to use for the third plot.
     - n_bins: int, Number of bins for the histogram and calibration curve (default=200).
     - strategy: str, Strategy for calibration curve ('uniform' or 'quantile').
     - optimal_threshold: float, The optimal decision threshold.
@@ -253,19 +264,21 @@ def plot_calibration_curve(y_true, y_pred_proba, n_bins=200, strategy='uniform',
     if optimal_threshold is None:
         raise ValueError("The 'optimal_threshold' parameter must be provided.")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 10))
+    # Determine the number of subplots based on whether feature_name is provided
+    n_plots = 3 if feature_name is not None and X_test is not None else 2
+    fig, axes = plt.subplots(1, n_plots, figsize=(15 * n_plots // 2, 10))
 
     # Calibration curve
     prob_true, prob_pred = calibration_curve(y_true, y_pred_proba, n_bins=10, strategy=strategy)
     brier_score = brier_score_loss(y_true, y_pred_proba)
 
-    ax1.plot(prob_pred, prob_true, marker='o', linewidth=1, color='blue', label='Calibration curve')
-    ax1.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly calibrated')
-    ax1.set_title(f'Calibration Curve (Reliability Diagram)\nBrier Score: {brier_score:.4f}', fontsize=14)
-    ax1.set_xlabel('Mean Predicted Probability', fontsize=12)
-    ax1.set_ylabel('Fraction of Positives', fontsize=12)
-    ax1.legend(loc='upper left', fontsize=10)
-    ax1.grid(True)
+    axes[0].plot(prob_pred, prob_true, marker='o', linewidth=1, color='blue', label='Calibration curve')
+    axes[0].plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly calibrated')
+    axes[0].set_title(f'Calibration Curve (Reliability Diagram)\nBrier Score: {brier_score:.4f}', fontsize=14)
+    axes[0].set_xlabel('Mean Predicted Probability', fontsize=12)
+    axes[0].set_ylabel('Fraction of Positives', fontsize=12)
+    axes[0].legend(loc='upper left', fontsize=10)
+    axes[0].grid(True)
 
     if show_histogram:
         bins = np.linspace(0, 1, n_bins + 1)
@@ -305,17 +318,18 @@ def plot_calibration_curve(y_true, y_pred_proba, n_bins=200, strategy='uniform',
         bottom_tp = tn_counts + fp_counts + fn_counts
 
         # Plotting
-        ax2.bar(bin_centers, tn_counts, width=bin_width, label='TN', alpha=0.7, color='green')
-        ax2.bar(bin_centers, fp_counts, width=bin_width, bottom=bottom_tn, label='FP', alpha=0.7, color='red')
-        ax2.bar(bin_centers, fn_counts, width=bin_width, bottom=bottom_fp, label='FN', alpha=0.7, color='orange')
-        ax2.bar(bin_centers, tp_counts, width=bin_width, bottom=bottom_fn, label='TP', alpha=0.7, color='blue')
+        axes[1].bar(bin_centers, tn_counts, width=bin_width, label='TN', alpha=0.7, color='green')
+        axes[1].bar(bin_centers, fp_counts, width=bin_width, bottom=bottom_tn, label='FP', alpha=0.7, color='red')
+        axes[1].bar(bin_centers, fn_counts, width=bin_width, bottom=bottom_fp, label='FN', alpha=0.7, color='orange')
+        axes[1].bar(bin_centers, tp_counts, width=bin_width, bottom=bottom_fn, label='TP', alpha=0.7, color='blue')
 
-        ax2.axvline(x=optimal_threshold, color='black', linestyle='--', label=f'Threshold ({optimal_threshold:.2f})')
-        ax2.set_title('Distribution of Predicted Probabilities with TP, FP, TN, FN per Bin', fontsize=14)
-        ax2.set_xlabel('Predicted Probability', fontsize=12)
-        ax2.set_ylabel('Count', fontsize=12)
-        ax2.legend(loc='upper center', fontsize=10, ncol=5)
-        ax2.grid(True)
+        axes[1].axvline(x=optimal_threshold, color='black', linestyle='--',
+                        label=f'Threshold ({optimal_threshold:.2f})')
+        axes[1].set_title('Repartition des TP, FP, TN, FN per Bin', fontsize=14)
+        axes[1].set_xlabel('Proportion de prédictions négatives (fonction du choix du seuil)', fontsize=12)
+        axes[1].set_ylabel('Count', fontsize=12)
+        axes[1].legend(loc='upper center', fontsize=10, ncol=5)
+        axes[1].grid(True)
 
         # Add summary annotations
         total_tp = int(np.sum(tp_counts))
@@ -332,17 +346,43 @@ def plot_calibration_curve(y_true, y_pred_proba, n_bins=200, strategy='uniform',
                            f'TP: {total_tp}\nFP: {total_fp}\nTN: {total_tn}\nFN: {total_fn}\n'
                            f'Accuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Score: {f1_score:.4f}')
 
-        ax2.text(0.02, 0.98, annotation_text,
-                 transform=ax2.transAxes, va='top', ha='left', fontsize=10,
-                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[1].text(0.02, 0.98, annotation_text,
+                     transform=axes[1].transAxes, va='top', ha='left', fontsize=10,
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
-        # Adjust y-axis scale if necessary
-        max_count = max(np.max(tn_counts + fp_counts + fn_counts + tp_counts), 1)
-       # if max_count > 1000:
-        #    ax2.set_yscale('log')
-         #   ax2.set_ylabel('Count (log scale)', fontsize=12)
+    if feature_name is not None and X_test is not None:
+        # FP and TP rates by specified feature
+        feature_values = X_test[feature_name].values
+        n_bins_feature = 25  # You can adjust this
+        bins = pd.cut(feature_values, bins=n_bins_feature)
+
+        # Calculate FP and TP rates for each bin
+        rates = pd.DataFrame({
+            'feature': feature_values,
+            'y_true': y_true,
+            'y_pred': y_pred_proba >= optimal_threshold
+        }).groupby(bins).apply(lambda x: pd.Series({
+            'FP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 0)).sum() / len(x),
+            'TP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 1)).sum() / len(x)
+        }))
+
+        # Plotting
+        x = np.arange(len(rates))
+        width = 0.35
+
+        axes[2].bar(x - width / 2, rates['FP_rate'], width, label='Taux de Faux Positifs', color='red', alpha=0.7)
+        axes[2].bar(x + width / 2, rates['TP_rate'], width, label='Taux de Vrais Positifs', color='green', alpha=0.7)
+
+        axes[2].set_ylabel('Taux', fontsize=10.)
+        axes[2].set_xlabel(feature_name, fontsize=10)
+        axes[2].set_title(f'Taux de FP et TP par {feature_name}', fontsize=10)
+        axes[2].set_xticks(x)
+        axes[2].set_xticklabels([f'{b.left:.2f}-{b.right:.2f}' for b in rates.index], rotation=45, ha='right')
+        axes[2].legend(fontsize=10)
+        axes[2].grid(True)
 
     plt.tight_layout()
-    plt.savefig('improved_calibration_and_distribution.png', dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.savefig('improved_calibration_distribution_and_rates.png', dpi=300, bbox_inches='tight')
+    if user_input.lower() == 'd':
+        plt.show()  # Afficher les graphiques
     plt.close()
