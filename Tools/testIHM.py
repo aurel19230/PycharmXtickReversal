@@ -1,63 +1,88 @@
-import tkinter as tk
-from tkinter import ttk
 import pandas as pd
-import json
-import os
+import numpy as np
+import numba as nb
+import time
 
-# Exemple de DataFrame (à remplacer par ton propre DataFrame)
-data = {'class_binaire': [1, 0], 'candleDir': [1, -1], 'date': ['2023-01-01', '2023-01-02'],
-        'trade_category': ['A', 'B'], 'SessionStartEnd': [10, 20], 'total_count_abv': [5, 10],
-        'total_count_blw': [3, 8], 'meanVolx': [2.5, 3.1], 'deltaTimestampOpening': [60, 45],
-        'deltaTimestampOpeningSection5min': [15, 20], 'deltaTimestampOpeningSection5index': [3, 4],
-        'deltaTimestampOpeningSection30min': [100, 120]}
-df = pd.DataFrame(data)
+@nb.njit
+def calculate_session_duration(session_start_end, delta_timestamp):
+    total_minutes = 0
+    residual_minutes = 0
+    session_start = -1
+    complete_sessions = 0
+    in_session = False
 
-# Fichier pour sauvegarder les colonnes sélectionnées
-save_file = "selected_columns.json"
+    # Gérer le cas où le fichier ne commence pas par un 10
+    if session_start_end[0] != 10:
+        first_20_index = np.where(session_start_end == 20)[0][0]
+        residual_minutes += delta_timestamp[first_20_index] - delta_timestamp[0]
 
-# Fonction pour charger les colonnes sélectionnées depuis le fichier
-def load_selected_columns():
-    if os.path.exists(save_file):
-        with open(save_file, 'r') as f:
-            return json.load(f)
-    else:
-        # Si le fichier n'existe pas, aucune colonne n'est sélectionnée par défaut
-        return {col: False for col in df.columns}
+    for i in range(len(session_start_end)):
+        if session_start_end[i] == 10:
+            session_start = i
+            in_session = True
+        elif session_start_end[i] == 20:
+            if in_session:
+                # Session complète
+                total_minutes += delta_timestamp[i] - delta_timestamp[session_start]
+                complete_sessions += 1
+                in_session = False
+            else:
+                # 20 sans 10 précédent, ne devrait pas arriver mais gérons le cas
+                residual_minutes += delta_timestamp[i] - delta_timestamp[session_start if session_start != -1 else 0]
 
-# Fonction pour enregistrer les colonnes sélectionnées dans un fichier
-def save_selected_columns(selected_columns):
-    with open(save_file, 'w') as f:
-        json.dump(selected_columns, f)
+    # Gérer le cas où le fichier se termine au milieu d'une session
+    if in_session:
+        residual_minutes += delta_timestamp[-1] - delta_timestamp[session_start]
+    elif session_start_end[-1] != 20:
+        # Si la dernière valeur n'est pas 20 et qu'on n'est pas dans une session,
+        # ajoutons le temps depuis le dernier 20 jusqu'à la fin
+        last_20_index = np.where(session_start_end == 20)[0][-1]
+        residual_minutes += delta_timestamp[-1] - delta_timestamp[last_20_index]
 
-# Fonction pour créer l'interface graphique de sélection des colonnes
-def select_columns(df):
-    root = tk.Tk()
-    root.title("Sélection des colonnes")
+    return complete_sessions, total_minutes, residual_minutes
 
-    selected_columns = load_selected_columns()  # Charger les choix précédents
+def calculate_and_display_sessions(df):
+    session_start_end = df['SessionStartEnd'].astype(np.int32).values
+    delta_timestamp = df['deltaTimestampOpening'].astype(np.float64).values
 
-    def update_columns():
-        nonlocal selected_columns
-        selected_columns = {col: var_dict[col].get() for col in df.columns}
-        save_selected_columns(selected_columns)  # Sauvegarder les choix
-        root.quit()
+    complete_sessions, total_minutes, residual_minutes = calculate_session_duration(session_start_end, delta_timestamp)
 
-    # Crée un dictionnaire pour stocker les variables associées à chaque checkbox
-    var_dict = {col: tk.BooleanVar(value=selected_columns.get(col, False)) for col in df.columns}
+    session_duration_hours = 23
+    session_duration_minutes = session_duration_hours * 60
 
-    # Interface des colonnes à sélectionner
-    for i, col in enumerate(df.columns):
-        checkbox = ttk.Checkbutton(root, text=col, variable=var_dict[col])
-        checkbox.grid(row=i, column=0, sticky='w')
+    residual_sessions = residual_minutes / session_duration_minutes
+    total_sessions = complete_sessions + residual_sessions
 
-    # Bouton pour confirmer la sélection
-    confirm_button = ttk.Button(root, text="Confirmer", command=update_columns)
-    confirm_button.grid(row=len(df.columns) + 1, column=0)
+    #print(f"Nombre de sessions complètes : {complete_sessions}")
+    #print(f"Minutes résiduelles : {residual_minutes:.2f}")
+    #print(f"Équivalent en sessions des minutes résiduelles : {residual_sessions:.2f}")
+    #print(f"Nombre total de sessions (complètes + résiduelles) : {total_sessions:.2f}")
 
-    root.mainloop()
-    return [col for col in df.columns if var_dict[col].get()]
+    return total_sessions
 
-# Appel de la fonction de sélection des colonnes
-feature_columns = select_columns(df)
+# Chemin vers votre fichier CSV
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge\Step2_MergedAllFile_Step1_4_merged.csv"
 
-print("Colonnes sélectionnées :", feature_columns)
+try:
+    # Lecture du fichier CSV
+    print("Lecture du fichier CSV...")
+    df = pd.read_csv(file_path, delimiter=';')
+    print("Fichier CSV lu avec succès.")
+
+    # Calcul et affichage des informations sur les sessions
+    print("\nAnalyse des sessions de trading :")
+    start_time = time.time()
+    total_sessions = calculate_and_display_sessions(df)
+    end_time = time.time()
+
+    execution_time = end_time - start_time
+    print(f"\nTemps d'exécution de calculate_and_display_sessions : {execution_time:.4f} secondes")
+    # Affichage de quelques statistiques supplémentaires
+    print("\nStatistiques supplémentaires :")
+    print(f"Nombre total de lignes dans le fichier : {len(df)}")
+    print(f"Nombre de valeurs uniques dans SessionStartEnd : {df['SessionStartEnd'].nunique()}")
+    print("Valeurs uniques dans SessionStartEnd et leur fréquence :")
+    print(df['SessionStartEnd'].value_counts().sort_index())
+
+except Exception as e:
+    print(f"Une erreur s'est produite : {e}")

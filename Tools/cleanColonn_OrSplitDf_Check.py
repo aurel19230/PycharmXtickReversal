@@ -1,13 +1,15 @@
-from standardFunc import load_data, split_sessions, print_notification
+from standardFunc import load_data, split_sessions, print_notification,calculate_and_display_sessions
 import os
 import pandas as pd
 import numpy as np
 from numba import njit, prange
+import time
 
-FILE_NAME_ = "Step2_MergedAllFile_Step1_1_merged.csv"
+FILE_NAME_ = "Step1_150322_091022_4TicksRev_1.csv"
 DIRECTORY_PATH_ = file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge"
 FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
-option = input("Appuyez sur 'c' pour ajouter la fin de session, \nou 's' pour diviser le fichier, \n ou 'a' analiser les suite de sessionStartEnd : ").lower()
+option = input("Appuyez sur 'c' pour ajouter la fin de session, \nou 's' pour diviser le fichier, \n ou 'a' analiser les suite de sessionStartEnd, "
+               "\nou 't' pour calculer le Nombre de session: ").lower()
 
 # Chargement des données
 variables = [
@@ -43,7 +45,6 @@ def check_session_start_end(session_start_end, time_stamp_opening):
             print(f"timeStampOpening correspondant : {timeStampOpening}")
 
 nombre_variables = len(variables)
-print(f"Le nombre de variables est : {nombre_variables}")
 
 # Chargement du DataFrame
 df = load_data(FILE_PATH_)
@@ -129,5 +130,14 @@ elif option == 's':
 
 elif option == 'a':
     check_session_start_end(session_start_end, time_stamp_opening)
+elif option == 't':
+    start_time = time.time()
+    number_of_sessions = calculate_and_display_sessions(df)
+    end_time = time.time()
+
+    execution_time = end_time - start_time
+
+    print(f"Nombre de sessions de trading : {number_of_sessions}")
+    print(f"Temps d'exécution de calculate_trading_sessions : {execution_time:.4f} secondes")
 else:
     print("Option non reconnue. Veuillez appuyer sur 'c' ou 's' ou 'a'.")

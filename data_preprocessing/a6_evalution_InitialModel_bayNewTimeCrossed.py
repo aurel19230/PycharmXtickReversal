@@ -2,8 +2,8 @@ import pandas as pd
 import xgboost as xgb
 import shap
 from sklearn.model_selection import TimeSeriesSplit
-from standardFunc import load_data, split_sessions, print_notification,plot_calibration_curve
-
+from standardFunc import load_data, split_sessions, print_notification, plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability, calculate_and_display_sessions
+import torch
 import optuna
 import time
 from sklearn.utils.class_weight import compute_sample_weight
@@ -15,23 +15,41 @@ from sklearn.metrics import accuracy_score
 from sklearn.metrics import classification_report
 import seaborn as sns
 import bisect
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve
+from sklearn.metrics import roc_auc_score ,precision_score, recall_score, f1_score, confusion_matrix, roc_curve,average_precision_score,matthews_corrcoef
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
 import matplotlib.ticker as ticker
-from enum import Enum, auto
 from PIL import Image
+from enum import Enum
+from typing import Tuple
+import cupy as cp
 
-class CombinedMetric(Enum):
+# Define the custom_metric class using Enum
+class xgb_custom_metric(Enum):
     # Constantes numériques
     PR_RECALL_TP = 1
-    PROFIT_BASED =2
+    PROFIT_BASED = 2
+
+class optima_option(Enum):
+    USE_OPTIMA_ROCAUC = 1
+    USE_OPTIMA_AUCPR = 2
+    USE_OPTIMA_F1 = 4
+    USE_OPTIMA_PRECISION = 5
+    USE_OPTIMA_RECALL = 6
+    USE_OPTIMA_MCC = 7
+    USE_OPTIMA_YOUDEN_J = 8
+    USE_OPTIMA_SHARPE_RATIO = 9
+    USE_OPTIMA_CUSTOM_METRIC_PROFITBASED = 10
+    USE_OPTIMA_CUSTOM_METRIC_TP_FP = 11
+
+global bestRessult_dict
 ########################################
 #########    FUNCTION DEF      #########
 ########################################
-def analyze_predictions_by_range(X_test, y_pred_proba, xgb_classifier, prob_min=0.90, prob_max=1.00,
-                                 top_n_features=None, output_dir=r'C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_02102024\proba_predictions_analysis'):
+def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min=0.90, prob_max=1.00,
+                                 top_n_features=None,
+                                 output_dir=r'C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_02102024\proba_predictions_analysis'):
     import numpy as np
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -55,8 +73,7 @@ def analyze_predictions_by_range(X_test, y_pred_proba, xgb_classifier, prob_min=
     print(f"Nombre d'échantillons dans la plage {prob_min:.2f} - {prob_max:.2f}: {len(selected_samples)}")
 
     # Calculer les valeurs SHAP une seule fois pour tout X_test
-    explainer = shap.TreeExplainer(xgb_classifier)
-    shap_values_all = explainer.shap_values(X_test)
+
 
     # Calculer l'importance des features basée sur les valeurs SHAP
     feature_importance = np.abs(shap_values_all).mean(0)
@@ -128,9 +145,6 @@ def analyze_predictions_by_range(X_test, y_pred_proba, xgb_classifier, prob_min=
     print(f"Analyse terminée. Les résultats ont été sauvegardés dans le dossier '{output_dir}'.")
 
 
-
-
-
 def verify_session_integrity(df, context=""):
     starts = df[df['SessionStartEnd'] == 10].index
     ends = df[df['SessionStartEnd'] == 20].index
@@ -148,11 +162,13 @@ def verify_session_integrity(df, context=""):
             print(f"Erreur : Session {i} invalide détectée. Début : {start}, Fin : {end}")
             return False
         elif df.loc[start, 'SessionStartEnd'] != 10 or df.loc[end, 'SessionStartEnd'] != 20:
-            print(f"Erreur : Session {i} mal formée. Début : {df.loc[start, 'SessionStartEnd']}, Fin : {df.loc[end, 'SessionStartEnd']}")
+            print(
+                f"Erreur : Session {i} mal formée. Début : {df.loc[start, 'SessionStartEnd']}, Fin : {df.loc[end, 'SessionStartEnd']}")
             return False
 
     print(f"OK : Toutes les {len(starts)} sessions sont correctement formées pour {context}.")
     return True
+
 
 # Fonction optimisée avec Numba pour vérifier et remplacer les valeurs
 @njit
@@ -178,7 +194,7 @@ def optimize_threshold(y_true, y_pred_proba):
 
     # Calcul du F1-score pour chaque seuil
     f1_scores = 2 * (precisions * recalls) / (
-                precisions + recalls + 1e-8)  # Ajout d'une petite valeur pour éviter la division par zéro
+            precisions + recalls + 1e-8)  # Ajout d'une petite valeur pour éviter la division par zéro
 
     # Trouver l'index du seuil optimal qui maximise le F1-score
     optimal_threshold_index = np.argmax(f1_scores)
@@ -187,6 +203,7 @@ def optimize_threshold(y_true, y_pred_proba):
     print(f"Seuil optimal trouvé: {optimal_threshold:.4f}")
 
     return optimal_threshold
+
 
 """
 
@@ -199,6 +216,7 @@ class CustomCallback(TrainingCallback):
             return True
         return False
 """
+
 
 def plot_learning_curve(learning_curve_data, title='Courbe d\'apprentissage', filename='learning_curve.png'):
     if learning_curve_data is None:
@@ -256,14 +274,14 @@ def average_learning_curves(learning_curve_data_list):
 
 
 def calculate_scores_for_cv_split_learning_curve(
-        params, num_boost_round, X_train, y_train, X_val,
-        y_val, weight_dict, combined_metric,metric_dict,custom_metric):
+        params, num_boost_round, X_train, y_train_label, X_val,
+        y_val, weight_dict, combined_metric, metric_dict, custom_metric):
     """
     Calcule les scores d'entraînement et de validation pour un split de validation croisée.
     """
     # Créer des DMatrix pour l'entraînement et la validation
-    sample_weights = np.array([weight_dict[label] for label in y_train])
-    dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weights)
+    sample_weights = np.array([weight_dict[label] for label in y_train_label])
+    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights)
     dval = xgb.DMatrix(X_val, label=y_val)
 
     # Entraîner le modèle
@@ -274,7 +292,7 @@ def calculate_scores_for_cv_split_learning_curve(
     val_pred = booster.predict(dval)
 
     # Calculer les scores
-    train_score = combined_metric(y_train, train_pred, metric_dict=metric_dict)
+    train_score = combined_metric(y_train_label, train_pred, metric_dict=metric_dict)
 
     val_score = combined_metric(y_val, val_pred, metric_dict=metric_dict)
 
@@ -284,17 +302,18 @@ def calculate_scores_for_cv_split_learning_curve(
         'val_scores_mean': [val_score]  # Modification ici
     }
 
+
 from sklearn.model_selection import train_test_split
 
 
-
-def print_callback(study, trial, X_train, y_train):
-    total_train_size = len(X_train)
+def print_callback(study, trial, X_train, y_train_label):
+    global bestRessult_dict
     learning_curve_data = trial.user_attrs.get('learning_curve_data')
     best_val_score = trial.value
     score_std = trial.user_attrs['score_std']
     total_train_size = len(X_train)
 
+    print(f"\nSur les differents ensembles d'entrainement :")
     print(f"\nEssai terminé : {trial.number}")
     print(f"Score de validation moyen : {best_val_score:.4f}")
     print(f"Écart-type des scores : {score_std:.4f}")
@@ -308,16 +327,20 @@ def print_callback(study, trial, X_train, y_train):
     total_fp = trial.user_attrs.get('total_fp', 0)
     total_tn = trial.user_attrs.get('total_tn', 0)
     total_fn = trial.user_attrs.get('total_fn', 0)
-    tp_difference = trial.user_attrs.get('tp_difference', 0)
+    tp_difference_raw = trial.user_attrs.get('tp_difference_raw', 0)
+    tp_difference_pnl = trial.user_attrs.get('tp_difference_pnl', 0)
+
     tp_percentage = trial.user_attrs.get('tp_percentage', 0)
     total_trades = total_tp + total_fp
-    win_rate = total_tp / total_trades*100 if total_trades > 0 else 0
-    print(f"\nNombre (ens de validation) de: TP (True Positives) : {total_tp}, FP (False Positives) : {total_fp}, "
+    win_rate = total_tp / total_trades * 100 if total_trades > 0 else 0
+    print(f"\nEnsemble de validation (somme de l'ensemble des splits :")
+    print(f"Nombre de: TP (True Positives) : {total_tp}, FP (False Positives) : {total_fp}, "
           f"TN (True Negative) : {total_tn}, FN (False Negative) : {total_fn},")
     print(f"Pourcentage Winrate           : {win_rate:.2f}%")
     print(f"Pourcentage de TP             : {tp_percentage:.2f}%")
-    print(f"Différence (TP - FP)          : {tp_difference}")
-    print(f"Nombre de trades             : {len(y_train)}")
+    print(f"Différence (TP - FP)          : {tp_difference_raw}")
+    print(f"PNL                           : {tp_difference_pnl}")
+    print(f"Nombre de trades              : {total_tp+total_fp+total_tn+total_fn}")
     if learning_curve_data:
         train_scores = learning_curve_data['train_scores_mean']
         val_scores = learning_curve_data['val_scores_mean']
@@ -325,7 +348,7 @@ def print_callback(study, trial, X_train, y_train):
 
         print("\nCourbe d'apprentissage :")
         for size, train_score, val_score in zip(train_sizes, train_scores, val_scores):
-            print(f"Taille d'entraînement: {size} ({size/total_train_size*100:.2f}%)")
+            print(f"Taille d'entraînement: {size} ({size / total_train_size * 100:.2f}%)")
             print(f"  Score d'entraînement : {train_score:.4f}")
             print(f"  Score de validation  : {val_score:.4f}")
             if val_score != 0:
@@ -343,23 +366,60 @@ def print_callback(study, trial, X_train, y_train):
         if corresponding_val_score != 0:
             diff_percentage = ((best_train_score - corresponding_val_score) / corresponding_val_score) * 100
             print(f"Différence en % entre entraînement et validation : {diff_percentage:.2f}%")
-        print(f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size/total_train_size*100:.2f}% du total)")
+        print(
+            f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size / total_train_size * 100:.2f}% du total)")
     else:
         print("Option Courbe d'Apprentissage non activé")
 
     print(
         f"\nMeilleure valeur jusqu'à présent : {study.best_value:.4f} (obtenue lors de l'essai numéro : {study.best_trial.number})")
     print(f"Meilleurs paramètres jusqu'à présent : {study.best_params}")
+    print(f"Score bestRessult_dict  corresoond au Best Score jusqu'à présent : {bestRessult_dict}")
     print("------")
+
 
 # Fonctions supplémentaires pour l'analyse des erreurs et SHAP
 
 # 1. Fonction pour analyser les erreurs
-def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+def analyze_errors(X_test, y_test_label, y_pred_threshold, y_pred_proba, feature_names, save_dir='./analyse_error/', top_features=None):
+    """
+    Analyse les erreurs de prédiction du modèle et génère des visualisations.
+
+    Parameters:
+    -----------
+    X_test : pd.DataFrame
+        Les features de l'ensemble de test.
+    y_test_label : array-like
+        Les vraies étiquettes de l'ensemble de test.
+    y_pred_threshold : array-like
+        Les prédictions du modèle après application du seuil.
+    y_pred_proba : array-like
+        Les probabilités prédites par le modèle.
+    feature_names : list
+        Liste des noms des features.
+    save_dir : str, optional
+        Le répertoire où sauvegarder les résultats de l'analyse (par défaut './analyse_error/').
+    top_features : list, optional
+        Liste des 10 features les plus importantes (si disponible).
+
+    Returns:
+    --------
+    tuple
+        (results_df, error_df) : DataFrames contenant respectivement tous les résultats et les cas d'erreur.
+    """
+    # Créer le répertoire de sauvegarde s'il n'existe pas
+    os.makedirs(save_dir, exist_ok=True)
+
     # Créer un dictionnaire pour stocker toutes les données
     data = {
-        'true_label': y_test,
-        'predicted_label': y_pred,
+        'true_label': y_test_label,
+        'predicted_label': y_pred_threshold,
         'prediction_probability': y_pred_proba
     }
 
@@ -377,8 +437,12 @@ def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
                                         'Correct')
 
     # Analyse des erreurs
+    error_distribution = results_df['error_type'].value_counts(normalize=True)
     print("Distribution des erreurs:")
-    print(results_df['error_type'].value_counts(normalize=True))
+    print(error_distribution)
+
+    # Sauvegarder la distribution des erreurs
+    error_distribution.to_csv(os.path.join(save_dir, 'error_distribution.csv'))
 
     # Analyser les features pour les cas d'erreur
     error_df = results_df[results_df['is_error']]
@@ -388,11 +452,14 @@ def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
     with pd.option_context('display.max_columns', None, 'display.width', None):
         print(feature_means)
 
+    # Sauvegarder les moyennes des features
+    feature_means.to_csv(os.path.join(save_dir, 'feature_means_by_error_type.csv'))
+
     # Visualiser la distribution des probabilités de prédiction pour les erreurs
     plt.figure(figsize=(10, 6))
     sns.histplot(data=error_df, x='prediction_probability', hue='true_label', bins=20)
     plt.title('Distribution des probabilités de prédiction pour les erreurs')
-    plt.savefig('error_probability_distribution.png')
+    plt.savefig(os.path.join(save_dir, 'error_probability_distribution.png'))
     plt.close()
 
     # Identifier les cas les plus confiants mais erronés
@@ -400,12 +467,53 @@ def analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names):
     print("\nLes 5 erreurs les plus confiantes:")
     print(most_confident_errors[['true_label', 'predicted_label', 'prediction_probability']])
 
+    # Sauvegarder les erreurs les plus confiantes
+    most_confident_errors.to_csv(os.path.join(save_dir, 'most_confident_errors.csv'), index=False)
+
+    # Visualisations supplémentaires
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(error_df[feature_names].corr(), annot=False, cmap='coolwarm')
+    plt.title('Corrélations des features pour les erreurs')
+    plt.savefig(os.path.join(save_dir, 'error_features_correlation.png'))
+    plt.close()
+
+    # Identification des erreurs
+    errors = X_test[y_test_label != y_pred_threshold]
+    print("Nombre d'erreurs:", len(errors))
+
+    # Créer un subplot pour chaque feature (si top_features est fourni)
+    if top_features and len(top_features) >= 10:
+        fig, axes = plt.subplots(5, 2, figsize=(20, 25))
+        fig.suptitle('Distribution des 10 features les plus importantes par type d\'erreur', fontsize=16)
+
+        for i, feature in enumerate(top_features[:10]):
+            row = i // 2
+            col = i % 2
+            sns.boxplot(x='error_type', y=feature, data=results_df, ax=axes[row, col])
+            axes[row, col].set_title(f'{i + 1}. {feature}')
+            axes[row, col].set_xlabel('')
+            if col == 0:
+                axes[row, col].set_ylabel('Valeur')
+            else:
+                axes[row, col].set_ylabel('')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'top_10_features_distribution_by_error.png'), dpi=300, bbox_inches='tight')
+        print("Graphique combiné sauvegardé sous 'top_10_features_distribution_by_error.png'")
+        plt.close()
+
+    # Sauvegarder les DataFrames spécifiques demandés
+    results_df.to_csv(os.path.join(save_dir, 'model_results_analysis.csv'), index=False)
+    error_df.to_csv(os.path.join(save_dir, 'model_errors_analysis.csv'), index=False)
+
+    print(f"\nLes résultats de l'analyse ont été sauvegardés dans le répertoire : {save_dir}")
+
     return results_df, error_df
 
+
 # 2. Fonction pour analyser les erreurs confiantes
-def analyze_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, important_features, n=5,explainer=None):
-    if explainer is None:
-        explainer = shap.TreeExplainer(xgb_classifier)
+def analyze_confident_errors(shap_values, confident_errors, X_test, feature_names, important_features, n=5):
+
     for idx in confident_errors.index[:n]:
         print(f"-----------------> Analyse de l'erreur à l'index {idx}:")
         print(f"Vrai label: {confident_errors.loc[idx, 'true_label']}")
@@ -417,8 +525,6 @@ def analyze_confident_errors(xgb_classifier, confident_errors, X_test, feature_n
             value = X_test.loc[idx, feature]
             print(f"{feature}: {value:.4f}")
 
-        shap_values = explainer.shap_values(X_test.loc[idx:idx])
-
         print("\nTop 5 features influentes (SHAP) pour ce cas:")
         case_feature_importance = pd.DataFrame({
             'feature': feature_names,
@@ -428,10 +534,9 @@ def analyze_confident_errors(xgb_classifier, confident_errors, X_test, feature_n
         print(case_feature_importance.head())
         print(f"<----------------- Fin Analyse de l'erreur à l'index {idx}:")
 
+
 # 3. Fonction pour visualiser les erreurs confiantes
-def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_names, n=5, explainer=None):
-    if explainer is None:
-        explainer = shap.TreeExplainer(xgb_classifier)
+def plot_confident_errors(shap_values, confident_errors, X_test, feature_names, n=5):
 
     # Vérifier le nombre d'erreurs confiantes disponibles
     num_errors = len(confident_errors)
@@ -444,7 +549,6 @@ def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_name
 
     for i, idx in enumerate(confident_errors.index[:n]):
         plt.figure(figsize=(10, 6))
-        shap_values = explainer.shap_values(X_test.loc[idx:idx])
 
         # Vérifier si shap_values est une liste (pour les modèles à plusieurs classes)
         if isinstance(shap_values, list):
@@ -482,6 +586,7 @@ def plot_confident_errors(xgb_classifier, confident_errors, X_test, feature_name
         print(f"Image combinée des {n} erreurs confiantes sauvegardée sous 'confident_errors_shap_combined.png'")
     else:
         print("Pas assez d'erreurs confiantes pour créer une image combinée.")
+
 
 # 4. Fonction pour comparer les erreurs vs les prédictions correctes
 def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, important_features):
@@ -596,11 +701,11 @@ def extract_decision_rules(model, nan_value, importance_threshold=0.01):
     if pd.isna(nan_value):
         important_rules = trees_df[
             (trees_df['Missing'] != trees_df['Yes']) & (trees_df['Gain'] > importance_threshold)
-        ]
+            ]
     else:
         important_rules = trees_df[
             (trees_df['Split'] == nan_value) & (trees_df['Gain'] > importance_threshold)
-        ]
+            ]
 
     rules = []
     for _, row in important_rules.iterrows():
@@ -624,7 +729,7 @@ def extract_decision_rules(model, nan_value, importance_threshold=0.01):
 
         except IndexError as e:
             # Gérer l'erreur d'index hors limites
-            #print(f"Erreur lors de l'extraction des informations de la règle: {e}")
+            # print(f"Erreur lors de l'extraction des informations de la règle: {e}")
             continue
         except Exception as e:
             # Gérer toute autre erreur inattendue
@@ -634,202 +739,100 @@ def extract_decision_rules(model, nan_value, importance_threshold=0.01):
     return rules
 
 
-
-
-def analyze_nan_impact(model, X, feature_names, nan_value, shap_values=None):
+def analyze_nan_impact(model, X_train, feature_names, nan_value, shap_values=None,
+                       features_per_plot=35, verbose_nan_rule=False,
+                       save_dir='./nan_analysis_results/'):
     """
-    Analyse l'impact des valeurs NaN ou des valeurs de remplacement des NaN sur le modèle XGBoost en utilisant les valeurs SHAP.
+    Analyse l'impact des valeurs NaN ou des valeurs de remplacement des NaN sur le modèle XGBoost.
 
-    :param model: Modèle XGBoost entraîné (Booster ou XGBClassifier/XGBRegressor)
-    :param X: Données d'entrée (DataFrame)
-    :param feature_names: Liste des noms des features
-    :param nan_value: Valeur utilisée pour remplacer les NaN (peut être np.nan)
-    :param shap_values: Valeurs SHAP pré-calculées (optionnel)
+    Parameters:
+    -----------
+    model : xgboost.Booster ou xgboost.XGBClassifier/XGBRegressor
+        Modèle XGBoost entraîné
+    X_train : pandas.DataFrame
+        Données d'entrée
+    feature_names : list
+        Liste des noms des features
+    nan_value : float ou np.nan
+        Valeur utilisée pour remplacer les NaN
+    shap_values : numpy.array, optional
+        Valeurs SHAP pré-calculées
+    features_per_plot : int, default 35
+        Nombre de features à afficher par graphique
+    verbose_nan_rule : bool, default False
+        Si True, affiche les règles de décision détaillées
+    save_dir : str, default './nan_analysis_results/'
+        Répertoire où sauvegarder les résultats
+
+    Returns:
+    --------
+    dict
+        Dictionnaire contenant les résultats de l'analyse
     """
-    # 1. Analyser les splits impliquant les valeurs NaN ou la valeur de remplacement
-    all_splits,nan_splits = analyze_xgboost_trees(model, feature_names, nan_value)
-    print(f"Nombre total de splits : {len(all_splits)}")
-    print(f"Nombre de splits impliquant des NaN : {len(nan_splits)}")
-    print(f"Pourcentage de splits impliquant des NaN : {(len(nan_splits) / len(all_splits)) * 100:.2f}%")
+    import os
+    os.makedirs(save_dir, exist_ok=True)
 
-    print("\nAperçu de tous les splits :")
-    print(all_splits.head())
+    results = {}
 
-    print("\nAperçu des splits impliquant des NaN :")
-    print(nan_splits.head())
+    # 1. Analyser les splits impliquant les valeurs NaN
+    all_splits, nan_splits = analyze_xgboost_trees(model, feature_names, nan_value)
+    results['total_splits'] = len(all_splits)
+    results['nan_splits'] = len(nan_splits)
+    results['nan_splits_percentage'] = (len(nan_splits) / len(all_splits)) * 100
 
-    # Analyses supplémentaires possibles
-    print("\nDistribution des features pour tous les splits :")
-    print(all_splits['Feature'].value_counts())
-
-    print("\nDistribution des features pour les splits NaN :")
-    print(nan_splits['Feature'].value_counts())
+    # Stocker les distributions pour une utilisation ultérieure
+    all_splits_dist = all_splits['Feature'].value_counts()
+    nan_splits_dist = nan_splits['Feature'].value_counts()
 
     # 2. Visualiser la distribution des splits NaN
     plt.figure(figsize=(12, 6))
-    sns.countplot(x='Feature', data=nan_splits, order=nan_splits['Feature'].value_counts().index)
+    sns.countplot(x='Feature', data=nan_splits, order=nan_splits_dist.index)
     plt.title("Distribution des splits impliquant des valeurs NaN par feature")
-    plt.xticks(rotation=45)
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig('nan_splits_distribution.png')
+    plt.savefig(os.path.join(save_dir, 'nan_splits_distribution.png'))
     plt.close()
 
-    # 3. Analyze the depth of NaN splits
-    if 'Depth' not in nan_splits.columns:
-        if 'ID' in nan_splits.columns:
-            # Calculate depth from ID column
-            nan_splits['Depth'] = nan_splits['ID'].apply(lambda x: x.count('-'))
-            print("'Depth' column added based on 'ID' column.")
-        else:
-            print("Warning: 'Depth' column is missing and cannot be calculated. Skipping depth analysis.")
+    # 3. Analyser la profondeur des splits NaN
+    if 'Depth' not in nan_splits.columns and 'ID' in nan_splits.columns:
+        nan_splits['Depth'] = nan_splits['ID'].apply(lambda x: x.count('-'))
 
     if 'Depth' in nan_splits.columns:
         plt.figure(figsize=(12, 6))
         sns.boxplot(x='Feature', y='Depth', data=nan_splits)
-        plt.title("Depth of splits involving NaN values by feature")
-        plt.xticks(rotation=45)
+        plt.title("Profondeur des splits impliquant des valeurs NaN par feature")
+        plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
-        plt.savefig('nan_splits_depth.png')
+        plt.savefig(os.path.join(save_dir, 'nan_splits_depth.png'))
         plt.close()
-    else:
-        print("Skipping creation of 'nan_splits_depth.png' due to missing 'Depth' column.")
 
     # 4. Extraire les règles de décision importantes
-    all_splits, nan_splits = analyze_xgboost_trees(model, feature_names, nan_value)
-    total_trees = len(set(all_splits['Tree']))
-    trees_with_nan = len(set(nan_splits['Tree']))
-
     important_rules = extract_decision_rules(model, nan_value)
-    print("\nRègles de décision importantes impliquant des valeurs NaN :")
-    verbose_nan_rule = True
+    results['important_rules'] = important_rules
+
     if verbose_nan_rule:
         print("\nRègles de décision importantes impliquant des valeurs NaN :")
         for rule in important_rules:
-            # Safely split and parse depth
-            parts = rule.split(', ')
+            print(rule)
 
-            try:
-                # Check if parts[1] has a valid depth value (should be an integer)
-                depth_str = parts[1].split()[1].replace(':', '')  # Remove any colon or special characters
-                if depth_str.isdigit():
-                    depth = int(depth_str)
-                   #XXX print(f"Parsed depth: {depth}")
-                else:
-                    # If the depth contains invalid characters, raise an error
-                    raise ValueError(f"Invalid depth value encountered: {parts[1]}")
-            except (IndexError, ValueError) as e:
-                print(f"Erreur lors du parsing de la règle: {e}")
-                continue
+    # 5. Analyser l'importance des features avec des valeurs NaN
 
-        print("\nAnalyse des règles de décision importantes:")
-        feature_counts = {}
-        depth_counts = {}
-        gain_sum = 0
-        print('ERROR SUR LES RULES 0 CORRGIGER XXX')
-        for rule in important_rules:
-            # Extraction des informations de la règle
-            parts = rule.split(', ')
-
-            try:
-                tree = int(parts[0].split()[1])
-
-                # Same parsing for depth with error handling
-                depth_str = parts[1].split()[1].replace(':', '')
-                if depth_str.isdigit():
-                    depth = int(depth_str)
-                else:
-                    raise ValueError(f"Invalid depth value encountered in rule: {rule}")
-
-                feature = parts[2].split()[1]
-                gain = float(parts[-1].split()[-1].strip(')'))
-
-                # Comptage des features
-                feature_counts[feature] = feature_counts.get(feature, 0) + 1
-
-                # Comptage des profondeurs
-                depth_counts[depth] = depth_counts.get(depth, 0) + 1
-
-                # Somme des gains
-                gain_sum += gain
-
-            except (IndexError, ValueError) as e:
-                #print(f"Erreur lors de l'extraction des informations de la règle: {e}")
-                continue
-    print(f"\nStatistiques sur les règles de décision impliquant des NaN (sur xtrain final):")
-    print(f"Nombre total d'arbres : {total_trees}")
-    print(f"Nombre d'arbres impliquant des NaN : {trees_with_nan}")
-    print(f"Pourcentage d'arbres impliquant des NaN : {(trees_with_nan / total_trees) * 100:.2f}%")
-    print(f"Nombre de règles de décision importantes impliquant des NaN : {len(important_rules)}")
-    print(f"Nombre moyen de règles importantes par arbre impliqué : {len(important_rules) / trees_with_nan:.2f}")
-
-    # 5. Analyser l'importance des features avec des valeurs NaN en utilisant les valeurs SHAP
-    # Calcul des valeurs SHAP si elles ne sont pas fournies
-    if shap_values is None:
-        print("Calcul des valeurs SHAP (sur xtrain final)...")
-        # Si le modèle est un Booster, convertir en XGBClassifier pour utiliser SHAP
-        if isinstance(model, xgb.Booster):
-            # Créer un XGBClassifier et charger le Booster
-            xgb_classifier = xgb.XGBClassifier()
-            xgb_classifier._Booster = model
-        else:
-            xgb_classifier = model
-        explainer = shap.TreeExplainer(xgb_classifier)
-        shap_values = explainer.shap_values(X)
-    else:
-        print("Utilisation des valeurs SHAP fournies.")
-
-    # Calcul de l'importance moyenne absolue des valeurs SHAP pour chaque feature
+    # Calculs pour l'analyse SHAP et NaN
     shap_mean = np.abs(shap_values).mean(axis=0)
-    shap_importance_df = pd.DataFrame({
+    nan_counts = X_train.isna().sum() if pd.isna(nan_value) else (X_train == nan_value).sum()
+    nan_percentages = (nan_counts / len(X_train)) * 100
+
+    nan_fi_df = pd.DataFrame({
         'Feature': feature_names,
-        'Importance': shap_mean
-    })
-
-    # Identifier les features avec des valeurs NaN ou la valeur de remplacement
-    if pd.isna(nan_value):
-        nan_features = X.columns[X.isna().any()].tolist()
-    else:
-        nan_features = X.columns[(X == nan_value).any()].tolist()
-
-    # Calculer le nombre total de valeurs par feature
-    total_counts = X.shape[0]
-
-    # Calculer le nombre de NaN par feature
-    if pd.isna(nan_value):
-        nan_counts = X.isna().sum()
-    else:
-        nan_counts = (X == nan_value).sum()
-
-    # Calculer le pourcentage de NaN par feature
-    nan_percentages = (nan_counts / total_counts) * 100
-
-    # Créer un DataFrame avec ces informations
-    nan_info_df = pd.DataFrame({
-        'Feature': X.columns,
+        'Importance': shap_mean,
         'Total_NaN': nan_counts,
         'Percentage_NaN': nan_percentages
-    })
-
-    # Filtrer les features avec au moins une valeur NaN
-    nan_info_df = nan_info_df[nan_info_df['Total_NaN'] > 0]
-
-    # Joindre les importances SHAP avec les informations sur les NaN
-    nan_fi_df = pd.merge(nan_info_df, shap_importance_df, on='Feature', how='left')
-    nan_fi_df['Importance'] = nan_fi_df['Importance'].fillna(0)
-
-    # Trier par ordre décroissant d'importance
-    nan_fi_df = nan_fi_df.sort_values('Importance', ascending=False)
-
-    # Paramètres pour la division des features
-    num_features = len(nan_fi_df)
-    features_per_plot = 35
-    num_plots = (num_features + features_per_plot - 1) // features_per_plot  # Calcul du nombre de graphiques
+    }).sort_values('Importance', ascending=False)
 
     # Générer les graphiques par lots
-    for i in range(num_plots):
-        start_idx = i * features_per_plot
-        end_idx = start_idx + features_per_plot
-        subset_df = nan_fi_df.iloc[start_idx:end_idx]
+    num_features = len(nan_fi_df)
+    for i in range((num_features + features_per_plot - 1) // features_per_plot):
+        subset_df = nan_fi_df.iloc[i * features_per_plot: (i + 1) * features_per_plot]
 
         fig, ax1 = plt.subplots(figsize=(14, 8))
         sns.barplot(x='Feature', y='Importance', data=subset_df, ax=ax1, color='skyblue')
@@ -837,38 +840,44 @@ def analyze_nan_impact(model, X, feature_names, nan_value, shap_values=None):
         ax1.set_ylabel('Importance (SHAP)', color='blue', fontsize=12)
         ax1.tick_params(axis='y', labelcolor='blue')
 
-        ax1.set_xticks(range(len(subset_df)))
-        ax1.set_xticklabels(subset_df['Feature'], rotation=45, ha='right')
-
         ax2 = ax1.twinx()
         sns.lineplot(x='Feature', y='Percentage_NaN', data=subset_df, ax=ax2, color='red', marker='o')
         ax2.set_ylabel('Pourcentage de NaN (%)', color='red', fontsize=12)
         ax2.tick_params(axis='y', labelcolor='red')
         ax2.yaxis.set_major_formatter(ticker.PercentFormatter())
 
-        plt.title(
-            f"Importance des features (SHAP) et pourcentage de NaN (Features {start_idx + 1} à {min(end_idx, num_features)} (sur xtrain final)\n (ensemble d'entrainement avec model final))",
-            fontsize=14)
+        plt.title(f"Importance des features (SHAP) et pourcentage de NaN (X_Train)\n"
+                  f"(Features {i * features_per_plot + 1} à {min((i + 1) * features_per_plot, num_features)})",
+                  fontsize=14)
+
+        # Incliner les étiquettes de l'axe x à 45 degrés
+        ax1.set_xticks(range(len(subset_df)))
+        ax1.set_xticklabels(subset_df['Feature'], rotation=45, ha='right', va='top')
+
+        # Ajuster l'espace pour améliorer la visibilité
         plt.tight_layout()
-        plt.savefig(f'nan_features_shap_importance_percentage_{i + 1}.png')
+        fig.subplots_adjust(bottom=0.2)  # Ajustez cette valeur si nécessaire
+
+        plt.savefig(os.path.join(save_dir, f'nan_features_shap_importance_percentage_{i + 1}.png'))
         plt.close()
 
-    # Calcul de la corrélation entre l'importance (SHAP) et le pourcentage de NaN
+    # Calcul et visualisation de la corrélation
     correlation = nan_fi_df['Importance'].corr(nan_fi_df['Percentage_NaN'])
-    print(f"\nCorrélation entre l'importance des features (SHAP) et le pourcentage de NaN (sur xtrain final) : {correlation:.4f}")
+    results['shap_nan_correlation'] = correlation
 
-    # Visualisation de la relation entre l'importance (SHAP) et le pourcentage de NaN
     plt.figure(figsize=(8, 6))
     sns.scatterplot(x='Percentage_NaN', y='Importance', data=nan_fi_df)
     plt.title('Relation entre le pourcentage de NaN et l\'importance des features (SHAP)')
     plt.xlabel('Pourcentage de NaN (%)')
     plt.ylabel('Importance (SHAP)')
     plt.tight_layout()
-    plt.savefig('shap_importance_vs_percentage_nan.png')
+    plt.savefig(os.path.join(save_dir, 'shap_importance_vs_percentage_nan.png'))
     plt.close()
 
+    return results
 
-def train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom_metric):
+
+def train_preliminary_model_with_tscv(X_train, y_train_label, preShapImportance):
     params = {
         'max_depth': 10,
         'learning_rate': 0.005,
@@ -896,14 +905,13 @@ def train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom
     shap_values_list = []
 
     for train_index, val_index in tscv.split(X_train):
+
         X_train_cv, X_val_cv = X_train.iloc[train_index], X_train.iloc[val_index]
-        y_train_cv, y_val_cv = y_train.iloc[train_index], y_train.iloc[val_index]
+        y_train_cv, y_val_cv = y_train_label.iloc[train_index], y_train_label.iloc[val_index]
 
         # Filtrer les valeurs 99 (valeurs "inutilisables")
-        mask_train = y_train_cv != 99
-        X_train_cv, y_train_cv = X_train_cv[mask_train], y_train_cv[mask_train]
-        mask_val = y_val_cv != 99
-        X_val_cv, y_val_cv = X_val_cv[mask_val], y_val_cv[mask_val]
+
+
 
         if len(X_train_cv) == 0 or len(y_train_cv) == 0:
             print("Warning: Empty training set after filtering")
@@ -912,10 +920,10 @@ def train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom
         # Recalculer les poids des échantillons pour l'ensemble d'entraînement du pli actuel
         sample_weights = compute_sample_weight('balanced', y=y_train_cv)
 
-
         # Créer les DMatrix pour XGBoost
         dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
         dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
+
 
         # Entraîner le modèle préliminaire
         model = xgb.train(
@@ -923,10 +931,9 @@ def train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom
             dtrain,
             num_boost_round=num_boost_round,
             evals=[(dtrain, 'train'), (dval, 'eval')],
-            early_stopping_rounds=50,
+            early_stopping_rounds=150,
             verbose_eval=False,
             maximize=True,
-            custom_metric=custom_metric
         )
 
         # Obtenir les valeurs SHAP
@@ -959,62 +966,17 @@ def train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom
     return maskShap
 
 
-
-"""
-def calculate_precision_recall_tp_ratio(y_true, y_pred, metric_dict):
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    tp_ratio = np.sum((y_true == 1) & (y_pred == 1)) / len(y_true)
-
-    precision_weight = metric_dict.get('precision_weight', 0.4)
-    recall_weight = metric_dict.get('recall_weight', 0.3)
-    tp_ratio_weight = metric_dict.get('tp_ratio_weight', 0.3)
-   # print(f"--- calculate_precision_recall_tp_ratio: precision:{precision} / recall:{recall} / "
-    #      f"precision:{tp_ratio} ---")
-
-    combined_score = (
-        (precision * precision_weight) +
-        (recall * recall_weight) +
-        (tp_ratio * tp_ratio_weight)
-    )
-
-    sum_of_weights = precision_weight + recall_weight + tp_ratio_weight
-    return combined_score / sum_of_weights
-
-def calculate_profit_based(y_true, y_pred, metric_dict):
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
-    loss_per_fp = metric_dict.get('loss_per_fp', -1.0)
-   # print(f"--- calculate_profit_based: profit_per_tp:{profit_per_tp} / loss_per_fp:{loss_per_fp} ---")
-    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp)
-    return total_profit / len(y_true)
-"""
-
-# Définissez d'abord un callback personnalisé
-def custom_callback_early_stopping(env):
-    if env.iteration == env.best_iteration:
-        print(f"Best iteration so far: {env.best_iteration} with score: {env.best_score}")
-    if env.iteration == env.end_iteration - 1:
-        print(f"Early stopping at iteration {env.iteration}")
-    return False
-
-import cupy as cp
-
-def optunaScore_precision_recall_tp_ratio(y_true, y_pred_proba, metric_dict):
-    threshold = metric_dict.get('threshold', 0.5)
-    print(f"--- optunaScore_precision_recall_tp_ratio avec {threshold}---")
-    y_pred = (y_pred_proba > threshold).astype(int)
-    return calculate_precision_recall_tp_ratio_gpu(y_true, y_pred, metric_dict)
-
-def calculate_precision_recall_tp_ratio_gpu(y_true, y_pred, metric_dict):
+def calculate_precision_recall_tp_ratio_gpu(y_true, y_pred_threshold, metric_dict):
+    """
+    Calculate TP and FP on GPU and compute precision, recall, and combined score.
+    """
     y_true_gpu = cp.array(y_true)
-    y_pred_gpu = cp.array(y_pred)
+    y_pred_gpu = cp.array(y_pred_threshold)
 
     tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
     fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
     total_samples = len(y_true_gpu)
     total_trades = tp + fp
-
 
     # Calcul des métriques
     profit_ratio = (tp - fp) / total_trades if total_trades > 0 else 0
@@ -1027,11 +989,8 @@ def calculate_precision_recall_tp_ratio_gpu(y_true, y_pred, metric_dict):
     selectivity_weight = metric_dict.get('selectivity_weight', 0.2)
 
     # Calculer le score combiné
-    if (profit_ratio <= 0
-            or win_rate < 0.5
-    )\
-            :  # Ajout de la condition win_rate < 0.5
-        return 0.0  # Retourner directement 0.0 si ces conditions sont remplies
+   # if (profit_ratio <= 0 or win_rate < 0.5):
+    #    return 0.0  # Retourner directement 0.0 si ces conditions sont remplies
 
     combined_score = (profit_ratio * profit_ratio_weight +
                       win_rate * win_rate_weight +
@@ -1041,62 +1000,235 @@ def calculate_precision_recall_tp_ratio_gpu(y_true, y_pred, metric_dict):
     sum_of_weights = profit_ratio_weight + win_rate_weight + selectivity_weight
     normalized_score = combined_score / sum_of_weights if sum_of_weights > 0 else 0
 
-    return float(normalized_score)  # Assurer que nous retournons un float Python
+    return float(normalized_score)  # Retourner un float pour XGBoost
 
-def xgb_custom_metric_precision_recall_tp_ratio(preds, dtrain, metric_dict):
-    y_true = dtrain.get_label()
-    threshold = metric_dict.get('threshold', 0.5)
-    y_pred = (preds > threshold).astype(int)
-    score = calculate_precision_recall_tp_ratio_gpu(y_true, y_pred, metric_dict)
-    return 'custom_metric', score
-    #return 'combined_metric', score
-def calculate_profit_based_gpu(y_true, y_pred, metric_dict):
-    # Convertir les données d'entrée en matrices GPU
+
+# Fonctions CPU (inchangées)
+def weighted_logistic_gradient_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le gradient pour la perte logistique pondérée (CPU)."""
+    y = dtrain.get_label()
+    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
+    weights = np.where(y == 1, w_p, w_n)
+    grad = weights * (predt - y)
+    return grad
+
+
+def weighted_logistic_hessian_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le hessien pour la perte logistique pondérée (CPU)."""
+    y = dtrain.get_label()
+    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
+    weights = np.where(y == 1, w_p, w_n)
+    hess = weights * predt * (1.0 - predt)
+    return hess
+
+
+# Fonctions GPU mises à jour
+def weighted_logistic_gradient_Torchgpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le gradient pour la perte logistique pondérée (GPU)."""
+    device = torch.device("cuda")
+    predt_torch = torch.tensor(predt, dtype=torch.float32, device=device)
+    y_torch = torch.tensor(dtrain.get_label(), dtype=torch.float32, device=device)
+
+    predt_sigmoid = torch.sigmoid(predt_torch)
+    weights = torch.where(y_torch == 1, w_p, w_n)
+    grad = weights * (predt_sigmoid - y_torch)
+
+    torch.cuda.synchronize()
+    return grad.cpu().numpy()
+
+
+def weighted_logistic_hessian_Torchgpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le hessien pour la perte logistique pondérée (GPU)."""
+    device = torch.device("cuda")
+    predt_torch = torch.tensor(predt, dtype=torch.float32, device=device)
+    y_torch = torch.tensor(dtrain.get_label(), dtype=torch.float32, device=device)
+
+    predt_sigmoid = torch.sigmoid(predt_torch)
+    weights = torch.where(y_torch == 1, w_p, w_n)
+    hess = weights * predt_sigmoid * (1 - predt_sigmoid)
+
+    torch.cuda.synchronize()
+    return hess.cpu().numpy()
+
+
+def sigmoidCustom(x):
+    """Custom sigmoid function."""
+    return 1 / (1 + cp.exp(-x))
+
+
+def weighted_logistic_gradient_Cupygpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Compute the gradient for the weighted logistic loss (GPU) using CuPy."""
+    predt_gpu = cp.asarray(predt, dtype=cp.float32)
+    y_gpu = cp.asarray(dtrain.get_label(), dtype=cp.float32)
+
+    # Compute sigmoid using the custom function
+    predt_sigmoid = sigmoidCustom(predt_gpu)
+    weights = cp.where(y_gpu == 1, w_p, w_n)
+    grad = weights * (predt_sigmoid - y_gpu)
+
+    # Synchronize (optional, if necessary)
+    cp.cuda.Stream.null.synchronize()
+
+    return cp.asnumpy(grad)
+
+
+def weighted_logistic_hessian_Cupygpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Compute the Hessian for the weighted logistic loss (GPU) using CuPy."""
+    predt_gpu = cp.asarray(predt, dtype=cp.float32)
+    y_gpu = cp.asarray(dtrain.get_label(), dtype=cp.float32)
+
+    # Compute sigmoid using the custom function
+    predt_sigmoid = sigmoidCustom(predt_gpu)
+    weights = cp.where(y_gpu == 1, w_p, w_n)
+    hess = weights * predt_sigmoid * (1 - predt_sigmoid)
+
+    # Synchronize (optional, if necessary)
+    cp.cuda.Stream.null.synchronize()
+
+    return cp.asnumpy(hess)
+
+def create_weighted_logistic_obj(w_p: float, w_n: float):
+    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        grad = weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n)
+        hess = weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n)
+        return grad, hess
+    return weighted_logistic_obj
+
+# Fonction pour vérifier la disponibilité du GPU
+def check_gpu_availability():
+    torch_available = torch.cuda.is_available()
+    cupy_available = cp.cuda.is_available()
+
+    if not (torch_available and cupy_available):
+        print("Erreur : GPU n'est pas disponible pour PyTorch et/ou CuPy. Le programme va s'arrêter.")
+        if not torch_available:
+            print("PyTorch ne détecte pas de GPU.")
+        if not cupy_available:
+            print("CuPy ne détecte pas de GPU.")
+        exit(1)
+
+    print("GPU est disponible. Utilisation de CUDA pour les calculs.")
+    print(f"GPU détecté par PyTorch : {torch.cuda.get_device_name(0)}")
+    print(f"GPU détecté par CuPy : {cp.cuda.runtime.getDeviceProperties(cp.cuda.Device())['name'].decode()}")
+
+    # Vérification de la version CUDA
+    torch_cuda_version = torch.version.cuda
+    cupy_cuda_version = cp.cuda.runtime.runtimeGetVersion()
+
+    print(f"Version CUDA pour PyTorch : {torch_cuda_version}")
+    print(f"Version CUDA pour CuPy : {cupy_cuda_version}")
+
+    if torch_cuda_version != cupy_cuda_version:
+        print("Attention : Les versions CUDA pour PyTorch et CuPy sont différentes.")
+        print("Cela pourrait causer des problèmes de compatibilité.")
+
+    # Affichage de la mémoire GPU disponible
+    torch_memory = torch.cuda.get_device_properties(0).total_memory
+    cupy_memory = cp.cuda.runtime.memGetInfo()[1]
+
+    print(f"Mémoire GPU totale (PyTorch) : {torch_memory / 1e9:.2f} GB")
+    print(f"Mémoire GPU totale (CuPy) : {cupy_memory / 1e9:.2f} GB")
+def optuna_TP_FP_score(y_true, y_pred_proba, metric_dict):
+    """
+    Custom Optuna score based on TP/FP ratio, win_rate, and selectivity.
+    """
+    threshold = metric_dict.get('threshold', 0.7)  # Default threshold for converting probabilities to binary
+    y_pred_threshold = (y_pred_proba > threshold).astype(int)
+
+    return calculate_precision_recall_tp_ratio_gpu(y_true, y_pred_threshold, metric_dict)
+
+
+def calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict):
     y_true_gpu = cp.array(y_true)
-    y_pred_gpu = cp.array(y_pred)
-
-    # Calculer TN, FP, FN, TP sur le GPU
+    y_pred_gpu = cp.array(y_pred_threshold)
     tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
     fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
-    tn = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 0))
     fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
-
-    # Récupérer les valeurs monétaires depuis metric_dict
     profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
-    loss_per_fp = metric_dict.get('loss_per_fp', -1.0)
+    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)  # Include FN penalty
+    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
+    total_trades = tp + fp  # Typically, total executed trades
 
-
-    total_samples = len(y_true_gpu)
-    #total_trades = tp + fp
-    if total_samples == 0:
-        normalized_profit = 0.0
+    # Utiliser une condition pour éviter la division par zéro
+    """"
+    if total_trades > 0:
+        normalized_profit = total_profit / total_trades
     else:
-        # Calculer le profit total
-        total_profit = (tp * profit_per_tp) + (fp * loss_per_fp)
+        normalized_profit = total_profit  # Reflect penalties from FNs when no trades are made
 
-        # Normaliser le profit par le nombre total de prédictions
-        #normalized_profit = total_profit / total_samples
-        normalized_profit = total_profit / total_samples
-    # Retourner le résultat en tant que valeur CPU
-    return normalized_profit.get()
-def optunaScore_profit_based(y_true, y_pred_proba, metric_dict):
+
+
+    return float(normalized_profit)  # Assurez-vous que c'est un float Python
+    """
+    return float(total_profit)
+
+
+def custom_metric_ProfitBased(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
+    y_true = dtrain.get_label()
+    threshold = 0.7  # Vous pouvez ajuster ce seuil si nécessaire
+
+    # Convertir les prédictions en décisions binaires
+    y_pred_threshold = (predt > threshold).astype(int)
+
+    # Définir les paramètres de profit/perte
+    metric_dict = {
+        'profit_per_tp': 1.0,
+        'loss_per_fp': -1.1,
+        'penalty_per_fn': -0.1
+    }
+
+    # Utiliser calculate_profitBased_gpu pour calculer le profit total
+    total_profit = calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict)
+
+    # Retourner directement le profit total sans modification
+    return 'custom_metric_ProfitBased', total_profit,True
+
+def optuna_profitBased_score(y_true, y_pred_proba, metric_dict):
+    """
+    Custom scoring function for Optuna, calculating profit based on TP, FP, and FN.
+    Args:
+        y_true: Actual labels.
+        y_pred_proba: Predicted probabilities from the model.
+        metric_dict: Dictionary containing profit and loss parameters.
+    Returns:
+        Profit score calculated based on TP, FP, and FN.
+    """
     threshold = metric_dict.get('threshold', 0.7)
-    print(f"--- optunaScore_profit_based avec {threshold}---")
-    y_pred = (y_pred_proba > threshold).astype(int)
-    return calculate_profit_based_gpu(y_true, y_pred, metric_dict)
+    print(metric_dict)
+    print(f"--- optuna_profitBased_score avec seuil {threshold} ---")
+    y_pred_threshold = (y_pred_proba > threshold).astype(int)
+    return calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict)
 
-def xgb_custom_metric_profit_based(preds, dtrain, metric_dict):
+
+def custom_metric_ProfitBased(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
     y_true = dtrain.get_label()
     threshold = metric_dict.get('threshold', 0.7)
-    y_pred = (1.0 / (1.0 + np.exp(-preds)) > threshold).astype(int)
-    score = calculate_profit_based_gpu(y_true, y_pred, metric_dict)
-    return 'profit_metric', score
+
+    # Convertir les prédictions en décisions binaires
+    y_pred_threshold = (predt > threshold).astype(int)
+
+    # Utiliser calculate_profitBased_gpu pour calculer le profit total
+    total_profit = calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict)
+
+    # Retourner directement le profit total sans modification
+    return 'custom_metric_ProfitBased', total_profit
+
+def create_custom_metric_wrapper(metric_dict):
+    def custom_metric_wrapper(predt, dtrain):
+        return custom_metric_ProfitBased(predt, dtrain, metric_dict)
+    return custom_metric_wrapper
 
 
-def objective(trial, X_train, y_train, device,
-              num_boost_min, num_boost_max, nb_split_tscv,
-              use_optimized_threshold, learning_curve_enabled,
-              use_auc_roc, score_methodAL, maskShap, metric_dict,weight_param):
+# Ajoutez cette variable globale au début de votre script
+global lastBest_score
+lastBest_score = float('-inf')
+
+def objective_optuna(trial, X_train_full, y_train_label_full, device,
+                     num_boost_min, num_boost_max, nb_split_tscv,
+                     learning_curve_enabled,
+                     optima_score, metric_dict,bestRessult_dict, weight_param):
+    global lastBest_score
     params = {
         'max_depth': trial.suggest_int('max_depth', 8, 15),
         'learning_rate': trial.suggest_float('learning_rate', 0.0005, 0.05, log=True),
@@ -1104,13 +1236,14 @@ def objective(trial, X_train, y_train, device,
         'subsample': trial.suggest_float('subsample', 0.5, 0.9),
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.3, 0.9),
         'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.3, 0.9),
-        'objective': 'binary:logistic',
         'random_state': random_state_seed,
+
         'tree_method': 'hist',
         'device': device,
+        'base_score': 0.5  # ou une autre valeur appropriée
     }
 
-    X_train = X_train.loc[:, maskShap]
+
 
     # Initialiser les compteurs de TP et FP
     total_tp = 0
@@ -1118,18 +1251,15 @@ def objective(trial, X_train, y_train, device,
     total_tn = 0
     total_fn = 0
     total_samples = 0
+    total_nb_session_val=0
 
     # Fonction englobante qui intègre metric_dict
 
-
-
-
     threshold_value = trial.suggest_float('threshold', weight_param['threshold']['min'],
-                                              weight_param['threshold']['max'])
+                                          weight_param['threshold']['max'])
 
     # Sélection de la fonction de métrique appropriée
-    if score_methodAL == CombinedMetric.PR_RECALL_TP:
-        selected_metric = optunaScore_precision_recall_tp_ratio
+    if optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
 
         # Suggérer les poids pour la métrique combinée
         profit_ratio_weight = trial.suggest_float('profit_ratio_weight', weight_param['profit_ratio_weight']['min'],
@@ -1149,7 +1279,6 @@ def objective(trial, X_train, y_train, device,
 
         # Définir la préférence de sélectivité
 
-
         metric_dict = {
             'threshold': threshold_value,
             'profit_ratio_weight': profit_ratio_weight,
@@ -1157,19 +1286,22 @@ def objective(trial, X_train, y_train, device,
             'selectivity_weight': selectivity_weight
         }
 
-    elif score_methodAL == CombinedMetric.PROFIT_BASED:
-        selected_metric = optunaScore_profit_based
+    elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+
+
         # Définir les paramètres spécifiques pour la métrique basée sur le profit
         metric_dict = {
             'threshold': threshold_value,
-            'profit_per_tp': trial.suggest_float('profit_per_tp', weight_param['profit_per_tp']['min'], weight_param['profit_per_tp']['max']),
-            'loss_per_fp': trial.suggest_float('loss_per_fp', weight_param['loss_per_fp']['min'], weight_param['loss_per_fp']['max']),
+            'profit_per_tp': trial.suggest_float('profit_per_tp', weight_param['profit_per_tp']['min'],
+                                                 weight_param['profit_per_tp']['max']),
+            'loss_per_fp': trial.suggest_float('loss_per_fp', weight_param['loss_per_fp']['min'],
+                                               weight_param['loss_per_fp']['max']),
+            'penalty_per_fn': trial.suggest_float('penalty_per_fn', weight_param['penalty_per_fn']['min'],
+                                               weight_param['penalty_per_fn']['max'])
         }
 
     else:
-        raise ValueError(f"Méthode de métrique combinée non reconnue: {score_methodAL}")
-
-    # Enrichir le metric_dict avec les poids
+        raise ValueError(f"Méthode de métrique combinée non reconnue: {xgb_custom_metric}")
 
 
     num_boost_round = trial.suggest_int('num_boost_round', num_boost_min, num_boost_max)
@@ -1179,97 +1311,57 @@ def objective(trial, X_train, y_train, device,
     optimal_thresholds = []
     learning_curve_data_list = []
 
-    # Fonction englobante qui intègre metric_dict
-    if score_methodAL == CombinedMetric.PR_RECALL_TP:
-        custom_metric = lambda predtTrain, dtrain: xgb_custom_metric_precision_recall_tp_ratio(predtTrain, dtrain, metric_dict)
-    elif score_methodAL == CombinedMetric.PROFIT_BASED:
-        custom_metric = lambda predtTrain, dtrain: xgb_custom_metric_profit_based(predtTrain, dtrain, metric_dict)
-    else:
-        raise ValueError(f"Méthode de métrique combinée non reconnue: {score_methodAL}")
-
-
     if nb_split_tscv < 2:
-        # Un seul split : 80% pour l'entraînement, 20% pour la validation
-        X_train_cv, X_val_cv, y_train_cv, y_val_cv = train_test_split(X_train, y_train, test_size=0.2, shuffle=False)
-
-        # Filtrer les valeurs 99
-        mask_train = y_train_cv != 99
-        X_train_cv, y_train_cv = X_train_cv[mask_train], y_train_cv[mask_train]
-        mask_val = y_val_cv != 99
-        X_val_cv, y_val_cv = X_val_cv[mask_val], y_val_cv[mask_val]
-
-        if len(X_train_cv) == 0 or len(y_train_cv) == 0:
-            print("Warning: Empty training set after filtering")
-            return float('-inf')  # Retourne un score très faible en cas d'erreur
-
-        # Calculer les poids des échantillons pour l'ensemble d'entraînement du pli actuel
-        sample_weights = compute_sample_weight('balanced', y=y_train_cv)
-
-        # Créer les DMatrix pour XGBoost
-        dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
-        dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
-
-        try:
-            model = xgb.train(
-                params,
-                dtrain,
-                num_boost_round=num_boost_round,
-                evals=[(dtrain, 'train'), (dval, 'eval')],
-                maximize=True,  # pour maximiser feval_func
-                early_stopping_rounds=100,
-                custom_metric=custom_metric,
-                verbose_eval=False,
-
-                # callbacks=[custom_callback_early_stopping]
-            )
-
-            y_val_pred_proba = model.predict(dval)
-            y_val_pred = (y_val_pred_proba > metric_dict['threshold']).astype(int)
-
-            # Calculer la matrice de confusion
-            tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
-            total_tp += tp
-            total_fp += fp
-            total_tn += tn
-            total_fn += fn
-            total_samples += len(y_val_cv)
-
-        except Exception as e:
-            print(f"Erreur lors de l'entraînement : {e}")
-            # Gérer l'erreur selon vos besoins
-
-            if use_optimized_threshold:
-                optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
-                optimal_thresholds.append(optimal_threshold)
-
-            if use_auc_roc:
-                val_score = roc_auc_score(y_val_cv, y_val_pred_proba)
-            else:
-                val_score = selected_metric(
-                    y_val_cv,
-                    y_val_pred_proba,
-                    metric_dict=metric_dict
-                )
-            scores.append(val_score)
-            last_score = val_score
-
-        except Exception as e:
-            print(f"Error during training or evaluation: {e}")
-            return float('-inf')  # Retourne un score très faible en cas d'erreur
-
+        exit(1)
     else:
         # Validation croisée avec TimeSeriesSplit
         tscv = TimeSeriesSplit(n_splits=nb_split_tscv)
+        i = 0
 
-        for train_index, val_index in tscv.split(X_train):
-            X_train_cv, X_val_cv = X_train.iloc[train_index], X_train.iloc[val_index]
-            y_train_cv, y_val_cv = y_train.iloc[train_index], y_train.iloc[val_index]
+        for train_index, val_index in tscv.split(X_train_full):
+            X_train_cv, X_val_cv = X_train_full.iloc[train_index], X_train_full.iloc[val_index]
+            y_train_cv, y_val_cv = y_train_label_full.iloc[train_index], y_train_label_full.iloc[val_index]
+
+            """
+            count_10 = (X_val_cv_full['SessionStartEnd'] == 10.0).sum()
+            count_20 = (X_val_cv_full['SessionStartEnd'] == 20.0).sum()
+            print(f"Nombre de 10.0 dans SessionStartEnd : {count_10}")
+            print(f"Nombre de 20.0 dans SessionStartEnd : {count_20}")
+
+            
+            # Suppression des échantillons avec la classe 99
+            mask_train = y_train_cv_full != 99
+            X_train_cv, y_train_cv = X_train_cv_full[mask_train], y_train_cv_full[mask_train]
+            mask_val = y_val_cv_full != 99
+            X_val_cv, y_val_cv = X_val_cv_full[mask_val], y_val_cv_full[mask_val]
+
+            nb_session_val=calculate_and_display_sessions(X_val_cv_full)
+            total_nb_session_val += nb_session_val
+
+            i = i + 1
+            y_val_cv_size = len(y_val_cv_full)
+            y_train_cv_size = len(y_train_cv_full)
+
+            print(
+                f"Taille pour le split {i} ->ensemble d'entrainement : {y_train_cv_size} / ensemble de validation : {y_val_cv_size}")
+            print(
+                f"->nombre de session pour le split : {nb_session_val} / nombre de session cumulés : {total_nb_session_val}")
+           
+
+            # Liste des colonnes à exclure
+            columns_to_exclude = ['SessionStartEnd', 'deltaTimestampOpening']
+
+            # Exclure les colonnes de X_train
+            X_val_cv = X_val_cv.drop(columns=columns_to_exclude)
+
 
             # Filtrer les valeurs 99
             mask_train = y_train_cv != 99
             X_train_cv, y_train_cv = X_train_cv[mask_train], y_train_cv[mask_train]
             mask_val = y_val_cv != 99
             X_val_cv, y_val_cv = X_val_cv[mask_val], y_val_cv[mask_val]
+             """
+
 
             if len(X_train_cv) == 0 or len(y_train_cv) == 0:
                 print("Warning: Empty training set after filtering")
@@ -1281,19 +1373,42 @@ def objective(trial, X_train, y_train, device,
             # Créer les DMatrix pour XGBoost
             dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
             dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
+
+            # Optimiser les poids
+
+
+            w_p = trial.suggest_float('w_p', weight_param['w_p']['min'],
+                                weight_param['w_p']['max'])
+            w_n = 1  # Vous pouvez également l'optimiser si nécessaire
+
+            # Mettre à jour la fonction objective avec les poids optimisés
+            obj_function = create_weighted_logistic_obj(w_p, w_n)
+            if(optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED):
+                custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased(predtTrain, dtrain,
+                                                                                 metric_dict)
+                params['disable_default_eval_metric'] = 1
+            else:
+                params['objective']= 'binary:logistic', #la supprimimer si obj est défini dans xjboost
+                params['eval_metric']='aucpr', #aucpr' logloss# peuvent etre conservé en plus de custum metric. sont stockées dans evals_result
+
             try:
                 # Entraîner le modèle préliminaire
+                # Use evals_result to track metrics during training
+                evals_result = {}
                 model = xgb.train(
                     params,
                     dtrain,
                     num_boost_round=num_boost_round,
                     evals=[(dtrain, 'train'), (dval, 'eval')],
-                    early_stopping_rounds=50,
+                    obj=obj_function,
+                    custom_metric=custom_metric,
+                    early_stopping_rounds=20,
                     verbose_eval=False,
-                    maximize=True,
-                    custom_metric=custom_metric
+                    evals_result=evals_result,
+                    maximize=True
                 )
-
+                # Access and print the custom metric results
+                print("Evaluation Results:", evals_result)
                 y_val_pred_proba = model.predict(dval)
                 y_val_pred = (y_val_pred_proba > metric_dict['threshold']).astype(int)
                 # Calculer la matrice de confusion
@@ -1303,18 +1418,33 @@ def objective(trial, X_train, y_train, device,
                 total_tn += tn
                 total_fn += fn
                 total_samples += len(y_val_cv)
-                if use_optimized_threshold:
-                    optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
-                    optimal_thresholds.append(optimal_threshold)
 
-                if use_auc_roc:
+                if optima_score == optima_option.USE_OPTIMA_ROCAUC:
                     val_score = roc_auc_score(y_val_cv, y_val_pred_proba)
+                elif optima_score == optima_option.USE_OPTIMA_AUCPR:
+                    val_score = average_precision_score(y_val_cv, y_val_pred_proba)
+                elif optima_score == optima_option.USE_OPTIMA_F1:
+                    val_score = f1_score(y_val_cv, y_val_pred)
+                elif optima_score == optima_option.USE_OPTIMA_PRECISION:
+                    val_score = precision_score(y_val_cv, y_val_pred)
+                elif optima_score == optima_option.USE_OPTIMA_RECALL:
+                    val_score = recall_score(y_val_cv, y_val_pred)
+                elif optima_score == optima_option.USE_OPTIMA_MCC:
+                    val_score = matthews_corrcoef(y_val_cv, y_val_pred)
+                elif optima_score == optima_option.USE_OPTIMA_YOUDEN_J:
+                    tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
+                    sensitivity = tp / (tp + fn)
+                    specificity = tn / (tn + fp)
+                    val_score = sensitivity + specificity - 1
+                elif optima_score == optima_option.USE_OPTIMA_SHARPE_RATIO:
+                    val_score = calculate_sharpe_ratio(y_val_cv, y_val_pred, price_changes_val)
+                elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+                    val_score = optuna_profitBased_score(y_val_cv, y_val_pred_proba, metric_dict=metric_dict)
+                elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
+                    val_score = optuna_TP_FP_score(y_val_cv, y_val_pred_proba, metric_dict=metric_dict)
                 else:
-                    val_score = selected_metric(
-                        y_val_cv,
-                        y_val_pred_proba,
-                        metric_dict=metric_dict
-                    )
+                    print("Invalid Optuna score")
+                    exit(1)
                 scores.append(val_score)
                 last_score = val_score
 
@@ -1327,9 +1457,9 @@ def objective(trial, X_train, y_train, device,
                         num_boost_round,
                         X_train_cv, y_train_cv,
                         X_val_cv, y_val_cv,
-                        weight_dict, selected_metric, metric_dict,custom_metric
+                        weight_dict, optuna_score, metric_dict,custom_metric
                     )
-                
+
                     # Ajouter les données pour ce split
                     learning_curve_data_list.append(split_scores)
                     """
@@ -1339,14 +1469,39 @@ def objective(trial, X_train, y_train, device,
                 continue
 
     if not scores:
-        return float('-inf')  # Retourne un score très faible si tous les plis ont échoué
+        return float('-inf'), metric_dict, bestRessult_dict  # Retourne les trois valeurs même en cas d'erreur
 
     mean_cv_score = np.mean(scores)
     score_variance = np.var(scores)
     score_std = np.std(scores)
+    tp_difference_raw = total_tp-total_fp
+    tp_difference_pnl=total_tp*weight_param['profit_per_tp']['min'] +total_fp*weight_param['loss_per_fp']['max']
+
+    if total_samples > 0:
+        tp_percentage = (total_tp / total_samples) * 100
+    else:
+        tp_percentage = 0
+    total_trades = total_tp + total_fp
+    win_rate = total_tp / total_trades * 100 if total_trades > 0 else 0
+    if mean_cv_score>lastBest_score:
+        lastBest_score = mean_cv_score
+        bestRessult_dict.update({
+            "win_rate_percentage": round(win_rate, 2),
+            "tp_difference_raw": tp_difference_raw,
+            "tp_difference_pnl": tp_difference_pnl,
+            "tp_percentage": round(tp_percentage, 3),
+            "total_tp": total_tp,
+            "total_fp": total_fp,
+            "total_tn": total_tn,
+            "total_fn": total_fn,
+            "total_trades": total_trades,
+            "lastBest_score": mean_cv_score
+        })
+        print(f"Nouveau meilleur score trouvé : {mean_cv_score:.6f}")
+        print(f"Updated bestRessult_dict: {bestRessult_dict}")
 
     print("Scores:", scores)
-    print(f"Score mean: {mean_cv_score:.6f}")
+    print(f"Score mean sur les {nb_split_tscv} iterations : {mean_cv_score:.6f}")
     print(f"Score variance: {score_variance:.6f}")
     print(f"Score standard deviation: {score_std:.6f}")
 
@@ -1365,14 +1520,11 @@ def objective(trial, X_train, y_train, device,
     trial.set_user_attr('total_fp', total_fp)
     trial.set_user_attr('total_tn', total_tn)
     trial.set_user_attr('total_fn', total_fn)
-    trial.set_user_attr('tp_difference', total_tp - total_fp)
+    trial.set_user_attr('tp_difference_raw', tp_difference_raw)
+    trial.set_user_attr('tp_difference_pnl', tp_difference_pnl)
+
     trial.set_user_attr('tp_percentage', tp_percentage)
 
-    if use_optimized_threshold and optimal_thresholds:
-        average_optimal_threshold = np.mean(optimal_thresholds)
-        trial.set_user_attr('average_optimal_threshold', average_optimal_threshold)
-    else:
-        trial.set_user_attr('average_optimal_threshold', metric_dict['threshold'])
 
     if learning_curve_enabled and learning_curve_data_list:
         avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
@@ -1385,31 +1537,356 @@ def objective(trial, X_train, y_train, device,
                     filename=f'learning_curve_best_trial_{trial.number}.png'
                 )
 
-    return mean_cv_score, metric_dict
+    return mean_cv_score, metric_dict,bestRessult_dict
+
 
 ########################################
 #########   END FUNCTION DEF   #########
 ########################################
+def prepare_xgboost_params(study, device):
+    """Prépare les paramètres XGBoost à partir des résultats de l'étude Optuna."""
+    best_params = study.best_params.copy()
+    num_boost_round = best_params.pop('num_boost_round', None)
+    if num_boost_round is None:
+        raise ValueError("num_boost_round n'est pas présent dans best_params")
+
+    xgb_valid_params = [
+        'max_depth', 'learning_rate', 'min_child_weight', 'subsample',
+        'colsample_bytree', 'colsample_bylevel', 'objective', 'eval_metric',
+        'random_state', 'tree_method', 'device'
+    ]
+    best_params = {key: value for key, value in best_params.items() if key in xgb_valid_params}
+    best_params['objective'] = 'binary:logistic'
+    best_params['tree_method'] = 'hist'
+    best_params['device'] = device
+
+    return best_params, num_boost_round
+
+
+import shap
+import numpy as np
+import matplotlib.pyplot as plt
+
+import shap
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+import os
+import numpy as np
+import pandas as pd
+import shap
+import matplotlib.pyplot as plt
+
+def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False, max_dependence_plots=3, save_dir='./shap_dependencies_results/'):
+    """
+    Analyse les valeurs SHAP pour un ensemble de données et génère des visualisations.
+
+    Parameters:
+    -----------
+    model : object
+        Le modèle entraîné pour lequel calculer les valeurs SHAP.
+    X : pandas.DataFrame
+        Les features de l'ensemble de données.
+    y : pandas.Series
+        Les labels de l'ensemble de données (non utilisés directement dans la fonction,
+        mais inclus pour une cohérence future).
+    dataset_name : str
+        Le nom de l'ensemble de données, utilisé pour nommer les fichiers de sortie.
+    create_dependence_plots : bool, optional (default=False)
+        Si True, crée des graphiques de dépendance pour les features les plus importantes.
+    max_dependence_plots : int, optional (default=3)
+        Le nombre maximum de graphiques de dépendance à créer si create_dependence_plots est True.
+    save_dir : str, optional (default='./shap_dependencies_results/')
+        Le répertoire où sauvegarder les graphiques générés et le fichier CSV.
+
+    Returns:
+    --------
+    numpy.ndarray
+        Les valeurs SHAP calculées pour l'ensemble de données.
+
+    Side Effects:
+    -------------
+    - Sauvegarde un graphique résumé de l'importance des features SHAP.
+    - Sauvegarde un fichier CSV contenant les valeurs SHAP et les importances cumulées.
+    - Si create_dependence_plots est True, sauvegarde des graphiques de dépendance
+      pour les features les plus importantes.
+    """
+    # Créer le répertoire de sauvegarde s'il n'existe pas
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Créer un explainer SHAP
+    explainer = shap.TreeExplainer(model)
+
+    # Calculer les valeurs SHAP
+    shap_values = explainer.shap_values(X)
+
+    # Pour les problèmes de classification binaire, prendre le deuxième élément si nécessaire
+    if isinstance(shap_values, list) and len(shap_values) == 2:
+        shap_values = shap_values[1]
+
+    # Créer le résumé des valeurs SHAP
+    shap.summary_plot(shap_values, X, plot_type="bar", show=False)
+    plt.title(f"SHAP Feature Importance - {dataset_name}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'shap_importance_{dataset_name}.png'))
+    plt.close()
+
+    # Créer un DataFrame avec les valeurs SHAP
+    feature_importance = np.abs(shap_values).mean(0)
+    shap_df = pd.DataFrame({
+        'feature': X.columns,
+        'importance': feature_importance
+    })
+
+    # Trier le DataFrame par importance décroissante
+    shap_df = shap_df.sort_values('importance', ascending=False)
+
+    # Calculer la somme cumulée de l'importance
+    total_importance = shap_df['importance'].sum()
+    shap_df['cumulative_importance'] = shap_df['importance'].cumsum() / total_importance
+
+    # S'assurer que la dernière valeur est exactement 1.0
+    shap_df.loc[shap_df.index[-1], 'cumulative_importance'] = 1.0
+
+    # Ajouter une colonne pour le pourcentage
+    shap_df['importance_percentage'] = shap_df['importance'] / total_importance * 100
+    shap_df['cumulative_importance_percentage'] = shap_df['cumulative_importance'] * 100
+
+    # Sauvegarder le DataFrame dans un fichier CSV
+    csv_path = os.path.join(save_dir, f'shap_values_{dataset_name}.csv')
+    shap_df.to_csv(csv_path, index=False, sep=';')
+    print(f"Les valeurs SHAP ont été sauvegardées dans : {csv_path}")
+
+    if create_dependence_plots:
+        most_important_features = shap_df['feature'].head(max_dependence_plots)
+
+        for feature in most_important_features:
+            shap.dependence_plot(feature, shap_values, X, show=False)
+            plt.title(f"SHAP Dependence Plot - {feature} - {dataset_name}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f'shap_dependence_{feature}_{dataset_name}.png'))
+            plt.close()
+
+    print(f"Les graphiques SHAP ont été sauvegardés dans le répertoire : {save_dir}")
+
+    return shap_values
+
+def compare_feature_importance(shap_values_train, shap_values_test, X_train, X_test, save_dir='./shap_dependencies_results/', top_n=20):
+    """
+    Compare l'importance des features entre l'ensemble d'entraînement et de test.
+
+    Parameters:
+    -----------
+    shap_values_train : numpy.ndarray
+        Valeurs SHAP pour l'ensemble d'entraînement
+    shap_values_test : numpy.ndarray
+        Valeurs SHAP pour l'ensemble de test
+    X_train : pandas.DataFrame
+        DataFrame contenant les features d'entraînement
+    X_test : pandas.DataFrame
+        DataFrame contenant les features de test
+    save_dir : str, optional
+        Répertoire où sauvegarder le graphique (par défaut './shap_dependencies_results/')
+    top_n : int, optional
+        Nombre de top features à afficher dans le graphique (par défaut 20)
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame contenant les importances des features et leurs différences
+    """
+    # Créer le répertoire de sauvegarde s'il n'existe pas
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Vérifier que les colonnes sont identiques dans X_train et X_test
+    if not all(X_train.columns == X_test.columns):
+        raise ValueError("Les colonnes de X_train et X_test doivent être identiques.")
+
+    importance_train = np.abs(shap_values_train).mean(0)
+    importance_test = np.abs(shap_values_test).mean(0)
+
+    importance_df = pd.DataFrame({
+        'Feature': X_train.columns,
+        'Importance_Train': importance_train,
+        'Importance_Test': importance_test
+    })
+
+    importance_df['Difference'] = importance_df['Importance_Train'] - importance_df['Importance_Test']
+    importance_df = importance_df.sort_values('Difference', key=abs, ascending=False)
+
+    # Sélectionner les top_n features pour la visualisation
+    top_features = importance_df.head(top_n)
+
+    plt.figure(figsize=(12, 8))
+    sns.barplot(x='Difference', y='Feature', data=top_features, palette='coolwarm')
+    plt.title(f"Top {top_n} Differences in Feature Importance (Train - Test)")
+    plt.xlabel("Difference in Importance")
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, 'feature_importance_difference.png'))
+    plt.close()
+
+    print(f"Graphique de différence d'importance des features sauvegardé dans {save_dir}")
+    print("\nTop differences in feature importance:")
+    print(importance_df.head(10))
+
+    return importance_df
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+
+def compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_test, top_n=10,
+                               save_dir='./shap_dependencies_results/'):
+    """
+    Compare les distributions des valeurs SHAP entre l'ensemble d'entraînement et de test.
+
+    Parameters:
+    -----------
+    shap_values_train : numpy.ndarray
+        Valeurs SHAP pour l'ensemble d'entraînement
+    shap_values_test : numpy.ndarray
+        Valeurs SHAP pour l'ensemble de test
+    X_train : pandas.DataFrame
+        DataFrame contenant les features d'entraînement
+    X_test : pandas.DataFrame
+        DataFrame contenant les features de test
+    top_n : int, optional
+        Nombre de top features à comparer (par défaut 10)
+    save_dir : str, optional
+        Répertoire où sauvegarder les graphiques (par défaut './shap_dependencies_results/')
+
+    Returns:
+    --------
+    None
+    """
+    # Créer le répertoire de sauvegarde s'il n'existe pas
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Vérifier que les colonnes sont identiques dans X_train et X_test
+    if not all(X_train.columns == X_test.columns):
+        raise ValueError("Les colonnes de X_train et X_test doivent être identiques.")
+
+    feature_importance = np.abs(shap_values_train).mean(0)
+    top_features = X_train.columns[np.argsort(feature_importance)[-top_n:]]
+
+    for feature in top_features:
+        plt.figure(figsize=(10, 6))
+        sns.kdeplot(shap_values_train[:, X_train.columns.get_loc(feature)], label='Train', fill=True)
+        sns.kdeplot(shap_values_test[:, X_test.columns.get_loc(feature)], label='Test', fill=True)
+        plt.title(f"SHAP Value Distribution - {feature}")
+        plt.xlabel("SHAP Value")
+        plt.ylabel("Density")
+        plt.legend()
+        plt.tight_layout()
+
+        # Sauvegarder le graphique dans le répertoire spécifié
+        plt.savefig(os.path.join(save_dir, f'shap_distribution_{feature}.png'))
+        plt.close()
+
+    print(f"Les graphiques de distribution SHAP ont été sauvegardés dans {save_dir}")
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+
+
+def compare_mean_shap_values(shap_values_train, shap_values_test, X_train, save_dir='./shap_dependencies_results/'):
+    """
+    Compare les valeurs SHAP moyennes entre l'ensemble d'entraînement et de test.
+
+    Parameters:
+    -----------
+    shap_values_train : numpy.ndarray
+        Valeurs SHAP pour l'ensemble d'entraînement
+    shap_values_test : numpy.ndarray
+        Valeurs SHAP pour l'ensemble de test
+    X_train : pandas.DataFrame
+        DataFrame contenant les features d'entraînement
+    save_dir : str, optional
+        Répertoire où sauvegarder le graphique (par défaut './shap_dependencies_results/')
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame contenant la comparaison des valeurs SHAP moyennes
+    """
+    # Créer le répertoire de sauvegarde s'il n'existe pas
+    os.makedirs(save_dir, exist_ok=True)
+
+    mean_shap_train = shap_values_train.mean(axis=0)
+    mean_shap_test = shap_values_test.mean(axis=0)
+
+    shap_comparison = pd.DataFrame({
+        'Feature': X_train.columns,
+        'Mean SHAP Train': mean_shap_train,
+        'Mean SHAP Test': mean_shap_test,
+        'Difference': mean_shap_train - mean_shap_test
+    })
+
+    shap_comparison = shap_comparison.sort_values('Difference', key=abs, ascending=False)
+
+    plt.figure(figsize=(12, 8))
+    plt.scatter(shap_comparison['Mean SHAP Train'], shap_comparison['Mean SHAP Test'], alpha=0.5)
+    plt.plot([-1, 1], [-1, 1], 'r--')  # ligne de référence y=x
+    for i, txt in enumerate(shap_comparison['Feature']):
+        plt.annotate(txt, (shap_comparison['Mean SHAP Train'].iloc[i], shap_comparison['Mean SHAP Test'].iloc[i]))
+    plt.xlabel('Mean SHAP Value (Train)')
+    plt.ylabel('Mean SHAP Value (Test)')
+    plt.title('Comparison of Mean SHAP Values: Train vs Test')
+    plt.tight_layout()
+
+    # Sauvegarder le graphique dans le répertoire spécifié
+    plt.savefig(os.path.join(save_dir, 'mean_shap_comparison.png'))
+    plt.close()
+
+    print("Top differences in mean SHAP values:")
+    print(shap_comparison.head(10))
+
+    return shap_comparison
+
+
+def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label,  save_dir='./shap_dependencies_results/'):
+    """Fonction principale pour l'analyse SHAP."""
+
+    # Analyse SHAP sur l'ensemble d'entraînement et de test
+    shap_values_train = analyze_shap_values(final_model, X_train, y_train_label, "Training Set",
+                                            create_dependence_plots=True,
+                                            max_dependence_plots=3,save_dir=save_dir)
+    shap_values_test = analyze_shap_values(final_model, X_test, y_test_label, "Test Set", create_dependence_plots=True,
+                                           max_dependence_plots=3,save_dir=save_dir)
+
+    # Comparaison des importances de features et des distributions SHAP
+    importance_df = compare_feature_importance(shap_values_train, shap_values_test, X_train, X_test,save_dir=save_dir)
+    compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_test, top_n=10,save_dir=save_dir)
+
+    # Comparaison des valeurs SHAP moyennes
+    shap_comparison = compare_mean_shap_values(shap_values_train, shap_values_test, X_train,save_dir=save_dir)
+
+    return importance_df, shap_comparison,shap_values_train,shap_values_test
+
 
 def train_and_evaluate_XGBOOST_model(
         df=None,
         n_trials_optimization=4,
         device='cuda',
-        use_optimized_threshold=False,
         num_boost_min=400,
         num_boost_max=1000,
         nb_split_tscv=12,
         nanvalue_to_newval=None,
         learning_curve_enabled=False,
-        use_auc_roc=False,
+        optima_option_method = optima_option.USE_OPTIMA_F1,
         feature_columns=None,
-        score_methodAL=CombinedMetric.PR_RECALL_TP,
+        xgb_custom_metric=xgb_custom_metric.PR_RECALL_TP,
         preShapImportance=1,
         user_input=None,
         weight_param=None
 
 ):
-
     # Gestion des valeurs NaN
     if nanvalue_to_newval is not None:
         # Remplacer les NaN par la valeur spécifiée
@@ -1430,39 +1907,48 @@ def train_and_evaluate_XGBOOST_model(
     # Division en ensembles d'entraînement et de test
     print("Division des données en ensembles d'entraînement et de test...")
     try:
-        train_df, test_df = split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
+        train_df, nb_SessionTrain,test_df,nb_SessionTest = split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
+
     except ValueError as e:
         print(f"Erreur lors de la division des sessions : {e}")
         sys.exit(1)
 
+    num_sessions_XTest = calculate_and_display_sessions(test_df)
+
+    print(f"{num_sessions_XTest}  {nb_SessionTest}  ")
+
     # Préparation des features et de la cible
     X_train = train_df[feature_columns]
-    y_train = train_df['class_binaire']
+    y_train_label = train_df['class_binaire']
     X_test = test_df[feature_columns]
-    y_test = test_df['class_binaire']
+    y_test_label = test_df['class_binaire']
 
+    X_train_full=X_train.copy()
+    y_train_label_full=y_train_label.copy()
+    X_test_full=X_test.copy()
+    y_test_label_full=y_test_label.copy()
 
     print(
-        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train={y_train.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test={y_test.isna().sum()}\n")
-
-
+        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
 
     # Suppression des échantillons avec la classe 99
-    mask_train = y_train != 99
-    X_train, y_train = X_train[mask_train], y_train[mask_train]
-    mask_test = y_test != 99
-    X_test, y_test = X_test[mask_test], y_test[mask_test]
+    mask_train = y_train_label != 99
+    X_train, y_train_label = X_train[mask_train], y_train_label[mask_train]
+    mask_test = y_test_label != 99
+    X_test, y_test_label = X_test[mask_test], y_test_label[mask_test]
+
+
 
     # Affichage de la distribution des classes
     print("Distribution des trades (excluant les 99):")
-    trades_distribution = y_train.value_counts(normalize=True)
-    trades_counts = y_train.value_counts()
+    trades_distribution = y_train_label.value_counts(normalize=True)
+    trades_counts = y_train_label.value_counts()
     print(f"Trades échoués [0]: {trades_distribution.get(0, 0) * 100:.2f}% ({trades_counts.get(0, 0)} trades)")
     print(f"Trades réussis [1]: {trades_distribution.get(1, 0) * 100:.2f}% ({trades_counts.get(1, 0)} trades)")
 
     # Vérification de l'équilibre des classes
-    total_trades_train = y_train.count()
-    total_trades_test = y_test.count()
+    total_trades_train = y_train_label.count()
+    total_trades_test = y_test_label.count()
 
     print(f"Nombre total de trades pour l'ensemble d'entrainement (excluant les 99): {total_trades_train}")
     print(f"Nombre total de trades pour l'ensemble de test (excluant les 99): {total_trades_test}")
@@ -1474,11 +1960,9 @@ def train_and_evaluate_XGBOOST_model(
         sys.exit(1)
     else:
         print(f"Les classes sont considérées comme équilibrées (différence : {class_difference:.2f})")
-    feature_names = X_train.columns.tolist()
 
     # **Ajout de la réduction des features ici, avant l'optimisation**
 
-    feature_names = X_train.columns.tolist()
 
     print_notification('###### FIN: CHARGER ET PRÉPARER LES DONNÉES  ##########', color="blue")
 
@@ -1486,7 +1970,7 @@ def train_and_evaluate_XGBOOST_model(
     print_notification('###### DÉBUT: OPTIMISATION BAYESIENNE ##########', color="blue")
     start_time = time.time()
 
-    if score_methodAL == CombinedMetric.PR_RECALL_TP:
+    if xgb_custom_metric == xgb_custom_metric.PR_RECALL_TP:
         metric_dict_prelim = {
             'threshold': 0.5,
             'profit_ratio_weight': 0.3,
@@ -1494,8 +1978,7 @@ def train_and_evaluate_XGBOOST_model(
             'selectivity_weight': 0.2
         }
 
-    elif score_methodAL == CombinedMetric.PROFIT_BASED:
-        selected_metric = optunaScore_profit_based
+    elif xgb_custom_metric == xgb_custom_metric.PROFIT_BASED:
         # Définir les paramètres spécifiques pour la métrique basée sur le profit
         metric_dict_prelim = {
             'threshold': 0.5,
@@ -1503,50 +1986,54 @@ def train_and_evaluate_XGBOOST_model(
             'loss_per_fp': -1.1,
         }
 
-    if score_methodAL == CombinedMetric.PR_RECALL_TP:
-        custom_metric = lambda predtTest, dtest: xgb_custom_metric_precision_recall_tp_ratio(predtTest, dtest, metric_dict_prelim)
-    elif score_methodAL == CombinedMetric.PROFIT_BASED:
-        custom_metric = lambda predtTest, dtest: xgb_custom_metric_profit_based(predtTest, dtest, metric_dict)
-    else:
-        raise ValueError(f"Méthode de métrique combinée non reconnue: {score_methodAL}")
+    maskShap = train_preliminary_model_with_tscv(X_train, y_train_label, preShapImportance)
 
-    maskShap=train_preliminary_model_with_tscv(X_train, y_train, preShapImportance,custom_metric)
+    X_train = X_train.loc[:, maskShap]
+    X_test = X_test.loc[:, maskShap]
+    feature_names = X_train.columns.tolist()
+
+
+    # Assurez-vous que X_test et y_test_label ont le même nombre de lignes
+    assert X_test.shape[0] == y_test_label.shape[0], "X_test et y_test_label doivent avoir le même nombre de lignes"
+
+    # Créer les DMatrix pour l'entraînement
+    sample_weights_train = compute_sample_weight('balanced', y=y_train_label)
+    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights_train)
+
+    # Créer les DMatrix pour le test
+    sample_weights_test = compute_sample_weight('balanced', y=y_test_label)
+    dtest = xgb.DMatrix(X_test, label=y_test_label, weight=sample_weights_test)
 
     # Au début de votre script principal, ajoutez ceci :
     global metric_dict
     metric_dict = {}
 
+    global bestRessult_dict
+    bestRessult_dict = {}
+
     # Ensuite, modifiez votre code comme suit :
 
-
     def objective_wrapper(trial):
+        global bestRessult_dict
         global metric_dict
-        score, updated_metric_dict = objective(
-            trial,
-            X_train,
-            y_train,
-            device,
-            num_boost_min,
-            num_boost_max,
-            nb_split_tscv,
-            use_optimized_threshold,
+        score, updated_metric_dict, updated_bestRessult_dict = objective_optuna(
+            trial, X_train, y_train_label, device,
+            num_boost_min, num_boost_max, nb_split_tscv,
             learning_curve_enabled,
-            use_auc_roc,
-            score_methodAL,
-            maskShap,
-            metric_dict.copy(),
-            weight_param
+            optima_option_method, metric_dict, bestRessult_dict, weight_param
         )
-        metric_dict.update(updated_metric_dict)
+        if score != float('-inf'):
+            metric_dict.update(updated_metric_dict)
+            bestRessult_dict.update(updated_bestRessult_dict)
         return score
 
     study = optuna.create_study(direction='maximize')
     study.optimize(
         objective_wrapper,
         n_trials=n_trials_optimization,
-        callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train)]
+        callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train_label)]
     )
-    
+
     # Après l'optimisation
     optimal_threshold = metric_dict.get('threshold', 0.5)
     print(f"Seuil utilisé : {optimal_threshold:.4f}")
@@ -1560,127 +2047,81 @@ def train_and_evaluate_XGBOOST_model(
     print(f"Temps d'exécution total : {execution_time:.2f} secondes")
     print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
 
-    # Entraînement du modèle final avec les features réduites
-    best_trial = study.best_trial
+    print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
+    best_params, num_boost_round = prepare_xgboost_params(study, device)
 
-    # Créer une copie de best_params
-    best_params = study.best_params.copy()
-
-    # Extraire num_boost_round de best_params
-    num_boost_round = best_params.pop('num_boost_round', None)
-
-    if num_boost_round is None:
-        raise ValueError("num_boost_round n'est pas présent dans best_params")
-
-    # Filtrer best_params pour ne conserver que les paramètres reconnus par XGBoost
-    xgb_valid_params = [
-        'max_depth', 'learning_rate', 'min_child_weight', 'subsample',
-        'colsample_bytree', 'colsample_bylevel', 'objective', 'eval_metric',
-        'random_state',  'tree_method', 'device'
-    ]
-
-    best_params = {key: value for key, value in best_params.items() if key in xgb_valid_params}
-
-    # Ajouter les autres paramètres nécessaires si besoin
-    best_params['objective'] = 'binary:logistic'
-    #best_params['eval_metric'] = 'auc'
-    # Fonction englobante qui intègre metric_dict
-    if score_methodAL == CombinedMetric.PR_RECALL_TP:
-        custom_metric = lambda predtTest, dtest: xgb_custom_metric_precision_recall_tp_ratio(predtTest, dtest, metric_dict)
-    elif score_methodAL == CombinedMetric.PROFIT_BASED:
-        custom_metric = lambda predtTest, dtest: xgb_custom_metric_profit_based(predtTest, dtest, metric_dict)
-    else:
-        raise ValueError(f"Méthode de métrique combinée non reconnue: {score_methodAL}")
-    best_params['tree_method'] = 'hist'
-    best_params['device'] = device
-
-    # Afficher les paramètres finaux pour vérification
-    print("Paramètres utilisés pour l'entraînement du modèle final:")
-    print(best_params)
-
-    # Calcul des poids des classes
-    # Recalculer les poids des échantillons pour l'ensemble d'entraînement
-    sample_weights = compute_sample_weight('balanced', y=y_train)
-
-    # Créer les DMatrix pour XGBoost en utilisant sample_weights
-    dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weights)
-
-    # Entraîner le modèle avec les paramètres optimaux
+    # Entraîner le modèle avec xgb.train
     final_model = xgb.train(
         best_params,
-        dtrain,  # 'dtrain' contient déjà les poids des échantillons
+        dtrain,
         num_boost_round=num_boost_round,
         evals=[(dtrain, 'train')],
-        early_stopping_rounds=100,
+        early_stopping_rounds=500,
         maximize=True,  # pour maximiser feval_func
-        custom_metric=custom_metric,
+        #custom_metric=custom_metric,
         verbose_eval=False
-        # callbacks=[custom_callback_early_stopping]
     )
+    print_notification('###### FIN: ENTRAINEMENT MODELE FINAL ##########', color="blue")
 
-    print_notification('###### FIN: ENTRAINEMENT DU MODÈLE FINAL ##########', color="blue")
-    # Analyser l'impact des valeurs NaN
-    print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
-
-
-    # Appeler la fonction d'analyse
-    analyze_nan_impact(final_model, X_train, feature_names, nan_value)
-
-    print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
-    
-    # Prédiction et évaluation
-    print_notification('###### DEBUT: PREDICTION ET EVALUATION DU MOBEL FINAL (TEST) ##########', color="blue")
-    X_test = X_test.loc[:, maskShap]
-
-    # Créer le DMatrix pour les données de test
-    dtest = xgb.DMatrix(X_test, label=y_test)
-
-    # Obtenir les probabilités prédites pour la classe positive
-    y_pred_proba = final_model.predict(dtest)
-
-    # Appliquer un seuil optimal pour convertir les probabilités en classes
-    y_pred = (y_pred_proba > optimal_threshold).astype(int)
-
-    accuracy = accuracy_score(y_test, y_pred)
-    auc = roc_auc_score(y_test, y_pred_proba)
-
-    print("Accuracy sur les données de test:", accuracy)
-    print("AUC-ROC sur les données de test:", auc)
-    print("\nRapport de classification:")
-    print(classification_report(y_test, y_pred))
-    print_notification('###### FIN: PREDICTION ET EVALUATION DU MODELE FINAL (TEST) ##########', color="blue")
-
-
-    
-    ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur XTEST ##########
-
-    plot_calibration_curve(y_test, y_pred_proba, X_test=X_test,
-                           feature_name='deltaTimestampOpeningSection5index',
-                           n_bins=200, strategy='uniform',
-                           optimal_threshold=optimal_threshold, show_histogram=True,user_input=user_input)
-    print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ET COURBE ROC ##########',
+    print_notification('###### DEBUT: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
+                       color="blue")
+    importance_df, shap_comparison,shap_values_train,shap_values_test = main_shap_analysis(
+        final_model, X_train, y_train_label, X_test, y_test_label, save_dir='./shap_dependencies_results/')
+    print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
 
 
+    print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
+
+    # Appeler la fonction d'analyse
+    analyze_nan_impact(model=final_model,X_train= X_train, feature_names=feature_names,shap_values=shap_values_train, nan_value=nan_value)
+
+    print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
+
+    # Prédiction et évaluation
+    print_notification('###### DEBUT: GENERATION PREDICTION AVEC MOBEL FINAL (TEST) ##########', color="blue")
+
+
+    # Obtenir les probabilités prédites pour la classe positive
+    y_test_predProba = final_model.predict(dtest)
+
+    # Appliquer un seuil optimal pour convertir les probabilités en classes
+    y_test_pred_threshold = (y_test_predProba > optimal_threshold).astype(int)
+
+    print_notification('###### FIN: GENERATION PREDICTION AVEC MOBEL FINAL (TEST) ##########', color="blue")
+
+
+
+
+    print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########', color="blue")
+
+    ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur XTEST ##########
+
+    # Pour la courbe de calibration et l'histogramme
+    plot_calibrationCurve_distrib(y_test_label, y_test_predProba, optimal_threshold=optimal_threshold, user_input=user_input,
+                                  num_sessions=nb_SessionTest)
+
+    # Pour le graphique des taux FP/TP par feature
+    plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection5index', optimal_threshold,user_input=user_input,index_size=5)
 
     print("\nDistribution des probabilités prédites sur XTest:")
     print(f"seuil: {optimal_threshold}")
-    print(f"Min : {y_pred_proba.min():.4f}")
-    print(f"Max : {y_pred_proba.max():.4f}")
-    print(f"Moyenne : {y_pred_proba.mean():.4f}")
-    print(f"Médiane : {np.median(y_pred_proba):.4f}")
+    print(f"Min : {y_test_predProba.min():.4f}")
+    print(f"Max : {y_test_predProba.max():.4f}")
+    print(f"Moyenne : {y_test_predProba.mean():.4f}")
+    print(f"Médiane : {np.median(y_test_predProba):.4f}")
 
     # Compter le nombre de prédictions dans différentes plages de probabilité
     ranges = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     bisect.insort(ranges, optimal_threshold)
     ranges = sorted(set(ranges))
-    hist, _ = np.histogram(y_pred_proba, bins=ranges)
+    hist, _ = np.histogram(y_test_predProba, bins=ranges)
 
-    print("\nDistribution des probabilités prédites avec TP et FP:")
+    print("\nDistribution des probabilités prédites avec TP et FP sur XTest:")
     for i in range(len(ranges) - 1):
-        mask = (y_pred_proba >= ranges[i]) & (y_pred_proba < ranges[i + 1])
-        predictions_in_range = y_pred_proba[mask]
-        true_values_in_range = y_test[mask]
+        mask = (y_test_predProba >= ranges[i]) & (y_test_predProba < ranges[i + 1])
+        predictions_in_range = y_test_predProba[mask]
+        true_values_in_range = y_test_label[mask]
 
         tp = np.sum((predictions_in_range >= optimal_threshold) & (true_values_in_range == 1))
         fp = np.sum((predictions_in_range >= optimal_threshold) & (true_values_in_range == 0))
@@ -1689,11 +2130,11 @@ def train_and_evaluate_XGBOOST_model(
         print(f"Probabilité {ranges[i]:.4f} - {ranges[i + 1]:.4f} : {hist[i]} prédictions, TP: {tp}, FP: {fp}, Winrate: {win_rate:.2f}%")
 
     print("Statistiques de y_pred_proba:")
-    print(f"Nombre d'éléments: {len(y_pred_proba)}")
-    print(f"Min: {np.min(y_pred_proba)}")
-    print(f"Max: {np.max(y_pred_proba)}")
-    print(f"Valeurs uniques: {np.unique(y_pred_proba)}")
-    print(f"Y a-t-il des NaN?: {np.isnan(y_pred_proba).any()}")
+    print(f"Nombre d'éléments: {len(y_test_predProba)}")
+    print(f"Min: {np.min(y_test_predProba)}")
+    print(f"Max: {np.max(y_test_predProba)}")
+    print(f"Valeurs uniques: {np.unique(y_test_predProba)}")
+    print(f"Y a-t-il des NaN?: {np.isnan(y_test_predProba).any()}")
 
     # Définissez min_precision si vous voulez l'utiliser, sinon laissez-le à None
     min_precision = None  # ou une valeur comme 0.7 si vous voulez l'utiliser
@@ -1702,8 +2143,8 @@ def train_and_evaluate_XGBOOST_model(
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(30, 8))
 
     # Sous-graphique 1 : Courbe ROC
-    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-    auc_score = roc_auc_score(y_test, y_pred_proba)
+    fpr, tpr, _ = roc_curve(y_test_label, y_test_predProba)
+    auc_score = roc_auc_score(y_test_label, y_test_predProba)
 
     ax1.plot(fpr, tpr, color='blue', linestyle='-', linewidth=2, label=f'ROC Curve (AUC = {auc_score:.2f})')
     ax1.plot([0, 1], [0, 1], color='gray', linestyle='--', linewidth=2)
@@ -1714,11 +2155,11 @@ def train_and_evaluate_XGBOOST_model(
     ax1.legend(loc='lower right', fontsize=10)
 
     # Sous-graphique 2 : Distribution des probabilités prédites
-    bins = np.linspace(y_pred_proba.min(), y_pred_proba.max(), 100)
+    bins = np.linspace(y_test_predProba.min(), y_test_predProba.max(), 100)
 
-    ax2.hist(y_pred_proba[y_pred_proba <= optimal_threshold], bins=bins, color='orange',
+    ax2.hist(y_test_predProba[y_test_predProba <= optimal_threshold], bins=bins, color='orange',
              label=f'Prédictions ≤ {optimal_threshold:.4f}', alpha=0.7)
-    ax2.hist(y_pred_proba[y_pred_proba > optimal_threshold], bins=bins, color='blue',
+    ax2.hist(y_test_predProba[y_test_predProba > optimal_threshold], bins=bins, color='blue',
              label=f'Prédictions > {optimal_threshold:.4f}', alpha=0.7)
     ax2.axvline(x=optimal_threshold, color='r', linestyle='--', label=f'Seuil de décision ({optimal_threshold:.4f})')
     ax2.set_title('Proportion de prédictions négatives (fonction du choix du seuil) sur XTest', fontsize=14, fontweight='bold')
@@ -1726,8 +2167,8 @@ def train_and_evaluate_XGBOOST_model(
     ax2.set_ylabel('Nombre de prédictions', fontsize=12)
 
     # Ajout des annotations pour les comptes
-    num_below = np.sum(y_pred_proba <= optimal_threshold)
-    num_above = np.sum(y_pred_proba > optimal_threshold)
+    num_below = np.sum(y_test_predProba <= optimal_threshold)
+    num_above = np.sum(y_test_predProba > optimal_threshold)
     ax2.text(0.05, 0.95, f'Count ≤ {optimal_threshold:.4f}: {num_below}', color='orange', transform=ax2.transAxes,
              va='top')
     ax2.text(0.05, 0.90, f'Count > {optimal_threshold:.4f}: {num_above}', color='blue', transform=ax2.transAxes,
@@ -1736,7 +2177,7 @@ def train_and_evaluate_XGBOOST_model(
     ax2.legend(fontsize=10)
 
     # Sous-graphique 3 : Courbe Precision-Recall
-    precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+    precision, recall, _ = precision_recall_curve(y_test_label, y_test_predProba)
     ax3.plot(recall, precision, color='green', marker='.', linestyle='-', linewidth=2)
     ax3.set_title('Courbe Precision-Recall', fontsize=14, fontweight='bold')
     ax3.set_xlabel('Recall (Taux de TP)', fontsize=12)
@@ -1758,101 +2199,128 @@ def train_and_evaluate_XGBOOST_model(
         plt.show()  # Afficher les graphiques
     plt.close()  # Fermer après l'affichage ou sans affichage
 
-    print_notification('###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES ET COURBE ROC ##########',
+    print_notification('###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########',
                        color="blue")
 
-    ###### DEBUT: COMPARAISON DES DISTRIBUTIONS RÉELLES ET PRÉDITES ##########
-    print_notification('###### DEBUT: COMPARAISON DES DISTRIBUTIONS RÉELLES ET PRÉDITES ##########', color="blue")
-    # Distribution réelle des classes dans l'ensemble de test
-    real_distribution = y_test.value_counts(normalize=True)
-    print("Distribution réelle des classes dans l'ensemble de test:")
-    print(real_distribution)
-    print(f"Nombre total d'échantillons dans l'ensemble de test: {len(y_test)}")
 
-    # Distribution des classes prédites
-    predicted_distribution = pd.Series(y_pred).value_counts(normalize=True)
-    print("\nDistribution des classes prédites:")
-    print(predicted_distribution)
-    print(f"Nombre total de prédictions: {len(y_pred)}")
+    ###### DEBUT: ANALYSE SHAP ##########
+    print_notification('###### DEBUT: ANALYSE SHAP ##########', color="blue")
+    def analyze_shap_feature_importance(shap_values, X, ensembleType='train', save_dir='./shap_feature_importance/'):
+        """
+        Analyse l'importance des features basée sur les valeurs SHAP et génère des visualisations.
 
-    # Comparaison côte à côte
-    comparison = pd.DataFrame({
-        'Réelle (%)': real_distribution * 100,
-        'Prédite (%)': predicted_distribution * 100
-    })
-    print("\nComparaison côte à côte (en pourcentage):")
-    print(comparison)
+        Parameters:
+        -----------
+        shap_values : np.array
+            Les valeurs SHAP calculées pour l'ensemble de données.
+        X : pd.DataFrame
+            Les features de l'ensemble de données.
+        ensembleType : str, optional
+            Type d'ensemble de données ('train' ou 'test'). Détermine le suffixe des fichiers sauvegardés.
+        save_dir : str, optional
+            Le répertoire où sauvegarder les graphiques générés (par défaut './shap_feature_importance/').
 
-    # Visualisation de la comparaison
-    plt.figure(figsize=(10, 6))
-    comparison.plot(kind='bar')
-    plt.title('Comparaison des distributions de classes réelles et prédites')
-    plt.xlabel('Classe')
-    plt.ylabel('Pourcentage')
-    plt.legend(['Réelle', 'Prédite'])
-    plt.tight_layout()
-    plt.savefig('class_distribution_comparison.png')
-    plt.close()
+        Returns:
+        --------
+        dict
+            Un dictionnaire contenant les résultats clés de l'analyse.
+        """
+        if ensembleType not in ['train', 'test']:
+            raise ValueError("ensembleType doit être 'train' ou 'test'")
 
-    # Calcul de la différence absolue entre les distributions
-    diff = abs(real_distribution - predicted_distribution)
-    print("\nDifférence absolue entre les distributions:")
-    print(diff)
-    print(f"Somme des différences absolues: {diff.sum():.4f}")
-    print_notification('###### FIN: COMPARAISON DES DISTRIBUTIONS RÉELLES ET PRÉDITES ##########', color="blue")
-    ###### FIN: COMPARAISON DES DISTRIBUTIONS RÉELLES ET PRÉDITES ##########
+        os.makedirs(save_dir, exist_ok=True)
+        suffix = f"_{ensembleType}"
 
-    ###### DEBUT: ANALYSE DES ERREURS ##########
+        # Calcul des valeurs SHAP moyennes pour chaque feature
+        shap_mean = np.abs(shap_values).mean(0)
+        feature_importance = pd.DataFrame({
+            'feature': X.columns,
+            'importance': shap_mean,
+            'effect': np.mean(shap_values, axis=0)  # Effet moyen (positif ou négatif)
+        })
+        feature_importance = feature_importance.sort_values('importance', ascending=False)
+
+        # Graphique des 20 features les plus importantes
+        top_20_features = feature_importance.head(20)
+        plt.figure(figsize=(12, 10))
+        colors = ['#FF9999', '#66B2FF']  # Rouge clair pour négatif, bleu clair pour positif
+        bars = plt.barh(top_20_features['feature'], top_20_features['importance'],
+                        color=[colors[1] if x > 0 else colors[0] for x in top_20_features['effect']])
+
+        plt.title(f"Feature Importance Determined By SHAP Values ({ensembleType.capitalize()} Set)", fontsize=16)
+        plt.xlabel('Mean |SHAP Value| (Average Impact on Model Output Magnitude)', fontsize=12)
+        plt.ylabel('Features', fontsize=12)
+        plt.legend([plt.Rectangle((0, 0), 1, 1, fc=colors[0]), plt.Rectangle((0, 0), 1, 1, fc=colors[1])],
+                   ['Diminue la probabilité de succès', 'Augmente la probabilité de succès'],
+                   loc='lower right', fontsize=10)
+        plt.text(0.5, 1.05, "La longueur de la barre indique l'importance globale de la feature.\n"
+                            "La couleur indique si la feature tend à augmenter (bleu) ou diminuer (rouge) la probabilité de succès du trade.",
+                 horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes, fontsize=10,
+                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray', boxstyle='round,pad=0.5'))
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f'shap_importance_binary_trade{suffix}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Visualisation des 30 valeurs SHAP moyennes absolues les plus importantes
+        plt.figure(figsize=(12, 6))
+        plt.bar(feature_importance['feature'][:30], feature_importance['importance'][:30])
+        plt.xticks(rotation=45, ha='right')
+        plt.title(f"Top 30 Features par Importance SHAP (valeurs moyennes absolues) - {ensembleType.capitalize()} Set")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f'shap_importance_mean_abs{suffix}.png'))
+        plt.close()
+
+        # Analyse supplémentaire : pourcentage cumulatif de l'importance
+        feature_importance['cumulative_importance'] = feature_importance['importance'].cumsum() / feature_importance[
+            'importance'].sum()
+
+        # Top 10 features
+        top_10_features = feature_importance['feature'].head(10).tolist()
+
+        # Nombre de features nécessaires pour expliquer 80% de l'importance
+        features_for_80_percent = feature_importance[feature_importance['cumulative_importance'] <= 0.8].shape[0]
+
+        results = {
+            'feature_importance': feature_importance,
+            'top_10_features': top_10_features,
+            'features_for_80_percent': features_for_80_percent
+        }
+
+        print(f"Graphiques SHAP pour l'ensemble {ensembleType} sauvegardés sous:")
+        print(f"- {os.path.join(save_dir, f'shap_importance_binary_trade{suffix}.png')}")
+        print(f"- {os.path.join(save_dir, f'shap_importance_mean_abs{suffix}.png')}")
+        print(f"\nTop 10 features basées sur l'analyse SHAP ({ensembleType}):")
+        print(top_10_features)
+        print(
+            f"\nNombre de features nécessaires pour expliquer 80% de l'importance ({ensembleType}) : {features_for_80_percent}")
+
+        return results
+
+    resulat_train_shap_feature_importance =analyze_shap_feature_importance(shap_values_train, X_train, ensembleType='train', save_dir='./shap_feature_importance/')
+    resulat_test_shap_feature_importance=analyze_shap_feature_importance(shap_values_test, X_test, ensembleType='test', save_dir='./shap_feature_importance/')
+    ###### FIN: ANALYSE SHAP ##########
+
+     ###### DEBUT: ANALYSE DES ERREURS ##########
     print_notification('###### DEBUT: ANALYSE DES ERREURS ##########', color="blue")
     # Analyse des erreurs
-    feature_names = X_test.columns.tolist()
 
-    results_df, error_df = analyze_errors(X_test, y_test, y_pred, y_pred_proba, feature_names)
 
-    # Sauvegarde des résultats pour une analyse ultérieure si nécessaire
-    results_df.to_csv('model_results_analysis.csv', index=False)
-    error_df.to_csv('model_errors_analysis.csv', index=False)
+    results_df, error_df = analyze_errors(X_test, y_test_label, y_test_pred_threshold, y_test_predProba, feature_names,
+                                          save_dir='./analyse_error/',
+                                          top_features=resulat_test_shap_feature_importance['top_10_features'])
 
-    # Visualisations supplémentaires
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(error_df[feature_names].corr(), annot=False, cmap='coolwarm')
-    plt.title('Corrélations des features pour les erreurs')
-    plt.savefig('error_features_correlation.png')
-    plt.close()
-
-    # Identification des erreurs
-    errors = X_test[y_test != y_pred]
-    print("Nombre d'erreurs:", len(errors))
 
     print_notification('###### FIN: ANALYSE DES ERREURS ##########', color="blue")
     ###### FIN: ANALYSE DES ERREURS ##########
 
     ###### DEBUT: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########
     print_notification('###### DEBUT: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########', color="blue")
-    # Conversion du modèle en XGBClassifier:
-    print("Conversion du modèle en XGBClassifier:")
-    # Copier les meilleurs hyperparamètres optimisés pour les utiliser avec XGBClassifier.
-    best_params_sklearn = best_params.copy()
-    # Ajouter le nombre d'arbres (n_estimators) déterminé par num_boost_round.
-    best_params_sklearn['n_estimators'] = num_boost_round
-    # Ajuster le ratio de poids des classes pour traiter les déséquilibres (classe 1 par rapport à classe 0).
-
-    # Calculer les poids des échantillons pour l'ensemble d'entraînement du pli actuel
-    sample_weights = compute_sample_weight('balanced', y=y_train)
-
-    # Instancier un classificateur XGBoost avec les hyperparamètres optimisés.
-    xgb_classifier = xgb.XGBClassifier(**best_params_sklearn)
-    # Entraîner le modèle sur les données d'entraînement avec des poids pour chaque échantillon.
-    xgb_classifier.fit(X_train, y_train, sample_weight=sample_weights)
 
     # Exemple d'utilisation :
-    analyze_predictions_by_range(X_test, y_pred_proba, xgb_classifier, prob_min=0.7, prob_max=1.00, top_n_features=20)
+    analyze_predictions_by_range(X_test, y_test_predProba, shap_values_test, prob_min=0.5, prob_max=1.00, top_n_features=20)
 
-    # Utilisation de SHAP pour évaluer l'importance des features
-    explainer_Test = shap.TreeExplainer(xgb_classifier)
-    shap_values = explainer_Test.shap_values(X_test)
 
-    feature_importance = np.abs(shap_values).mean(axis=0)
+    feature_importance = np.abs(shap_values_test).mean(axis=0)
     feature_importance_df = pd.DataFrame({
         'feature': X_test.columns,
         'importance': feature_importance
@@ -1867,19 +2335,18 @@ def train_and_evaluate_XGBOOST_model(
 
     print("Visualisation des erreurs confiantes:")
     plot_confident_errors(
-        xgb_classifier=xgb_classifier,
+       shap_values_test,
         confident_errors=confident_errors,
         X_test=X_test,
         feature_names=feature_names,
-        n=5,
-        explainer=explainer_Test)
+        n=5)
     #plot_confident_errors(xgb_classifier, confident_errors, X_test, X_test.columns,explainer_Test)
 
 
     # Exécution des analyses
     print("\nAnalyse des erreurs confiantes:")
 
-    analyze_confident_errors(xgb_classifier=xgb_classifier,confident_errors=confident_errors,X_test=X_test,feature_names=feature_names,important_features=important_features,n=5,explainer=explainer_Test)
+    analyze_confident_errors(shap_values_test,confident_errors=confident_errors,X_test=X_test,feature_names=feature_names,important_features=important_features,n=5)
     correct_predictions = results_df[results_df['true_label'] == results_df['predicted_label']]
     print("\nComparaison des erreurs vs prédictions correctes:")
     compare_errors_vs_correct(confident_errors.head(30), correct_predictions, X_test, important_features)
@@ -1888,131 +2355,6 @@ def train_and_evaluate_XGBOOST_model(
     print_notification('###### FIN: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########', color="blue")
     ###### FIN: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########
 
-    ###### DEBUT: ANALYSE SHAP ##########
-    print_notification('###### DEBUT: ANALYSE SHAP ##########', color="blue")
-
-    # Calcul des valeurs SHAP moyennes pour chaque feature
-    shap_mean = np.abs(shap_values).mean(0)
-    feature_importance = pd.DataFrame({
-        'feature': X_test.columns,
-        'importance': shap_mean,
-        'effect': np.mean(shap_values, axis=0)  # Effet moyen (positif ou négatif)
-    })
-    feature_importance = feature_importance.sort_values('importance', ascending=False).head(20)
-
-    plt.figure(figsize=(12, 10))
-
-    # Utilisation de deux couleurs pour montrer l'effet positif/négatif
-    colors = ['#FF9999', '#66B2FF']  # Rouge clair pour négatif, bleu clair pour positif
-    bars = plt.barh(feature_importance['feature'], feature_importance['importance'],
-                    color=[colors[1] if x > 0 else colors[0] for x in feature_importance['effect']])
-
-    plt.title("Feature Importance Determined By SHAP Values", fontsize=16)
-    plt.xlabel('Mean |SHAP Value| (Average Impact on Model Output Magnitude)', fontsize=12)
-    plt.ylabel('Features', fontsize=12)
-
-    # Ajout de la légende
-    plt.legend([plt.Rectangle((0, 0), 1, 1, fc=colors[0]), plt.Rectangle((0, 0), 1, 1, fc=colors[1])],
-               ['Diminue la probabilité de succès', 'Augmente la probabilité de succès'],
-               loc='lower right', fontsize=10)
-
-    # Annotations pour expliquer l'interprétation
-    plt.text(0.5, 1.05, "La longueur de la barre indique l'importance globale de la feature.\n"
-                        "La couleur indique si la feature tend à augmenter (bleu) ou diminuer (rouge) la probabilité de succès du trade.",
-             horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes, fontsize=10,
-             bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray', boxstyle='round,pad=0.5'))
-
-    plt.tight_layout()
-    plt.savefig('shap_importance_binary_trade.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    print("Graphique SHAP sauvegardé sous 'shap_importance_binary_trade.png'")
-
-    # 2. Valeurs SHAP moyennes absolues
-    print("\nAnalyse des valeurs SHAP moyennes absolues:")
-
-    feature_importance_df = feature_importance_df.sort_values('importance', ascending=False)
-
-    # Visualisation des valeurs SHAP moyennes absolues
-    plt.figure(figsize=(12, 6))
-    plt.bar(feature_importance_df['feature'][:30], feature_importance_df['importance'][:30])
-    plt.xticks(rotation=45, ha='right')
-    plt.title("Top 30 Features par Importance SHAP (valeurs moyennes absolues)")
-    plt.tight_layout()
-    plt.savefig('shap_importance_mean_abs.png')
-    plt.close()
-
-    # Analyse supplémentaire : pourcentage cumulatif de l'importance
-    feature_importance_df['cumulative_importance'] = feature_importance_df['importance'].cumsum() / feature_importance_df['importance'].sum()
-
-    # Utiliser les résultats de l'analyse SHAP pour identifier les top features
-    feature_importance_df = feature_importance_df.sort_values('importance', ascending=False)
-    top_10_features = feature_importance_df['feature'].head(10).tolist()
-
-    print("Top 10 features basées sur l'analyse SHAP:")
-    print(top_10_features)
-
-    # Créer un subplot pour chaque feature
-    fig, axes = plt.subplots(5, 2, figsize=(20, 25))
-    fig.suptitle('Distribution des 10 features les plus importantes par type d\'erreur', fontsize=16)
-
-    for i, feature in enumerate(top_10_features):
-        row = i // 2
-        col = i % 2
-        sns.boxplot(x='error_type', y=feature, data=results_df, ax=axes[row, col])
-        axes[row, col].set_title(f'{i+1}. {feature}')
-        axes[row, col].set_xlabel('')
-        if col == 0:
-            axes[row, col].set_ylabel('Valeur')
-        else:
-            axes[row, col].set_ylabel('')
-
-    plt.tight_layout()
-
-    # Sauvegarde du graphique combiné des 10 features
-    plt.savefig('top_10_features_distribution_by_error.png', dpi=300, bbox_inches='tight')
-    print("Graphique combiné sauvegardé sous 'top_10_features_distribution_by_error.png'")
-    plt.close()
-
-    # Trouver combien de features sont nécessaires pour expliquer 80% de l'importance
-    features_for_80_percent = feature_importance_df[feature_importance_df['cumulative_importance'] <= 0.8].shape[0]
-    print(f"\nNombre de features nécessaires pour expliquer 80% de l'importance : {features_for_80_percent}")
-    print_notification('###### FIN: ANALYSE SHAP ##########', color="blue")
-    ###### FIN: ANALYSE SHAP ##########
-
-    ###### DEBUT: COMPARAISON AVEC FEATURE_IMPORTANCES_ DE XGBOOST ##########
-    print_notification('###### DEBUT: COMPARAISON AVEC FEATURE_IMPORTANCES_ DE XGBOOST ##########', color="blue")
-    # 3. Comparaison avec feature_importances_ de XGBoost
-    xgb_feature_importance = xgb_classifier.feature_importances_
-    xgb_importance_df = pd.DataFrame({
-        'feature': X_test.columns,
-        'xgb_importance': xgb_feature_importance
-    })
-    xgb_importance_df = xgb_importance_df.sort_values('xgb_importance', ascending=False)
-
-    print("\nComparaison des top 30 features : SHAP vs XGBoost feature_importances_")
-    comparison_df = pd.merge(feature_importance_df, xgb_importance_df, on='feature')
-    comparison_df = comparison_df.sort_values('importance', ascending=False).head(30)
-    with pd.option_context('display.max_columns', None, 'display.width', None):
-        print(comparison_df)
-
-    # Visualisation de la comparaison
-    plt.figure(figsize=(12, 6))
-    width = 0.35
-    x = np.arange(len(comparison_df))
-    plt.bar(x - width/2, comparison_df['importance'], width, label='SHAP')
-    plt.bar(x + width/2, comparison_df['xgb_importance'], width, label='XGBoost')
-    plt.xlabel('Features')
-    plt.ylabel('Importance')
-    plt.title('Comparaison de l\'importance des features : SHAP vs XGBoost')
-    plt.xticks(x, comparison_df['feature'], rotation=45, ha='right')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig('feature_importance_comparison.png')
-    plt.close()
-    print_notification('###### FIN: COMPARAISON AVEC FEATURE_IMPORTANCES_ DE XGBOOST ##########', color="blue")
-    ###### FIN: COMPARAISON AVEC FEATURE_IMPORTANCES_ DE XGBOOST ##########
-    #exit(1)
     ###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########
     print_notification("###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########", color="blue")
     # Calcul des valeurs d'interaction SHAP
@@ -2091,10 +2433,10 @@ def train_and_evaluate_XGBOOST_model(
     plt.figure(figsize=(26, 20))  # Augmenter la taille de la figure
 
     # Créer la heatmap avec des paramètres ajustés
-    sns.heatmap(interaction_df.loc[top_features, top_features],
+    sns.heatmap(interaction_df.loc[top_features, top_features].round(0).astype(int),
                 annot=True,
                 cmap='coolwarm',
-                fmt='d',#'.2f',
+                fmt='d',  # Afficher les valeurs comme des entiers
                 annot_kws={'size': 7},  # Réduire la taille de la police des annotations
                 square=True,  # Assurer que les cellules sont carrées
                 linewidths=0.5,  # Ajouter des lignes entre les cellules
@@ -2117,119 +2459,203 @@ def train_and_evaluate_XGBOOST_model(
         'optimal_threshold': optimal_threshold,
         'final_model': final_model,
         'feature_importance_df': feature_importance_df,
-        'xgb_classifier': xgb_classifier,
         'X_test': X_test,
-        'y_test': y_test,
-        'y_pred': y_pred,
-        'y_pred_proba': y_pred_proba
+        'y_test_label': y_test_label,
+        'y_test_pred_threshold': y_test_pred_threshold,
+        'y_test_predProba': y_test_predProba
     }
 
+
+
+############### main######################
 if __name__ == "__main__":
-    # Demander à l'utilisateur s'il souhaite afficher les graphiques
-    user_input = input(
-        "Pour afficher les graphiques, appuyez sur 'd'. Sinon, appuyez sur 'Entrée' pour les enregistrer sans les afficher: ")
+ # Demander à l'utilisateur s'il souhaite afficher les graphiques
+ check_gpu_availability()
+ user_input = input(
+     "Pour afficher les graphiques, appuyez sur 'd'. Sinon, appuyez sur 'Entrée' pour les enregistrer sans les afficher: ")
 
-    FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step0_4_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-    #FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort_feat.csv"
-    DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_02102024\merge"
-    FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
+ FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+ #FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
+ DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge"
+ FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
 
-    DEVICE_ = 'cuda'
-    USE_OPTIMIZED_THRESHOLD_ = False
-    score_methodAL=CombinedMetric.PROFIT_BASED
-    NUM_BOOST_MIN_ = 400
-    NUM_BOOST_MAX_ = 850
-    N_TRIALS_OPTIMIZATION_ =10
-    NB_SPLIT_TSCV_ = 4
-    NANVALUE_TO_NEWVAL_ = np.nan #900000.123456789
-    LEARNING_CURVE_ENABLED = False
-    random_state_seed = 30
-    USE_AUC_ROC = False  # False combined metric
-    # Définir les paramètres supplémentaires
+ DEVICE_ = 'cuda'
 
+ xgb_custom_metric = xgb_custom_metric.PR_RECALL_TP #oas finalisé a date. implémente  objectuf et eval_metric sont ceux pas defaut dans params
+ optima_option_method=optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED
 
-    weight_param = {
-        'threshold': {'min': 0.505, 'max': 0.505}, # total_trades = tp + fp
-        'profit_ratio_weight': {'min': 0.4, 'max': 0.4}, # profit_ratio = (tp - fp) / total_trades
-        'win_rate_weight': {'min': 0.45, 'max': 0.45}, #win_rate = tp / total_trades if total_trades
-        'selectivity_weight': {'min': 0.075, 'max': 0.075}, #selectivity = total_trades / total_samples
-        'profit_per_tp': {'min': 1, 'max': 1},
-        'loss_per_fp': {'min': -1.1, 'max': -1.1}
-    }
+ NUM_BOOST_MIN_ = 400
+ NUM_BOOST_MAX_ = 850
+ N_TRIALS_OPTIMIZATION_ = 500
+ NB_SPLIT_TSCV_ = 4
+ NANVALUE_TO_NEWVAL_ = np.nan  # 900000.123456789
+ LEARNING_CURVE_ENABLED = False
+ random_state_seed = 30
+ # Définir les paramètres supplémentaires
 
-    print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-    file_path = FILE_PATH_
-    initial_df = load_data(file_path)
-    print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
+ weight_param = {
+     'threshold': {'min': 0.50, 'max': 0.53},  # total_trades = tp + fp
+     'profit_ratio_weight': {'min': 0.4, 'max': 0.4},  # profit_ratio = (tp - fp) / total_trades
+     'win_rate_weight': {'min': 0.45, 'max': 0.45},  # win_rate = tp / total_trades if total_trades
+     'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades / total_samples
+     'profit_per_tp': {'min': 1, 'max': 1}, #fixe, dépend des profits par trade
+     'loss_per_fp': {'min': -1.1, 'max': -1.1}, #fixe, dépend des pertes par trade
+    'penalty_per_fn': {'min': -0.000, 'max': -0.000},
 
-    # Chargement et préparation des données
-    df = initial_df.copy()
+     'w_p': {'min': 1, 'max': 3} #poid pour la class 1 dans objective
+ }
 
-    # Définition des colonnes de features et des colonnes exclues
-    feature_columns = [
-        col for col in df.columns if col not in [
-            'class_binaire', 'date', 'trade_category', 'SessionStartEnd','candleDir',
-             'deltaTimestampOpening',
-             'deltaTimestampOpeningSection5min',
-            #'deltaTimestampOpeningSection5index',
-             'deltaTimestampOpeningSection30min',
-            'deltaTimestampOpeningSection30index',
-            'deltaCustomSectionMin',
-            'deltaCustomSectionIndex',
-            """
-            'perct_VA6P',
-            'ratio_delta_vol_VA6P',
-            'diffPriceClose_VA6PPoc',
-            'diffPriceClose_VA6PvaH',
-            'diffPriceClose_VA6PvaL',
-            'perct_VA11P',
-            'ratio_delta_vol_VA11P',
-            'diffPriceClose_VA11PPoc',
-            'diffPriceClose_VA11PvaH',
-            'diffPriceClose_VA11PvaL',
-            'perct_VA16P',
-            'ratio_delta_vol_VA16P',
-            'diffPriceClose_VA16PPoc',
-            'diffPriceClose_VA16PvaH',
-            'diffPriceClose_VA16PvaL',
-            'overlap_ratio_VA_6P_11P',
-            'overlap_ratio_VA_6P_16P',
-            'overlap_ratio_VA_11P_16P',
-            'poc_diff_6P_11P',
-            'poc_diff_ratio_6P_11P',
-            'poc_diff_6P_16P',
-            'poc_diff_ratio_6P_16P',
-            'poc_diff_11P_16P',
-            'poc_diff_ratio_11P_16P'
-            """
+ print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
+ file_path = FILE_PATH_
+ initial_df = load_data(file_path)
+ print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
 
-            ]]
+ # Chargement et préparation des données
+ df = initial_df.copy()
 
+ # Définition des colonnes de features et des colonnes exclues
+ feature_columns = [
+     col for col in df.columns if col not in [
+         'class_binaire', 'date', 'trade_category',
+         'SessionStartEnd', #exclu plus tard
+         'deltaTimestampOpening', #exclu plus tard
+         'candleDir',
+         'deltaTimestampOpeningSection5min',
+         # 'deltaTimestampOpeningSection5index',
+         'deltaTimestampOpeningSection30min',
+         'deltaTimestampOpeningSection30index',
+         'deltaCustomSectionMin',
+         'deltaCustomSectionIndex',
+         """
+         'perct_VA6P',
+         'ratio_delta_vol_VA6P',
+         'diffPriceClose_VA6PPoc',
+         'diffPriceClose_VA6PvaH',
+         'diffPriceClose_VA6PvaL',
+         'perct_VA11P',
+         'ratio_delta_vol_VA11P',
+         'diffPriceClose_VA11PPoc',
+         'diffPriceClose_VA11PvaH',
+         'diffPriceClose_VA11PvaL',
+         'perct_VA16P',
+         'ratio_delta_vol_VA16P',
+         'diffPriceClose_VA16PPoc',
+         'diffPriceClose_VA16PvaH',
+         'diffPriceClose_VA16PvaL',
+         'overlap_ratio_VA_6P_11P',
+         'overlap_ratio_VA_6P_16P',
+         'overlap_ratio_VA_11P_16P',
+         'poc_diff_6P_11P',
+         'poc_diff_ratio_6P_11P',
+         'poc_diff_6P_16P',
+         'poc_diff_ratio_6P_16P',
+         'poc_diff_11P_16P',
+         'poc_diff_ratio_11P_16P'
+        """
+     ]
+ ]
 
-    for top_N in [200]:
-        top_N=None
-        print(f"\n\n### Entraînement avec les top {top_N} features ###\n")
-        results = train_and_evaluate_XGBOOST_model(
-            df=df,
-            n_trials_optimization=N_TRIALS_OPTIMIZATION_,
-            device=DEVICE_,
-            use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,
-            num_boost_min=NUM_BOOST_MIN_,
-            num_boost_max=NUM_BOOST_MAX_,
-            nb_split_tscv=NB_SPLIT_TSCV_,
-            nanvalue_to_newval=NANVALUE_TO_NEWVAL_,
-            learning_curve_enabled=LEARNING_CURVE_ENABLED,
-            use_auc_roc=USE_AUC_ROC,
-            feature_columns=feature_columns,
-            score_methodAL=score_methodAL,preShapImportance=1,
-            user_input=user_input,
-            weight_param=weight_param
-        )
+ results = train_and_evaluate_XGBOOST_model(
+     df=df,
+     n_trials_optimization=N_TRIALS_OPTIMIZATION_,
+     device=DEVICE_,
+     num_boost_min=NUM_BOOST_MIN_,
+     num_boost_max=NUM_BOOST_MAX_,
+     nb_split_tscv=NB_SPLIT_TSCV_,
+     nanvalue_to_newval=NANVALUE_TO_NEWVAL_,
+     learning_curve_enabled=LEARNING_CURVE_ENABLED,
+     optima_option_method=optima_option_method,
+     feature_columns=feature_columns,
+     xgb_custom_metric=xgb_custom_metric,
+     preShapImportance=1,
+     user_input=user_input,
+     weight_param=weight_param
+ )
 
-    if results is not None:
-        print("Meilleurs hyperparamètres trouvés:", results['study'].best_params)
-        print("Meilleur score:", results['study'].best_value)
-        print("Seuil optimal:", results['optimal_threshold'])
+ if results is not None:
+     print("Meilleurs hyperparamètres trouvés:", results['study'].best_params)
+     print("Meilleur score:", results['study'].best_value)
+     print("Seuil optimal:", results['optimal_threshold'])
+ else:
+     print("L'entraînement n'a pas produit de résultats.")
+
+"""
+"# Un seul split : 80% pour l'entraînement, 20% pour la validation
+X_train_cv, X_val_cv, y_train_cv, y_val_cv = train_test_split(X_train, y_train_label, test_size=0.2, shuffle=False)
+
+# Filtrer les valeurs 99
+mask_train = y_train_cv != 99
+X_train_cv, y_train_cv = X_train_cv[mask_train], y_train_cv[mask_train]
+mask_val = y_val_cv != 99
+X_val_cv, y_val_cv = X_val_cv[mask_val], y_val_cv[mask_val]
+
+if len(X_train_cv) == 0 or len(y_train_cv) == 0:
+    print("Warning: Empty training set after filtering")
+    return float('-inf')  # Retourne un score très faible en cas d'erreur
+
+# Calculer les poids des échantillons pour l'ensemble d'entraînement du pli actuel
+sample_weights = compute_sample_weight('balanced', y=y_train_cv)
+
+# Créer les DMatrix pour XGBoost
+dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
+dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
+
+try:
+    model = xgb.train(
+        params,
+        dtrain,
+        num_boost_round=num_boost_round,
+        evals=[(dtrain, 'train'), (dval, 'eval')],
+        early_stopping_rounds=100,
+        verbose_eval=False,
+        maximize=True,  # Changé à True car nous voulons maximiser le profit
+        #obj=obj,
+        #custom_metric=custom_metric
+    )
+
+    y_val_pred_proba = model.predict(dval)
+    y_val_pred = (y_val_pred_proba > metric_dict['threshold']).astype(int)
+
+    # Calculer la matrice de confusion
+    tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
+    total_tp += tp
+    total_fp += fp
+    total_tn += tn
+    total_fn += fn
+    total_samples += len(y_val_cv)
+
+except Exception as e:
+    print(f"Erreur lors de l'entraînement : {e}")
+    # Gérer l'erreur selon vos besoins
+
+    if use_optimized_threshold:
+        optimal_threshold = optimize_threshold(y_val_cv, y_val_pred_proba)
+        optimal_thresholds.append(optimal_threshold)
+
+    if use_auc_roc:
+        val_score = roc_auc_score(y_val_cv, y_val_pred_proba)
     else:
-        print("L'entraînement n'a pas produit de résultats.")
+        val_score = optuna_score(
+            y_val_cv,
+            y_val_pred_proba,
+            metric_dict=metric_dict
+        )
+    scores.append(val_score)
+    last_score = val_score
 
+except Exception as e:
+    print(f"Error during training or evaluation: {e}")
+    return float('-inf')  # Retourne un score très faible en cas d'erreur
+"""
+"""
+# Fonction englobante qui intègre metric_dict
+if xgb_custom_metric == xgb_custom_metric.PR_RECALL_TP:
+    custom_metric = lambda predtTrain, dtrain: xgb_custom_metric_TP_FP(predtTrain, dtrain,
+                                                                          metric_dict)
+    obj = lambda preds, dtrain: get_xgb_objective_TP_FP(metric_dict)
+elif xgb_custom_metric == xgb_custom_metric.PROFIT_BASED:
+    custom_metric = lambda predtTrain, dtrain: xgb_custom_metric_profitBased(predtTrain, dtrain, metric_dict)
+    obj=lambda preds, dtrain: xgb_objective_profitBased(preds, dtrain, metric_dict)
+else:
+    raise ValueError(f"Méthode de métrique combinée non reconnue: {xgb_custom_metric}")
+"""

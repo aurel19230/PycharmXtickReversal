@@ -55,12 +55,12 @@ if user_choice.lower() == 'd' or user_choice.lower() == 's':
 adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
-#file_name = "Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnly220LastFullSession_OnlyShort.csv"
-file_name = "Step4_Step3_Step2_MergedAllFile_Step0_4_merged_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnlyFullSession_OnlyShort.csv"
+#file_name = "Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession_OnlyShort.csv"
 
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_02102024\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_04102024\\merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -279,7 +279,7 @@ import numpy as np
 from itertools import combinations
 
 # Liste des périodes à analyser
-periods = [6, 11, 16]
+periods = [6, 11, 16,21]
 
 for nbPeriods in periods:
     # Calcul du pourcentage de la zone de valeur
@@ -318,7 +318,7 @@ for nbPeriods in periods:
     )
 
 # Génération des combinaisons de périodes
-period_combinations = [(6, 11), (6, 16), (11, 16)]
+period_combinations = [(6, 11), (6, 16), (6, 21),(11, 21)]
 
 for nbPeriods1, nbPeriods2 in period_combinations:
     # --- Proposition 1 : Chevauchement des zones de valeur ---
@@ -1859,19 +1859,28 @@ column_settings = {
     'diffPriceClose_VA16PPoc':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA16PvaH':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA16PvaL':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'perct_VA21P':                                (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'ratio_delta_vol_VA21P':                    (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffPriceClose_VA21PPoc':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'diffPriceClose_VA21PvaH':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'diffPriceClose_VA21PvaL':                  (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
 
     # Chevauchement des Zones de Valeur
     'overlap_ratio_VA_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'overlap_ratio_VA_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'overlap_ratio_VA_11P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'overlap_ratio_VA_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'overlap_ratio_VA_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Analyse des POC
     'poc_diff_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'poc_diff_ratio_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'poc_diff_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'poc_diff_ratio_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_11P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_ratio_11P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
 
     'market_regimeADX':                       (False, True, 0.5, 99.8,toBeDisplayed_if_s(user_choice, True)),
     'market_regimeADX_state':                 (False, False, 0.5, 99.8,toBeDisplayed_if_s(user_choice, True)),

@@ -263,7 +263,6 @@ def process_selected_features(feature_data):
     # 2. Définition des constantes et paramètres globaux
     DEVICE_ = 'cuda'  # Utiliser 'cuda' pour GPU, 'cpu' sinon
     USE_OPTIMIZED_THRESHOLD_ = False  # True pour optimiser le seuil, False pour utiliser un seuil fixe
-    FIXED_THRESHOLD_ = 0.54  # Seuil fixe à utiliser si USE_OPTIMIZED_THRESHOLD est False
     NUM_BOOST_MIN_ = 400  # Nombre minimum de boosting rounds
     NUM_BOOST_MAX_ = 1000  # Nombre maximum de boosting rounds
     N_TRIALS_OPTIMIZATION_ = 7  # Nombre d'essais pour l'optimisation avec Optuna
@@ -273,7 +272,6 @@ def process_selected_features(feature_data):
     # 3. Exécution de la fonction principale pour entraîner et évaluer le modèle
     results = train_and_evaluate_XGBOOST_model(initial_df=initial_df, n_trials_optimization=N_TRIALS_OPTIMIZATION_,
                                                device=DEVICE_, use_optimized_threshold=USE_OPTIMIZED_THRESHOLD_,
-                                               fixed_threshold=FIXED_THRESHOLD_,
                                                num_boost_min=NUM_BOOST_MIN_, num_boost_max=NUM_BOOST_MAX_,
                                                nb_split_tscv=NB_SPLIT_TSCV_, nanvalue_to_newval=NANVALUE_TO_NEWVAL_)
 
@@ -300,10 +298,10 @@ if __name__ == '__main__':
       #                  "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
 
     # Nom du fichier
-    file_name = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_2_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    file_name = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
 
     # Chemin du répertoire
-    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge13092024"
+    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_04102024\\merge"
 
     # Construction du chemin complet du fichier
     file_path = os.path.join(directory_path, file_name)

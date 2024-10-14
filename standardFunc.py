@@ -16,6 +16,8 @@ def timestamp_to_date_utc(timestamp):
     else:
         return time.strftime(date_format, time.gmtime(timestamp))
 
+import torch
+
 def date_to_timestamp_utc(year, month, day, hour, minute, second): # from c++ encoding
     timeinfo = (year, month, day, hour, minute, second)
     return calendar.timegm(timeinfo)
@@ -183,8 +185,8 @@ def split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
     total_included_rows = len(train_df) + len(test_df)
     print(f"Nombre total de lignes incluses : {total_included_rows}")
     print(f"Différence avec le total : {len(df) - total_included_rows}")
-
-    return train_df, test_df
+    print("\n")
+    return train_df,len(train_sessions), test_df,{len(test_sessions)}
 
 """
 # Utilisation de la fonction
@@ -239,34 +241,15 @@ from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
 
 
-def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None, n_bins=200, strategy='uniform',
-                           optimal_threshold=None, show_histogram=True,user_input=None):
-    """
-    Plots an improved calibration curve, distribution of predicted probabilities,
-    and optionally FP/TP rates by a specified feature.
-
-    Parameters:
-    - y_true: array-like, True binary labels (0 or 1).
-    - y_pred_proba: array-like, Predicted probabilities for the positive class.
-    - X_test: DataFrame, optional, Test features containing the column specified by feature_name.
-    - feature_name: str, optional, Name of the feature to use for the third plot.
-    - n_bins: int, Number of bins for the histogram and calibration curve (default=200).
-    - strategy: str, Strategy for calibration curve ('uniform' or 'quantile').
-    - optimal_threshold: float, The optimal decision threshold.
-    - show_histogram: bool, Whether to display the histogram.
-
-    Returns:
-    - None
-    """
+def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='uniform',
+                                  optimal_threshold=None, show_histogram=True, user_input=None, num_sessions=25):
     y_true = np.array(y_true)
     y_pred_proba = np.array(y_pred_proba)
 
     if optimal_threshold is None:
         raise ValueError("The 'optimal_threshold' parameter must be provided.")
 
-    # Determine the number of subplots based on whether feature_name is provided
-    n_plots = 3 if feature_name is not None and X_test is not None else 2
-    fig, axes = plt.subplots(1, n_plots, figsize=(15 * n_plots // 2, 10))
+    fig, axes = plt.subplots(1, 2, figsize=(20, 10))
 
     # Calibration curve
     prob_true, prob_pred = calibration_curve(y_true, y_pred_proba, n_bins=10, strategy=strategy)
@@ -274,7 +257,7 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
 
     axes[0].plot(prob_pred, prob_true, marker='o', linewidth=1, color='blue', label='Calibration curve')
     axes[0].plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly calibrated')
-    axes[0].set_title(f'Calibration Curve (Reliability Diagram)\nBrier Score: {brier_score:.4f}', fontsize=14)
+    axes[0].set_title(f'Calibration Curve (Reliability Diagram)\nBrier Score: {brier_score:.4f}', fontsize=12)
     axes[0].set_xlabel('Mean Predicted Probability', fontsize=12)
     axes[0].set_ylabel('Fraction of Positives', fontsize=12)
     axes[0].legend(loc='upper left', fontsize=10)
@@ -285,17 +268,14 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
         bin_width = bins[1] - bins[0]
         bin_centers = bins[:-1] + bin_width / 2
 
-        # Initialize counts
         tp_counts = np.zeros(n_bins)
         fp_counts = np.zeros(n_bins)
         tn_counts = np.zeros(n_bins)
         fn_counts = np.zeros(n_bins)
 
-        # Assign each sample to a bin
-        bin_indices = np.digitize(y_pred_proba, bins) - 1  # Subtract 1 to get zero-based index
-        bin_indices = np.clip(bin_indices, 0, n_bins - 1)  # Ensure indices are within valid range
+        bin_indices = np.digitize(y_pred_proba, bins) - 1
+        bin_indices = np.clip(bin_indices, 0, n_bins - 1)
 
-        # Compute TP, FP, TN, FN counts per bin
         for i in range(len(y_true)):
             bin_idx = bin_indices[i]
             actual = y_true[i]
@@ -311,13 +291,11 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
             elif actual == 1 and predicted_label == 0:
                 fn_counts[bin_idx] += 1
 
-        # Stack the counts for plotting
         bottom_tn = np.zeros(n_bins)
         bottom_fp = tn_counts
         bottom_fn = tn_counts + fp_counts
         bottom_tp = tn_counts + fp_counts + fn_counts
 
-        # Plotting
         axes[1].bar(bin_centers, tn_counts, width=bin_width, label='TN', alpha=0.7, color='green')
         axes[1].bar(bin_centers, fp_counts, width=bin_width, bottom=bottom_tn, label='FP', alpha=0.7, color='red')
         axes[1].bar(bin_centers, fn_counts, width=bin_width, bottom=bottom_fp, label='FN', alpha=0.7, color='orange')
@@ -325,13 +303,12 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
 
         axes[1].axvline(x=optimal_threshold, color='black', linestyle='--',
                         label=f'Threshold ({optimal_threshold:.2f})')
-        axes[1].set_title('Repartition des TP, FP, TN, FN per Bin', fontsize=14)
+        axes[1].set_title('Repartition des TP, FP, TN, FN per Bin Test Set', fontsize=12)
         axes[1].set_xlabel('Proportion de prédictions négatives (fonction du choix du seuil)', fontsize=12)
         axes[1].set_ylabel('Count', fontsize=12)
         axes[1].legend(loc='upper center', fontsize=10, ncol=5)
         axes[1].grid(True)
 
-        # Add summary annotations
         total_tp = int(np.sum(tp_counts))
         total_fp = int(np.sum(fp_counts))
         total_tn = int(np.sum(tn_counts))
@@ -344,19 +321,36 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
 
         annotation_text = (f'Total Samples: {total_samples}\n'
                            f'TP: {total_tp}\nFP: {total_fp}\nTN: {total_tn}\nFN: {total_fn}\n'
-                           f'Accuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Score: {f1_score:.4f}')
+                           f'Accuracy: {accuracy:.4f}\nPrecision: {precision:.4f}\nRecall: {recall:.4f}\nF1 Score: {f1_score:.4f}\n'
+                           f'Nombre de Session: {num_sessions}')
 
         axes[1].text(0.02, 0.98, annotation_text,
                      transform=axes[1].transAxes, va='top', ha='left', fontsize=10,
                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
-    if feature_name is not None and X_test is not None:
-        # FP and TP rates by specified feature
-        feature_values = X_test[feature_name].values
-        n_bins_feature = 25  # You can adjust this
-        bins = pd.cut(feature_values, bins=n_bins_feature)
+    plt.tight_layout()
+    plt.savefig('calibration_and_distribution.png', dpi=300, bbox_inches='tight')
+    if user_input.lower() == 'd':
+        plt.show()
+    plt.close()
 
-        # Calculate FP and TP rates for each bin
+
+from datetime import datetime, timedelta
+
+
+def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_threshold, user_input=None, index_size=5):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(35, 20))
+
+    def index_to_time(index):
+        start_time = datetime.strptime("22:00", "%H:%M")
+        minutes = index * index_size
+        time = start_time + timedelta(minutes=minutes)
+        if time.hour < 22:
+            time += timedelta(days=1)
+        return time.strftime("%H:%M")
+
+    def plot_rates(ax, n_bins_feature):
+        bins = pd.cut(feature_values, bins=n_bins_feature)
         rates = pd.DataFrame({
             'feature': feature_values,
             'y_true': y_true,
@@ -366,23 +360,124 @@ def plot_calibration_curve(y_true, y_pred_proba, X_test=None, feature_name=None,
             'TP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 1)).sum() / len(x)
         }))
 
-        # Plotting
         x = np.arange(len(rates))
         width = 0.35
 
-        axes[2].bar(x - width / 2, rates['FP_rate'], width, label='Taux de Faux Positifs', color='red', alpha=0.7)
-        axes[2].bar(x + width / 2, rates['TP_rate'], width, label='Taux de Vrais Positifs', color='green', alpha=0.7)
+        ax.bar(x - width / 2, rates['FP_rate'], width, label='Taux de Faux Positifs', color='red', alpha=0.7)
+        ax.bar(x + width / 2, rates['TP_rate'], width, label='Taux de Vrais Positifs', color='green', alpha=0.7)
 
-        axes[2].set_ylabel('Taux', fontsize=10.)
-        axes[2].set_xlabel(feature_name, fontsize=10)
-        axes[2].set_title(f'Taux de FP et TP par {feature_name}', fontsize=10)
-        axes[2].set_xticks(x)
-        axes[2].set_xticklabels([f'{b.left:.2f}-{b.right:.2f}' for b in rates.index], rotation=45, ha='right')
-        axes[2].legend(fontsize=10)
-        axes[2].grid(True)
+        ax.set_ylabel('Taux', fontsize=14)
+        ax.set_xlabel(feature_name, fontsize=14)
+        ax.set_title(f'Taux de FP et TP par {feature_name} (bins={n_bins_feature})', fontsize=14)
+        ax.set_xticks(x)
+
+        # Conversion des index en format heure
+        time_labels = [index_to_time(int(b.left)) for b in rates.index]
+        ax.set_xticklabels(time_labels, rotation=45, ha='right')
+
+        ax.legend(fontsize=12)
+        ax.grid(True)
+
+    feature_values = X_test[feature_name].values
+
+    # Graphique avec 25 bins
+    plot_rates(ax1, 25)
+
+    # Graphique avec 75 bins
+    plot_rates(ax2, 75)
 
     plt.tight_layout()
-    plt.savefig('improved_calibration_distribution_and_rates.png', dpi=300, bbox_inches='tight')
-    if user_input.lower() == 'd':
-        plt.show()  # Afficher les graphiques
+
+    # Enregistrer le graphique
+    plt.savefig('fp_tp_rates_by_feature_dual_time.png', dpi=300, bbox_inches='tight')
+
+    # Afficher le graphique
+    if user_input and user_input.lower() == 'd':
+        plt.show()
+
+    # Fermer la figure après l'affichage
     plt.close()
+
+    feature_values = X_test[feature_name].values
+
+    # Graphique avec 25 bins
+    plot_rates(ax1, 25)
+
+    # Graphique avec 75 bins
+    plot_rates(ax2, 75)
+
+    plt.tight_layout()
+
+    # Enregistrer le graphique
+    plt.savefig('fp_tp_rates_by_feature_dual.png', dpi=300, bbox_inches='tight')
+
+    # Afficher le graphique
+    if user_input and user_input.lower() == 'd':
+        plt.show()
+
+    # Fermer la figure après l'affichage
+    plt.close()
+def check_gpu_availability():
+        if not torch.cuda.is_available():
+            print("Erreur : GPU n'est pas disponible. Le programme va s'arrêter.")
+            exit(1)
+        print("GPU est disponible. Utilisation de CUDA pour les calculs.")
+
+import numba as nb
+@nb.njit
+def calculate_session_duration(session_start_end, delta_timestamp):
+    total_minutes = 0
+    residual_minutes = 0
+    session_start = -1
+    complete_sessions = 0
+    in_session = False
+
+    # Gérer le cas où le fichier ne commence pas par un 10
+    if session_start_end[0] != 10:
+        first_20_index = np.where(session_start_end == 20)[0][0]
+        residual_minutes += delta_timestamp[first_20_index] - delta_timestamp[0]
+
+    for i in range(len(session_start_end)):
+        if session_start_end[i] == 10:
+            session_start = i
+            in_session = True
+        elif session_start_end[i] == 20:
+            if in_session:
+                # Session complète
+                total_minutes += delta_timestamp[i] - delta_timestamp[session_start]
+                complete_sessions += 1
+                in_session = False
+            else:
+                # 20 sans 10 précédent, ne devrait pas arriver mais gérons le cas
+                residual_minutes += delta_timestamp[i] - delta_timestamp[session_start if session_start != -1 else 0]
+
+    # Gérer le cas où le fichier se termine au milieu d'une session
+    if in_session:
+        residual_minutes += delta_timestamp[-1] - delta_timestamp[session_start]
+    elif session_start_end[-1] != 20:
+        # Si la dernière valeur n'est pas 20 et qu'on n'est pas dans une session,
+        # ajoutons le temps depuis le dernier 20 jusqu'à la fin
+        last_20_index = np.where(session_start_end == 20)[0][-1]
+        residual_minutes += delta_timestamp[-1] - delta_timestamp[last_20_index]
+
+    return complete_sessions, total_minutes, residual_minutes
+
+def calculate_and_display_sessions(df):
+    session_start_end = df['SessionStartEnd'].astype(np.int32).values
+    delta_timestamp = df['deltaTimestampOpening'].astype(np.float64).values
+
+    complete_sessions, total_minutes, residual_minutes = calculate_session_duration(session_start_end, delta_timestamp)
+
+    session_duration_hours = 23
+    session_duration_minutes = session_duration_hours * 60
+
+    residual_sessions = residual_minutes / session_duration_minutes
+    total_sessions = complete_sessions + residual_sessions
+
+    #print(f"Nombre de sessions complètes : {complete_sessions}")
+    #print(f"Minutes résiduelles : {residual_minutes:.2f}")
+    #print(f"Équivalent en sessions des minutes résiduelles : {residual_sessions:.2f}")
+    #print(f"Nombre total de sessions (complètes + résiduelles) : {total_sessions:.2f}")
+
+    return total_sessions
+
