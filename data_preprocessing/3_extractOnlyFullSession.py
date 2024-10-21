@@ -5,8 +5,11 @@ import os
 import time
 from standardFunc import  print_notification
 
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_8TP_1SL\merge"
 
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge\Step2_MergedAllFile_Step1_4_merged.csv"
+file="Step2_4_0_8TP_1SL_080919_161024.csv"
+
+file_path = os.path.join(directory, file)
 
 @jit(nopython=True)
 def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_normale, seuil_anormal):
@@ -146,10 +149,12 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
         nom_fichier, extension = os.path.splitext(nom_fichier)
         dossier = os.path.dirname(fichier_original)
 
+        fileStep3 = file.replace("Step2", "Step3")
+        fileStep3 = os.path.splitext(fileStep3)[0]
         if sessions_a_sauvegarder:
-            nouveau_fichier = f"Step3_{nom_fichier}_extractOnly{sessions_a_sauvegarder}LastFullSession{extension}"
+            nouveau_fichier = f"{fileStep3}_extractOnly{sessions_a_sauvegarder}LastFullSession{extension}"
         else:
-            nouveau_fichier = f"Step3_{nom_fichier}_extractOnlyFullSession{extension}"
+            nouveau_fichier = f"{fileStep3}_extractOnlyFullSession{extension}"
 
         # Combine the directory path with the new filename
         nouveau_fichier_complet = os.path.join(dossier, nouveau_fichier)

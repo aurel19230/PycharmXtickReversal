@@ -55,12 +55,12 @@ if user_choice.lower() == 'd' or user_choice.lower() == 's':
 adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
-file_name = "Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnlyFullSession_OnlyShort.csv"
-#file_name = "Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession_OnlyShort.csv"
+file_name = "Step4_4_0_8TP_1SL_080919_161024_extractOnlyFullSession.csv"
+#file_name = "Step4_4_0_8TP_1SL_080919_161024_extractOnly220LastFullSession_OnlyShort.csv"
 
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_04102024\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_8TP_1SL\\merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -126,15 +126,31 @@ print_notification("Début du calcul des features")
 features_df = pd.DataFrame()
 features_df['deltaTimestampOpening'] = df['deltaTimestampOpening']
 
+
+features_df['deltaTimestampOpeningSection1min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/15))*15, 1365))
+
+unique_sections = sorted(features_df['deltaTimestampOpeningSection1min'].unique())
+section_to_index = {section: index for index, section in enumerate(unique_sections)}
+features_df['deltaTimestampOpeningSection1index'] = features_df['deltaTimestampOpeningSection1min'].map(section_to_index)
+
 features_df['deltaTimestampOpeningSection5min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/5))*5, 1350))
+    lambda x: min(int(np.floor(x/5))*5, 1375))
 
 unique_sections = sorted(features_df['deltaTimestampOpeningSection5min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
 features_df['deltaTimestampOpeningSection5index'] = features_df['deltaTimestampOpeningSection5min'].map(section_to_index)
 
+features_df['deltaTimestampOpeningSection15min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/15))*15, 1365))
+
+unique_sections = sorted(features_df['deltaTimestampOpeningSection15min'].unique())
+section_to_index = {section: index for index, section in enumerate(unique_sections)}
+features_df['deltaTimestampOpeningSection15index'] = features_df['deltaTimestampOpeningSection15min'].map(section_to_index)
+
+
 features_df['deltaTimestampOpeningSection30min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/30))*30, 1350))
+    lambda x: min(int(np.floor(x/30))*30, 1380))
 
 unique_sections = sorted(features_df['deltaTimestampOpeningSection30min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
@@ -177,6 +193,26 @@ features_df['diffLowPrice_0_5'] = df['low'] - df['low'].shift(5)
 
 
 features_df['diffPriceCloseVWAP'] = df['close'] - df['VWAP']
+
+# Créer les conditions pour chaque plage
+conditions = [
+    (df['close'] >= df['VWAP']) & (df['close'] <= df['VWAPsd1Top']),
+    (df['close'] > df['VWAPsd1Top']) & (df['close'] <= df['VWAPsd2Top']),
+    (df['close'] > df['VWAPsd2Top']) & (df['close'] <= df['VWAPsd3Top']),
+    (df['close'] > df['VWAPsd3Top']) & (df['close'] <= df['VWAPsd4Top']),
+    (df['close'] > df['VWAPsd4Top']),
+    (df['close'] < df['VWAP']) & (df['close'] >= df['VWAPsd1Bot']),
+    (df['close'] < df['VWAPsd1Bot']) & (df['close'] >= df['VWAPsd2Bot']),
+    (df['close'] < df['VWAPsd2Bot']) & (df['close'] >= df['VWAPsd3Bot']),
+    (df['close'] < df['VWAPsd3Bot']) & (df['close'] >= df['VWAPsd4Bot']),
+    (df['close'] < df['VWAPsd4Bot'])
+]
+
+# Créer les valeurs correspondantes pour chaque condition
+values = [1, 2, 3, 4, 5, -1, -2, -3, -4, -5]
+
+# Utiliser np.select pour créer la nouvelle feature
+features_df['diffPriceCloseVWAPbyIndex'] = np.select(conditions, values, default=0)
 
 features_df['atr'] = df['atr']
 features_df['bandWidthBB'] = df['bandWidthBB']
@@ -449,6 +485,10 @@ features_df['VolPocVolCandleRatio'] = np.where(df['volume'] != 0, df['volPOC'] /
 features_df['pocDeltaPocVolRatio'] = np.where(df['volPOC'] != 0, df['deltaPOC'] / df['volPOC'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # Asymétrie du volume
+features_df['VolAbv_vol_ratio'] = np.where(df['volume'] != 0, (df['VolAbv']) / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+features_df['VolBlw_vol_ratio'] = np.where(df['volume'] != 0, (df['VolBlw']) / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+
+
 features_df['asymetrie_volume'] = np.where(df['volume'] != 0, (df['VolAbv'] - df['VolBlw']) / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # Nouvelles features - Features Cumulatives sur les 5 dernières bougies:
@@ -1634,12 +1674,27 @@ features_df['bullish_repeatAskBid_ratio'] = np.where(
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 
-features_df['ratio_Count_AbvBlw_ascync'] = np.where(
+features_df['count_AbvBlw_asym_ratio'] = np.where(
     features_df['total_count_abv'] + features_df['total_count_blw'] != 0,
     (features_df['total_count_abv'] - features_df['total_count_blw']) /
     (features_df['total_count_abv'] + features_df['total_count_blw']),
     addDivBy0 if DEFAULT_DIV_BY0 else 0
 )
+features_df['count_abv_tot_ratio'] = np.where(
+    features_df['total_count_abv'] + features_df['total_count_blw'] != 0,
+    (features_df['total_count_abv']) /
+    (features_df['total_count_abv'] + features_df['total_count_blw']),
+    addDivBy0 if DEFAULT_DIV_BY0 else 0
+)
+
+features_df['count_blw_tot_ratio'] = np.where(
+    features_df['total_count_abv'] + features_df['total_count_blw'] != 0,
+    (features_df['total_count_blw']) /
+    (features_df['total_count_abv'] + features_df['total_count_blw']),
+    addDivBy0 if DEFAULT_DIV_BY0 else 0
+)
+
+
 print_notification("Calcul des features de la zone 6Ticks")
 
 # a) Ratio de volume _6Tick
@@ -1802,10 +1857,15 @@ def toBeDisplayed_if_s(user_choice, choice):
 ## 0) key nom de la feature / 1) Ative Floor / 2) Active Crop / 3) % à Floored / ') % à Croped / 5) Afficher et/ou inclure Features dans fichiers cibles
 # choix des features à traiter
 column_settings = {
+
     # Time-based features
     'deltaTimestampOpening':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection1min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection1index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'deltaTimestampOpeningSection5min':       (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
     'deltaTimestampOpeningSection5index':     (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection15min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSection15index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'deltaTimestampOpeningSection30min':      (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
     'deltaTimestampOpeningSection30index':    (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
     'deltaCustomSectionMin':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
@@ -1838,6 +1898,8 @@ column_settings = {
     #'diffLowPrice_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'diffPriceCloseVWAP':                     (True, True, 1, 99,toBeDisplayed_if_s(user_choice, True)),#ok
+    'diffPriceCloseVWAPbyIndex':                     (False, False, 1, 99,toBeDisplayed_if_s(user_choice, True)),#ok
+
 
     # Technical indicators
     'atr':                                    (True, True, 0.1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
@@ -1904,6 +1966,9 @@ column_settings = {
     # Volume profile features
     'VolPocVolCandleRatio':                  (False, False, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok
     'pocDeltaPocVolRatio':                    (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'VolAbv_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'VolBlw_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+
     'asymetrie_volume':                       (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'VolCandleMeanxRatio':                    (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
 
@@ -2062,7 +2127,10 @@ column_settings = {
     'absorption_intensity_repeat_bullish_count':(True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
 'absorption_intensity_repeat_bullish_count_special':(False, False, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),#ok4
     'bullish_repeatAskBid_ratio':             (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'ratio_Count_AbvBlw_ascync':                       (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),
+    'count_AbvBlw_asym_ratio':                       (True, True, 0.1, 99.9,toBeDisplayed_if_s(user_choice, False)),
+    'count_blw_tot_ratio': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'count_abv_tot_ratio': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
     # 6 Ticks zone features
     'bearish_volume_ratio_6Tick':             (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
     'bullish_volume_ratio_6Tick':             (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
@@ -2493,9 +2561,9 @@ print(f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(win
 assert len(winsorized_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 
-print_notification("Ajout de  'class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
+print_notification("Ajout de  'timeStampOpening', class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
 # Colonnes à ajouter
-columns_to_add = ['class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd']
+columns_to_add = ['timeStampOpening', 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd']
 
 # Vérifiez que toutes les colonnes existent dans df
 missing_columns = [col for col in columns_to_add if col not in df.columns]
@@ -2514,12 +2582,16 @@ features_df = pd.concat([features_df, columns_df], axis=1)
 winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
 winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
 
-print_notification("Colonnes 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' ajoutées")
+print_notification("Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' ajoutées")
 
+
+
+file_without_extension = os.path.splitext(file_name)[0]
+file_without_extension = file_without_extension.replace("Step4", "Step5")
 
 
 # Créer le nouveau nom de fichier pour les features originales
-new_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat.csv'
+new_file_name = file_without_extension + '_feat.csv'
 
 # Construire le chemin complet du nouveau fichier
 feat_file = os.path.join(file_dir, new_file_name)
@@ -2530,7 +2602,7 @@ features_df.to_csv(feat_file, sep=';', index=False, encoding='iso-8859-1')
 
 
 # Créer le nouveau nom de fichier pour winsorized_df
-winsorized_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat_winsorized.csv'
+winsorized_file_name = file_without_extension+ '_feat_winsorized.csv'
 
 # Construire le chemin complet du nouveau fichier winsorized
 winsorized_file = os.path.join(file_dir, winsorized_file_name)
@@ -2540,7 +2612,7 @@ print_notification(f"Enregistrement du fichier de features winsorisées : {winso
 winsorized_df.to_csv(winsorized_file, sep=';', index=False, encoding='iso-8859-1')
 
 # Créer le nouveau nom de fichier pour winsorized_scaledWithNanValue_df
-scaled_file_name = "Step5_" + file_name.rsplit('.', 1)[0] + '_feat_winsorizedScaledWithNanVal.csv'
+scaled_file_name = file_without_extension+ '_feat_winsorizedScaledWithNanVal.csv'
 
 # Construire le chemin complet du nouveau fichier scaled
 scaled_file = os.path.join(file_dir, scaled_file_name)

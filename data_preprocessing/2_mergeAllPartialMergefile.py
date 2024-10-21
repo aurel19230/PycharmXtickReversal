@@ -4,13 +4,25 @@ import re
 
 
 # Chemin spécifique pour les fichiers CSV
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge"
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_8TP_1SL\merge"
 #merge les fichier terminant par _x dans l'ordre. Pour éviter les erreurs les _x sont à rajouter suite au merge du step 1
+
+#Diviser le chemin en ses composants
+path_components = directory.split(os.sep)
+
+# Trouver l'index de 'merge'
+merge_index = path_components.index('merge')
+
+# Extraire le répertoire juste avant 'merge'
+xtickRev_config_dir = path_components[merge_index - 1]
+
+print(xtickRev_config_dir)
+
 
 option = input("Appuyez sur 'd' dedeoublonner, entrée pour uniquement concatener : ").lower()
 
 
-def generate_output_filename(files):
+def generate_output_filename(files,xtickRev_config_dir):
     if not files:
         raise ValueError("La liste des fichiers est vide.")
 
@@ -23,16 +35,16 @@ def generate_output_filename(files):
         raise ValueError("Aucun fichier ne se termine par '_0.csv'.")
 
     # Extraire la date du début à partir du fichier _0.csv (partie avant le premier '_')
-    start_date = first_file.split('_')[0]
+    start_date = first_file.split('_')[1]
 
     # Trouver le fichier avec le plus grand X dans _X.csv
     last_file = max(sorted_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
 
     # Extraire la date de fin à partir du dernier fichier (partie après le dernier '_', sans '.csv')
-    end_date = last_file.split('_')[-1].split('.')[0]
+    end_date = last_file.split('_')[2]
 
     # Utiliser "MergedAllFile" comme nom de base du fichier de sortie
-    output_filename = f"Step2_MergedAllFile_{start_date}_{end_date}_merged.csv"
+    output_filename = f"Step2_{xtickRev_config_dir}_{start_date}_{end_date}.csv"
     return output_filename
 
 # Le reste du code reste inchangé
@@ -138,7 +150,7 @@ try:
     files = [f for f in all_files if re.match(r'.+_\d+\.csv$', f)]
 
     # Générer le nom du fichier de sortie
-    output_filename = generate_output_filename(files)
+    output_filename = generate_output_filename(files,xtickRev_config_dir)
     output_file = os.path.join(directory, output_filename)
 
     result.to_csv(output_file, index=False, sep=';')

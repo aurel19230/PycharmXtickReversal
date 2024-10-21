@@ -8,10 +8,11 @@ import os
 
 # Charger les données
 # Nom du fichier
-file_name = "Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession.csv"
+file_name = "Step3_4_0_8TP_1SL_080919_161024_extractOnlyFullSession.csv"
+file_name = "Step3_4_0_8TP_1SL_080919_161024_extractOnly220LastFullSession.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL_04102024\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_8TP_1SL\\merge"
 
 # Combiner le chemin du répertoire avec le nom du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -169,8 +170,10 @@ nom_fichier_entree = os.path.basename(file_path)
 # Obtenir le chemin complet du fichier de sortie
 # Enlever l'extension .csv si elle existe
 nom_fichier_entree_sans_extension = os.path.splitext(nom_fichier_entree)[0]
+nom_fichier_entree_sans_extension = nom_fichier_entree_sans_extension.replace("Step3", "Step4")
+
 # Rajouter le suffixe et ajouter .csv à la fin
-nom_fichier_sortie = f"Step4_{nom_fichier_entree_sans_extension}{output_file_suffix}.csv"
+nom_fichier_sortie = f"{nom_fichier_entree_sans_extension}{output_file_suffix}.csv"
 chemin_sortie = os.path.join(os.path.dirname(file_path), nom_fichier_sortie)
 
 # Sauvegarder le DataFrame

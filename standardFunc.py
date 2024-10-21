@@ -1,8 +1,8 @@
 import calendar
-from datetime import datetime
 import seaborn as sns
 from termcolor import colored
-
+import cupy as cp
+import os
 import matplotlib.pyplot as plt
 
 import pandas as pd
@@ -227,7 +227,8 @@ def print_notification(message, color=None):
     print(f"\n[{timestamp}] {color_code}{message}{Style.RESET_ALL}")
 
 def load_data(file_path: str) -> pd.DataFrame:
-    print_notification("Début du chargement des données")
+    print_notification(f"Début du chargement des données de: \n "
+                       f"{file_path}")
     df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
     print_notification("Données chargées avec succès")
     return df
@@ -240,11 +241,46 @@ import matplotlib.pyplot as plt
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
 
+def check_gpu_availability():
+    torch_available = torch.cuda.is_available()
+    cupy_available = cp.cuda.is_available()
 
+    if not (torch_available and cupy_available):
+        print("Erreur : GPU n'est pas disponible pour PyTorch et/ou CuPy. Le programme va s'arrêter.")
+        if not torch_available:
+            print("PyTorch ne détecte pas de GPU.")
+        if not cupy_available:
+            print("CuPy ne détecte pas de GPU.")
+        exit(1)
+
+    print("GPU est disponible. Utilisation de CUDA pour les calculs.")
+    print(f"GPU détecté par PyTorch : {torch.cuda.get_device_name(0)}")
+    print(f"GPU détecté par CuPy : {cp.cuda.runtime.getDeviceProperties(cp.cuda.Device())['name'].decode()}")
+
+    # Vérification de la version CUDA
+    torch_cuda_version = torch.version.cuda
+    cupy_cuda_version = cp.cuda.runtime.runtimeGetVersion()
+
+    print(f"Version CUDA pour PyTorch : {torch_cuda_version}")
+    print(f"Version CUDA pour CuPy : {cupy_cuda_version}")
+
+    if torch_cuda_version != cupy_cuda_version:
+        print("Attention : Les versions CUDA pour PyTorch et CuPy sont différentes.")
+        print("Cela pourrait causer des problèmes de compatibilité.")
+
+    # Affichage de la mémoire GPU disponible
+    torch_memory = torch.cuda.get_device_properties(0).total_memory
+    cupy_memory = cp.cuda.runtime.memGetInfo()[1]
+
+    print(f"Mémoire GPU totale (PyTorch) : {torch_memory / 1e9:.2f} GB")
+    print(f"Mémoire GPU totale (CuPy) : {cupy_memory / 1e9:.2f} GB")
 def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='uniform',
-                                  optimal_threshold=None, show_histogram=True, user_input=None, num_sessions=25):
-    y_true = np.array(y_true)
-    y_pred_proba = np.array(y_pred_proba)
+                                  optimal_threshold=None, show_histogram=True, user_input=None, num_sessions=25,results_directory=None):
+    y_true = np.array(y_true)  # This is fine if y_true is already a NumPy array
+
+    # If y_pred_proba is a CuPy array, you need to explicitly convert it to NumPy
+    if isinstance(y_pred_proba, cp.ndarray):  # Check if it's a CuPy array
+        y_pred_proba = y_pred_proba.get()  # Convert CuPy array to NumPy array
 
     if optimal_threshold is None:
         raise ValueError("The 'optimal_threshold' parameter must be provided.")
@@ -329,7 +365,8 @@ def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='un
                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
     plt.tight_layout()
-    plt.savefig('calibration_and_distribution.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(results_directory, 'calibration_and_distribution.png'), dpi=300, bbox_inches='tight')
+
     if user_input.lower() == 'd':
         plt.show()
     plt.close()
@@ -338,7 +375,7 @@ def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='un
 from datetime import datetime, timedelta
 
 
-def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_threshold, user_input=None, index_size=5):
+def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_threshold, user_input=None, index_size=5,results_directory=None):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(35, 20))
 
     def index_to_time(index):
@@ -349,15 +386,21 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
             time += timedelta(days=1)
         return time.strftime("%H:%M")
 
+
     def plot_rates(ax, n_bins_feature):
-        bins = pd.cut(feature_values, bins=n_bins_feature)
+        # Convertir les tableaux CuPy en NumPy si nécessaire
+        feature_values_np = feature_values.get() if isinstance(feature_values, cp.ndarray) else feature_values
+        y_true_np = y_true.get() if isinstance(y_true, cp.ndarray) else y_true
+        y_pred_proba_np = y_pred_proba.get() if isinstance(y_pred_proba, cp.ndarray) else y_pred_proba
+
+        bins = pd.cut(feature_values_np, bins=n_bins_feature)
         rates = pd.DataFrame({
-            'feature': feature_values,
-            'y_true': y_true,
-            'y_pred': y_pred_proba >= optimal_threshold
-        }).groupby(bins).apply(lambda x: pd.Series({
-            'FP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 0)).sum() / len(x),
-            'TP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 1)).sum() / len(x)
+            'feature': feature_values_np,
+            'y_true': y_true_np,
+            'y_pred': y_pred_proba_np >= optimal_threshold
+        }).groupby(bins, observed=True).apply(lambda x: pd.Series({
+            'FP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 0)).sum() / len(x) if len(x) > 0 else 0,
+            'TP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 1)).sum() / len(x) if len(x) > 0 else 0
         }))
 
         x = np.arange(len(rates))
@@ -389,7 +432,8 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
     plt.tight_layout()
 
     # Enregistrer le graphique
-    plt.savefig('fp_tp_rates_by_feature_dual_time.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(results_directory, 'fp_tp_rates_by_feature_dual_time.png'), dpi=300, bbox_inches='tight')
+
 
     # Afficher le graphique
     if user_input and user_input.lower() == 'd':
@@ -408,20 +452,13 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
 
     plt.tight_layout()
 
-    # Enregistrer le graphique
-    plt.savefig('fp_tp_rates_by_feature_dual.png', dpi=300, bbox_inches='tight')
-
     # Afficher le graphique
     if user_input and user_input.lower() == 'd':
         plt.show()
 
     # Fermer la figure après l'affichage
     plt.close()
-def check_gpu_availability():
-        if not torch.cuda.is_available():
-            print("Erreur : GPU n'est pas disponible. Le programme va s'arrêter.")
-            exit(1)
-        print("GPU est disponible. Utilisation de CUDA pour les calculs.")
+
 
 import numba as nb
 @nb.njit
@@ -465,6 +502,12 @@ def calculate_session_duration(session_start_end, delta_timestamp):
 def calculate_and_display_sessions(df):
     session_start_end = df['SessionStartEnd'].astype(np.int32).values
     delta_timestamp = df['deltaTimestampOpening'].astype(np.float64).values
+    ts_startSection = df['timeStampOpening'].head(1).values[0]
+    ts_endSection = df['timeStampOpening'].tail(1).values[0]
+
+    date_startSection = timestamp_to_date_utc(ts_startSection)
+    date_endSection = timestamp_to_date_utc(ts_endSection)
+
 
     complete_sessions, total_minutes, residual_minutes = calculate_session_duration(session_start_end, delta_timestamp)
 
@@ -479,5 +522,5 @@ def calculate_and_display_sessions(df):
     #print(f"Équivalent en sessions des minutes résiduelles : {residual_sessions:.2f}")
     #print(f"Nombre total de sessions (complètes + résiduelles) : {total_sessions:.2f}")
 
-    return total_sessions
+    return total_sessions,date_startSection,date_endSection
 

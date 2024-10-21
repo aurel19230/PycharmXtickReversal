@@ -2,7 +2,7 @@ import pandas as pd
 import xgboost as xgb
 import shap
 from sklearn.model_selection import TimeSeriesSplit
-from standardFunc import load_data, split_sessions, print_notification, plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability, timestamp_to_date_utc
+from standardFunc import load_data, split_sessions, print_notification, plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability, calculate_and_display_sessions
 import torch
 import optuna
 import time
@@ -24,7 +24,6 @@ from PIL import Image
 from enum import Enum
 from typing import Tuple
 import cupy as cp
-import shutil
 
 # Define the custom_metric class using Enum
 
@@ -365,7 +364,7 @@ def print_callback(study, trial, X_train, y_train_label):
 
 # 1. Fonction pour analyser les erreurs
 
-def analyze_errors(X_test, y_test_label, y_pred_threshold, y_pred_proba, feature_names, save_dir=None, top_features=None):
+def analyze_errors(X_test, y_test_label, y_pred_threshold, y_pred_proba, feature_names, save_dir='./analyse_error/', top_features=None):
     """
     Analyse les erreurs de prédiction du modèle et génère des visualisations.
 
@@ -547,7 +546,6 @@ def plot_confident_errors(shap_values, confident_errors, X_test, feature_names, 
                   f"(Prob: {confident_errors.loc[idx, 'prediction_probability']:.4f})")
         plt.tight_layout()
         plt.savefig(f'confident_error_shap_{i + 1}.png')
-
         plt.close()
 
     if n > 0:
@@ -565,8 +563,8 @@ def plot_confident_errors(shap_values, confident_errors, X_test, feature_names, 
             new_im.paste(im, (0, y_offset))
             y_offset += im.size[1]
 
-        new_im.save(os.path.join(results_directory, 'confident_errors_shap_combined.png'), dpi=(300, 300),
-                    bbox_inches='tight')
+        new_im.save('confident_errors_shap_combined.png')
+
         # Clean up individual images
         for i in range(n):
             os.remove(f'confident_error_shap_{i + 1}.png')
@@ -577,7 +575,7 @@ def plot_confident_errors(shap_values, confident_errors, X_test, feature_names, 
 
 
 # 4. Fonction pour comparer les erreurs vs les prédictions correctes
-def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, important_features,results_directory):
+def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, important_features):
     error_data = X_test.loc[confident_errors.index]
     correct_data = X_test.loc[correct_predictions.index]
 
@@ -614,7 +612,7 @@ def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, imp
     plt.xticks(index + bar_width / 2, important_features, rotation=45, ha='right')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(results_directory, 'compare_errors_vs_correct.png'), dpi=300, bbox_inches='tight')
+    plt.savefig('compare_errors_vs_correct.png')
     plt.close()
 
 
@@ -730,7 +728,6 @@ def extract_decision_rules(model, nan_value, importance_threshold=0.01):
 def analyze_nan_impact(model, X_train, feature_names, nan_value, shap_values=None,
                        features_per_plot=35, verbose_nan_rule=False,
                        save_dir='./nan_analysis_results/'):
-
     """
     Analyse l'impact des valeurs NaN ou des valeurs de remplacement des NaN sur le modèle XGBoost.
 
@@ -758,6 +755,7 @@ def analyze_nan_impact(model, X_train, feature_names, nan_value, shap_values=Non
     dict
         Dictionnaire contenant les résultats de l'analyse
     """
+    import os
     os.makedirs(save_dir, exist_ok=True)
 
     results = {}
@@ -1270,7 +1268,7 @@ def select_features_shap(model, X, threshold):
     # Retourner les indices des features les plus importantes
     return sorted_indices[:n_features]
 
-def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
+def objective_optuna(trial, study,X_train, y_train_label,X_train_full, y_train_label_full,
                      device,
                      xgb_param_optuna_range, nb_split_tscv,
                      learning_curve_enabled,
@@ -1380,55 +1378,16 @@ def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
 
         xgboost_train_time_cum=0
         for_loop_start_time = time.time()
-
-        def timestamp_to_date_utc_(timestamp):
-            date_format = "%Y-%m-%d %H:%M:%S"
-            if isinstance(timestamp, pd.Series):
-                return timestamp.apply(lambda x: time.strftime(date_format, time.gmtime(x)))
-            else:
-                return time.strftime(date_format, time.gmtime(timestamp))
-
-        def get_val_cv_time_range(X_train_full, X_train, X_val_cv):
-            # Trouver les index de X_val_cv dans X_train
-            val_cv_indices_in_train = X_train.index.get_indexer(X_val_cv.index)
-
-            # Trouver les index correspondants dans X_train_full
-            original_indices = X_train.index[val_cv_indices_in_train]
-
-            # Obtenir les temps de début et de fin de X_val_cv dans X_train_full
-            start_time = X_train_full.loc[original_indices[0], 'timeStampOpening']
-            end_time = X_train_full.loc[original_indices[-1], 'timeStampOpening']
-
-            return start_time, end_time
-
-        from dateutil.relativedelta import relativedelta
-        import datetime
-
-        def calculate_time_difference(start_date_str, end_date_str):
-            date_format = "%Y-%m-%d %H:%M:%S"
-            start_date = datetime.datetime.strptime(start_date_str, date_format)
-            end_date = datetime.datetime.strptime(end_date_str, date_format)
-            diff = relativedelta(end_date, start_date)
-            return diff
-
         for train_index, val_index in tscv.split(X_train):
             X_train_cv, X_val_cv = X_train.iloc[train_index], X_train.iloc[val_index]
             y_train_cv, y_val_cv = y_train_label.iloc[train_index], y_train_label.iloc[val_index]
             X_train_cv_full, X_val_cv_full = X_train_full.iloc[train_index], X_train_full.iloc[val_index]
-            i = i + 1
-            start_time, end_time = get_val_cv_time_range(X_train_full, X_train, X_val_cv)
-            start_time_str = timestamp_to_date_utc_(start_time)
-            end_time_str = timestamp_to_date_utc_(end_time)
-            time_diff = calculate_time_difference(start_time_str, end_time_str)
-
-            print(
-                f"---> split {i}/{nb_split_tscv} X_val_cv: de {start_time_str} à {end_time_str}. "
-                f"Temps écoulé: {time_diff.months} mois, {time_diff.days} jours, {time_diff.minutes} minutes")
+            #y_train_cv_full, y_val_cv_full = y_train_label_full.iloc[train_index], y_train_label_full.iloc[val_index]
 
             if len(X_train_cv) == 0 or len(y_train_cv) == 0:
                 print("Warning: Empty training set after filtering")
                 continue
-
+            i=i+1
             # Recalculer les poids des échantillons pour l'ensemble d'entraînement du pli actuel
             sample_weights = compute_sample_weight('balanced', y=y_train_cv)
 
@@ -1507,7 +1466,7 @@ def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
                 pnl_ = tp * weight_param['profit_per_tp']['min'] + fp * \
                                     weight_param['loss_per_fp']['max']
 
-                print(f"---- {len(y_val_pred)} trades de val, PNL pour le split croisé {i}/{nb_split_tscv}: ", pnl_)
+                print(f"-> {len(y_val_pred)} trades de val, PNL pour le split croisé {i}/{nb_split_tscv}: ", pnl_)
 
                 total_tp += tp
                 total_fp += fp
@@ -1668,17 +1627,9 @@ def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
             return obj.tolist()
         return obj
 
-    def convert_to_serializable_config(obj):
-        """Convert non-serializable objects to a format suitable for JSON."""
-        if isinstance(obj, optima_option):
-            return str(obj)  # or obj.name or obj.value depending on the enum or custom class
-        try:
-            json.dumps(obj)  # Try to serialize it
-            return obj  # If no error, return the object itself
-        except (TypeError, ValueError):
-            return str(obj)  # If it's not serializable, convert it to string
 
-    def save_trial_results(trial_number, result_dict, params, model, config=None,xgb_param_optuna_range=None,weight_param=None,feature_columns=None, save_dir="optuna_results",
+
+    def save_trial_results(trial_number, result_dict, params, model, xgb_param_optuna_range, save_dir="optuna_results",
                            result_file="optuna_results.json"):
         global _first_call_save_r_trialesults
 
@@ -1714,16 +1665,6 @@ def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
                 shutil.copy2(result_file_path, backup_file)
                 print(f"Backup of corrupted file created: {backup_file}")
 
-        if 'feature_columns' not in results_data:
-            results_data['feature_columns'] = feature_columns
-
-        if 'config' not in results_data:
-            results_data['config'] = {k: convert_to_serializable_config(v) for k, v in config.items()}
-
-        # Add xgb_param_optuna_range to the results data only if it doesn't exist
-        if 'weight_param' not in results_data:
-            results_data['weight_param'] = weight_param
-
         # Add xgb_param_optuna_range to the results data only if it doesn't exist
         if 'xgb_param_optuna_range' not in results_data:
             results_data['xgb_param_optuna_range'] = xgb_param_optuna_range
@@ -1748,18 +1689,11 @@ def objective_optuna(trial, study,X_train, y_train_label,X_train_full,
 
         print(f"Trial {trial_number} results and model saved successfully.")
 
-    print(config)
-
     # Appel de la fonction save_trial_results
-    save_trial_results(
-        trial.number,
-        result_dict,
-        trial.params,
-        model,config=config,
-        xgb_param_optuna_range=xgb_param_optuna_range,feature_columns=feature_columns,weight_param=weight_param,
-        save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
-        result_file="optuna_results.json"
-    )
+    save_trial_results(trial.number, result_dict, trial.params, model, xgb_param_optuna_range=xgb_param_optuna_range,
+                       save_dir="optuna_results",
+                       result_file="optuna_results.json")
+
     if learning_curve_enabled and learning_curve_data_list:
         avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
         if avg_learning_curve_data is not None:
@@ -2087,27 +2021,23 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
 
 def train_and_evaluate_XGBOOST_model(
         df=None,
-        config=None,  # Add config parameter here
+        n_trials_optimization=4,
+        device='cuda',
         xgb_param_optuna_range=None,
+        nb_split_tscv=12,
+        nanvalue_to_newval=None,
+        learning_curve_enabled=False,
+        optima_option_method = optima_option.USE_OPTIMA_F1,
         feature_columns=None,
+        preShapImportance=1,
         use_shapeImportance_file=None,
-        results_directory=None,
         user_input=None,
         weight_param=None,
+        random_state_seed=None,
+        early_stopping_rounds=None,
+        std_penalty_factor=None
+
 ):
-
-    optima_option_method = config.get('optima_option_method', optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED)
-    device = config.get('device_', 'cuda')
-    n_trials_optimization = config.get('n_trials_optimization_', 4)
-    nb_split_tscv = config.get('nb_split_tscv_', 10)
-    nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
-    learning_curve_enabled = config.get('learning_curve_enabled', False)
-    random_state_seed = config.get('random_state_seed', 30)
-    early_stopping_rounds = config.get('early_stopping_rounds', 60)
-    std_penalty_factor = config.get('std_penalty_factor_', 0.5)
-    preShapImportance = config.get('preShapImportance', 1)
-    use_shapeImportance_file = config.get('use_shapeImportance_file', r'C:\Users\aulac\Downloads')
-
     # Gestion des valeurs NaN
     if nanvalue_to_newval is not None:
         # Remplacer les NaN par la valeur spécifiée
@@ -2136,11 +2066,7 @@ def train_and_evaluate_XGBOOST_model(
 
     #num_sessions_XTest = calculate_and_display_sessions(test_df)
 
-    print(f"Nombre de session dans x_train  {nb_SessionTrain}  ")
     print(f"Nombre de session dans x_test  {nb_SessionTest}  ")
-
-    X_train_full=train_df.copy()
-
 
     # Préparation des features et de la cible
     X_train = train_df[feature_columns]
@@ -2148,7 +2074,10 @@ def train_and_evaluate_XGBOOST_model(
     X_test = test_df[feature_columns]
     y_test_label = test_df['class_binaire']
 
-
+    X_train_full=X_train.copy()
+    y_train_label_full=y_train_label.copy()
+    X_test_full=X_test.copy()
+    y_test_label_full=y_test_label.copy()
 
     print(
         f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
@@ -2158,6 +2087,7 @@ def train_and_evaluate_XGBOOST_model(
     X_train, y_train_label = X_train[mask_train], y_train_label[mask_train]
     mask_test = y_test_label != 99
     X_test, y_test_label = X_test[mask_test], y_test_label[mask_test]
+
 
 
     # Affichage de la distribution des classes
@@ -2223,7 +2153,7 @@ def train_and_evaluate_XGBOOST_model(
         global bestResult_dict
         global metric_dict
         score, updated_metric_dict, updated_bestResult_dict = objective_optuna(
-            trial=trial, study=study,X_train=X_train, y_train_label=y_train_label,X_train_full=X_train_full,
+            trial=trial, study=study,X_train=X_train, y_train_label=y_train_label,X_train_full=X_train_full, y_train_label_full=y_train_label_full,
             device=device,
             xgb_param_optuna_range=xgb_param_optuna_range, nb_split_tscv=nb_split_tscv,
             learning_curve_enabled=learning_curve_enabled,
@@ -2462,7 +2392,7 @@ def train_and_evaluate_XGBOOST_model(
     print_notification('###### DEBUT: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
     importance_df, shap_comparison,shap_values_train,shap_values_test = main_shap_analysis(
-        final_model, X_train, y_train_label, X_test, y_test_label, save_dir=os.path.join(results_directory, 'shap_dependencies_results'))
+        final_model, X_train, y_train_label, X_test, y_test_label, save_dir='./shap_dependencies_results/')
     print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
 
@@ -2470,8 +2400,7 @@ def train_and_evaluate_XGBOOST_model(
     print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
 
     # Appeler la fonction d'analyse
-    analyze_nan_impact(model=final_model,X_train= X_train, feature_names=feature_names,
-                       shap_values=shap_values_train, nan_value=nan_value, save_dir = os.path.join(results_directory, 'nan_analysis_results'))
+    analyze_nan_impact(model=final_model,X_train= X_train, feature_names=feature_names,shap_values=shap_values_train, nan_value=nan_value)
 
     print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########', color="blue")
 
@@ -2516,11 +2445,10 @@ def train_and_evaluate_XGBOOST_model(
 
     # Pour la courbe de calibration et l'histogramme
     plot_calibrationCurve_distrib(y_test_label, y_test_predProba, optimal_threshold=optimal_threshold, user_input=user_input,
-                                  num_sessions=nb_SessionTest,results_directory=results_directory)
+                                  num_sessions=nb_SessionTest)
 
     # Pour le graphique des taux FP/TP par feature
-    plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection5index',
-                     optimal_threshold,user_input=user_input,index_size=5,results_directory=results_directory)
+    plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection5index', optimal_threshold,user_input=user_input,index_size=5)
 
     print("\nDistribution des probabilités prédites sur XTest:")
     print(f"seuil: {optimal_threshold}")
@@ -2658,8 +2586,7 @@ def train_and_evaluate_XGBOOST_model(
     plt.tight_layout()
 
     # Sauvegarde et affichage du graphique
-    plt.savefig(os.path.join(results_directory, 'roc_distribution_precision_recall_combined.png'), dpi=300,
-                bbox_inches='tight')
+    plt.savefig('roc_distribution_precision_recall_combined.png', dpi=300, bbox_inches='tight')
 
     # Afficher ou fermer la figure selon l'entrée de l'utilisateur
     if user_input.lower() == 'd':
@@ -2763,8 +2690,8 @@ def train_and_evaluate_XGBOOST_model(
 
         return results
 
-    resulat_train_shap_feature_importance =analyze_shap_feature_importance(shap_values_train, X_train, ensembleType='train', save_dir=os.path.join(results_directory, 'shap_feature_importance'))
-    resulat_test_shap_feature_importance=analyze_shap_feature_importance(shap_values_test, X_test, ensembleType='test', save_dir=os.path.join(results_directory, 'shap_feature_importance'))
+    resulat_train_shap_feature_importance =analyze_shap_feature_importance(shap_values_train, X_train, ensembleType='train', save_dir='./shap_feature_importance/')
+    resulat_test_shap_feature_importance=analyze_shap_feature_importance(shap_values_test, X_test, ensembleType='test', save_dir='./shap_feature_importance/')
     ###### FIN: ANALYSE SHAP ##########
 
      ###### DEBUT: ANALYSE DES ERREURS ##########
@@ -2773,7 +2700,7 @@ def train_and_evaluate_XGBOOST_model(
 
 
     results_df, error_df = analyze_errors(X_test, y_test_label, y_test_pred_threshold, y_test_predProba, feature_names,
-                                          save_dir=os.path.join(results_directory, 'analyse_error'),
+                                          save_dir='./analyse_error/',
                                           top_features=resulat_test_shap_feature_importance['top_10_features'])
 
 
@@ -2816,7 +2743,7 @@ def train_and_evaluate_XGBOOST_model(
     analyze_confident_errors(shap_values_test,confident_errors=confident_errors,X_test=X_test,feature_names=feature_names,important_features=important_features,n=5)
     correct_predictions = results_df[results_df['true_label'] == results_df['predicted_label']]
     print("\nComparaison des erreurs vs prédictions correctes:")
-    compare_errors_vs_correct(confident_errors.head(30), correct_predictions, X_test, important_features,results_directory)
+    compare_errors_vs_correct(confident_errors.head(30), correct_predictions, X_test, important_features)
     print("\nAnalyse SHAP terminée. Les visualisations ont été sauvegardées.")
     print("\nAnalyse terminée. Les visualisations ont été sauvegardées.")
     print_notification('###### FIN: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########', color="blue")
@@ -2887,8 +2814,7 @@ def train_and_evaluate_XGBOOST_model(
     plt.ylabel("Total Interaction Strength", fontsize=12)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(os.path.join(results_directory, 'top_feature_interactions.png'), dpi=300, bbox_inches='tight')
-
+    plt.savefig('top_feature_interactions.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     print(f"Top {N} Feature Interactions:")
@@ -2914,9 +2840,7 @@ def train_and_evaluate_XGBOOST_model(
     plt.tight_layout()
     plt.xticks(rotation=90, ha='center')  # Rotation verticale des labels de l'axe x
     plt.yticks(rotation=0)  # S'assurer que les labels de l'axe y sont horizontaux
-    plt.savefig(
-        os.path.join(results_directory, 'feature_interaction_heatmap.png'), dpi=300,
-                bbox_inches='tight')
+    plt.savefig('feature_interaction_heatmap.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     print("Graphique d'interaction sauvegardé sous 'feature_interaction_heatmap.png'")
@@ -2941,95 +2865,39 @@ def train_and_evaluate_XGBOOST_model(
 if __name__ == "__main__":
  # Demander à l'utilisateur s'il souhaite afficher les graphiques
  check_gpu_availability()
-
-
-
+ user_input = input(
+     "Pour afficher les graphiques, appuyez sur 'd'. Sinon, appuyez sur 'Entrée' pour les enregistrer sans les afficher: ")
 
  FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
  #FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
- DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge"
+ DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge"
  FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
-
- directories = DIRECTORY_PATH_.split(os.path.sep)
- target_directory = directories[-2]
- from datetime import datetime
-
- # Obtenir l'heure et la date actuelles
- now = datetime.now()
-
- # Formater l'heure et la date au format souhaité
- time_suffix = now.strftime("_%H_%M_%d%m%y")
+ use_shapeImportance_file=r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv"
+ preShapImportance=1
 
 
- # Ajouter le suffixe à target_directory
- target_directory += time_suffix
-
- # Exemple d'utilisation
- print(f"Le répertoire cible est : {target_directory}")
-
- results_directory = \
-     ("C:\\Users\\aulac\OneDrive\\Documents\\Trading\\PyCharmProject\\MLStrategy\\data_preprocessing\\results_optim\\"
-      f"{target_directory}{os.path.sep}")
-
- # Extraire le répertoire contenant la chaîne "4_0_4TP_1SL"
-
- user_input = input(
-     f"Pour afficher les graphiques, appuyez sur 'd',\n "
-     f"Repertoire d'enregistrrepentt des resultat par défaut:\n {results_directory}\n pour le modifier taper 'r'\n"
-     "Sinon, appuyez sur 'Entrée' pour les enregistrer sans les afficher: ")
-
- if user_input.lower() == 'r':
-    new_output_dir = input("Entrez le nouveau répertoire de sortie des résultats : ")
-    results_directory =new_output_dir
- else :
-    results_directory=results_directory
-
- # Vérifier si le répertoire existe déjà
- if os.path.exists(results_directory):
-     overwrite = input(
-         f"Le répertoire '{results_directory}' existe déjà. Voulez-vous le supprimer et continuer ? (Appuyez sur Entrée pour continuer, ou tapez une autre touche pour arrêter le programme) ")
-     if overwrite == "":
-         shutil.rmtree(results_directory)
-     else:
-         print("Le programme a été arrêté.")
-         exit()
-
-
-
- # Créer le répertoire s'il n'existe pas
- os.makedirs(results_directory, exist_ok=True)
-
- print(f"Les résultats seront saugardés dans : {results_directory}")
-
- # Création du dictionnaire de config
- config = {
-     'target_directory':target_directory,
-     'optima_option_method': optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED,
-     'device_': 'cuda',
-     'n_trials_optimization_': 100,
-     'nb_split_tscv_': 10,
-     'nanvalue_to_newval_': np.nan,
-     'learning_curve_enabled': False,
-     'random_state_seed': 30,
-     'early_stopping_rounds': 60,
-     'std_penalty_factor_': 1,
-     'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
-     'preShapImportance': 1
- }
-
+ optima_option_method=optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED
+ DEVICE_ = 'cuda'
+ N_TRIALS_OPTIMIZATION_ = 500
+ NB_SPLIT_TSCV_ =10
+ NANVALUE_TO_NEWVAL_ = np.nan  # 900000.123456789
+ LEARNING_CURVE_ENABLED = False
+ random_state_seed = 30
+ early_stopping_rounds=60 #arly_stopping_rounds itérations consécutives sur eval
+ std_penalty_factor_=0.5
  # Définir les paramètres supplémentaires
 
  weight_param = {
      'threshold': {'min': 0.55, 'max': 0.77},  # total_trades = tp + fp
-     'w_p': {'min': 1, 'max': 3},  # poid pour la class 1 dans objective
+     #'profit_ratio_weight': {'min': 0.4, 'max': 0.4},  # profit_ratio = (tp - fp) / total_trades
+     #'win_rate_weight': {'min': 0.45, 'max': 0.45},  # win_rate = tp / total_trades if total_trades
+     #'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades / total_samples
      'profit_per_tp': {'min': 1, 'max': 1}, #fixe, dépend des profits par trade
      'loss_per_fp': {'min': -1.1, 'max': -1.1}, #fixe, dépend des pertes par trade
-    'penalty_per_fn': {'min': -0.000, 'max': -0.000}
- }
+    'penalty_per_fn': {'min': -0.000, 'max': -0.000},
 
- # 'profit_ratio_weight': {'min': 0.4, 'max': 0.4},  # profit_ratio = (tp - fp) / total_trades
- # 'win_rate_weight': {'min': 0.45, 'max': 0.45},  # win_rate = tp / total_trades if total_trades
- # 'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades / total_samples
+     'w_p': {'min': 1, 'max': 3} #poid pour la class 1 dans objective
+ }
 
  xgb_param_optuna_range = {
      'num_boost_round': {'min': 200, 'max': 700},
@@ -3053,15 +2921,12 @@ if __name__ == "__main__":
  # Chargement et préparation des données
  df = initial_df.copy()
 
- df['bear_imbalance_high_1'] = np.where(df['bear_imbalance_high_1'] > 3, df['bear_imbalance_high_1'], 0)
-
  # Définition des colonnes de features et des colonnes exclues
  feature_columns = [
      col for col in df.columns if col not in [
          'class_binaire', 'date', 'trade_category',
-         'SessionStartEnd',
-         'timeStampOpening',
-         'deltaTimestampOpening',
+         'SessionStartEnd', #exclu plus tard
+         'deltaTimestampOpening', #exclu plus tard
          'candleDir',
          'deltaTimestampOpeningSection1min',
          'deltaTimestampOpeningSection1index',
@@ -3073,9 +2938,6 @@ if __name__ == "__main__":
          'deltaTimestampOpeningSection30index',
          'deltaCustomSectionMin',
          'deltaCustomSectionIndex',
-         'meanVolx',
-         'total_count_abv',
-         'total_count_blw',
          """
          'perct_VA6P',
          'ratio_delta_vol_VA6P',
@@ -3107,12 +2969,20 @@ if __name__ == "__main__":
 
  results = train_and_evaluate_XGBOOST_model(
      df=df,
-     config=config,  # Pass the config here
+     n_trials_optimization=N_TRIALS_OPTIMIZATION_,
+     device=DEVICE_,
      xgb_param_optuna_range=xgb_param_optuna_range,
+     nb_split_tscv=NB_SPLIT_TSCV_,
+     nanvalue_to_newval=NANVALUE_TO_NEWVAL_,
+     learning_curve_enabled=LEARNING_CURVE_ENABLED,
+     optima_option_method=optima_option_method,
      feature_columns=feature_columns,
-     results_directory=results_directory,
+     preShapImportance=preShapImportance,
+     use_shapeImportance_file=use_shapeImportance_file,
      user_input=user_input,
      weight_param=weight_param,
+     early_stopping_rounds=early_stopping_rounds,
+     std_penalty_factor=std_penalty_factor_
  )
 
  if results is not None:
