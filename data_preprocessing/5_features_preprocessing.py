@@ -39,7 +39,7 @@ def calculate_max_ratio(values, condition, calc_max=False, std_multiplier=1):
 
 ENABLE_PANDAS_METHOD_SCALING=True
 
-DEFAULT_DIV_BY0=False #max_ratio or valuex
+DEFAULT_DIV_BY0=True #max_ratio or valuex
 user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
                     "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
                     "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
@@ -55,12 +55,12 @@ if user_choice.lower() == 'd' or user_choice.lower() == 's':
 adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
-file_name = "Step4_4_0_8TP_1SL_080919_161024_extractOnlyFullSession.csv"
+file_name = "Step4_4_0_4TP_1SL_080919_091024_extractOnlyFullSession_OnlyShort.csv"
 #file_name = "Step4_4_0_8TP_1SL_080919_161024_extractOnly220LastFullSession_OnlyShort.csv"
 
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_8TP_1SL\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -2618,8 +2618,8 @@ scaled_file_name = file_without_extension+ '_feat_winsorizedScaledWithNanVal.csv
 scaled_file = os.path.join(file_dir, scaled_file_name)
 
 # Sauvegarder le fichier scaled
-winsorized_scaledWithNanValue_df.to_csv(scaled_file, sep=';', index=False, encoding='iso-8859-1')
-print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
+#winsorized_scaledWithNanValue_df.to_csv(scaled_file, sep=';', index=False, encoding='iso-8859-1')
+#print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
 
 
 # Affichage final des graphiques si demandé
