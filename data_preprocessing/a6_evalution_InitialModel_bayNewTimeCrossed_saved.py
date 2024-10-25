@@ -1,31 +1,27 @@
 import pandas as pd
 import xgboost as xgb
-import shap
 from sklearn.model_selection import TimeSeriesSplit
 from standardFunc import load_data, split_sessions, print_notification, plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability, timestamp_to_date_utc,calculate_and_display_sessions
-import torch
 import optuna
 import time
 from sklearn.utils.class_weight import compute_sample_weight
 import os
 from numba import njit
-from xgboost.callback import TrainingCallback
 from sklearn.metrics import precision_recall_curve, log_loss
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import classification_report
-import seaborn as sns
-import bisect
 from sklearn.metrics import roc_auc_score ,precision_score, recall_score, f1_score, confusion_matrix, roc_curve,average_precision_score,matthews_corrcoef
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
 import matplotlib.ticker as ticker
 from PIL import Image
-from enum import Enum
 from typing import Tuple
 import cupy as cp
 import shutil
 from sklearn.model_selection import KFold, TimeSeriesSplit
+
+import json
+import tempfile
+import shutil
 
 # Define the custom_metric class using Enum
 from enum import Enum
@@ -36,7 +32,7 @@ class cv_config(Enum):
     K_FOLD = 2
     K_FOLD_SHUFFLE = 3
 
-class optima_option(Enum):
+class optuna_options(Enum):
     USE_OPTIMA_ROCAUC = 1
     USE_OPTIMA_AUCPR = 2
     USE_OPTIMA_F1 = 4
@@ -48,7 +44,10 @@ class optima_option(Enum):
     USE_OPTIMA_CUSTOM_METRIC_PROFITBASED = 10
     USE_OPTIMA_CUSTOM_METRIC_TP_FP = 11
 
-global bestResult_dict
+class optuna_doubleMetrics(Enum):
+    USE_DIST_TO_IDEAL=0
+    USE_WEIGHTED_AVG=1
+
 # Variable globale pour suivre si la fonction a déjà été appelée
 _first_call_save_r_trialesults = True
 ########################################
@@ -437,8 +436,7 @@ from sklearn.model_selection import train_test_split
 
 
 def print_callback(study, trial, X_train, y_train_label, config):
-    global bestResult_dict
-    trial_values = trial.values  # [score_adjustedStd_val, pnl_perTrade_diff]
+    trial_values = trial.values  # [score_adjustedStd_val, pnl_perSample_diff]
 
     learning_curve_data = trial.user_attrs.get('learning_curve_data')
     best_val_score= trial_values[0]  # Premier objectif (maximize)
@@ -448,14 +446,13 @@ def print_callback(study, trial, X_train, y_train_label, config):
 
     n_trials_optuna = config.get('n_trials_optuna', 4)
 
-    print(f"\nSur les differents ensembles d'entrainement :")
-    print(f"\nEssai terminé : {trial.number+1}/{n_trials_optuna}")
-    print(f"Score de validation moyen (score_adjustedStd_val) : {best_val_score:.4f}")
-    print(f"Écart-type des scores : {std_dev_score:.4f}")
+    print(f"\nSur les differents ensembles de validation :")
+    print(f"   -Essai terminé Optuna: {trial.number+1}/{n_trials_optuna}")
+    print(f"   -Score de validation moyen (score_adjustedStd_val) : {best_val_score:.2f}")
+    print(f"   -Écart-type des scores : {std_dev_score:.2f}")
     print(
-        f"Intervalle de confiance (±1 écart-type) : [{best_val_score - std_dev_score:.4f}, {best_val_score + std_dev_score:.4f}]")
-    print(f"Score du dernier pli : {trial.user_attrs['last_score']:.4f}")
-    print(f"Différence PnL par trade: {pnl_diff:.4f}")
+        f"   -Intervalle de confiance (±1 écart-type) : [{best_val_score - std_dev_score:.2f}, {best_val_score + std_dev_score:.2f}]")
+    print(f"   -Différence PnL train-val par sample (pnl_diff): {pnl_diff:.2f}")
 
 
     # Récupérer les valeurs de TP et FP
@@ -469,14 +466,15 @@ def print_callback(study, trial, X_train, y_train_label, config):
     tp_percentage = trial.user_attrs.get('tp_percentage', 0)
     total_trades_val = total_tp_val + total_fp_val
     win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
-    print(f"\nEnsemble de validation (somme de l'ensemble des splits :")
-    print(f"Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
+    print(f"\nEnsemble de validation (somme de l'ensemble des splits) :")
+    print(f"   -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
           f"TN (True Negative) : {total_tn_train}, FN (False Negative) : {total_fn_train},")
-    print(f"Pourcentage Winrate           : {win_rate:.2f}%")
-    print(f"Pourcentage de TP             : {tp_percentage:.2f}%")
-    print(f"Différence (TP - FP)          : {tp_fp_diff}")
-    print(f"PNL                           : {cummulative_pnl}")
-    print(f"Nombre de trades              : {total_tp_val+total_fp_val+total_tn_train+total_fn_train}")
+    print(f"   -Pourcentage Winrate           : {win_rate:.2f}%")
+    print(f"   -Pourcentage de TP             : {tp_percentage:.2f}%")
+    print(f"   -Différence (TP - FP)          : {tp_fp_diff}")
+    print(f"   -PNL                           : {cummulative_pnl}")
+    print(f"   -Nombre de trades              : {total_tp_val+total_fp_val+total_tn_train+total_fn_train}")
+    """
     if learning_curve_data:
         train_scores = learning_curve_data['train_scores_mean']
         val_scores = learning_curve_data['val_scores_mean']
@@ -504,18 +502,20 @@ def print_callback(study, trial, X_train, y_train_label, config):
             print(f"Différence en % entre entraînement et validation : {diff_percentage:.2f}%")
         print(
             f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size / total_train_size * 100:.2f}% du total)")
-    else:
-        print("Option Courbe d'Apprentissage non activé")
-
+    #else:
+     #   print("Option Courbe d'Apprentissage non activé")
+    """
     # Afficher les trials sur le front de Pareto
-    print("\nTrials sur le front de Pareto :")
+    print("\nTrials sur le front de Pareto :") #ensemble d'essais dits optimaux qui constituent le front de Pareto
+    #Un essai est considéré sur ce front s'il n'est pas "dominé" par un autre essai sur tous les objectifs.
+
     for trial in study.best_trials:
         pnl_val = trial.values[0]
-        pnl_perTrade_diff = trial.values[1]
+        pnl_perSample_diff = trial.values[1]
         trial_number = trial.number + 1
         print(f"Trial numéro {trial_number}:")
         print(f"  pnl sur validation : {pnl_val:.4f}")
-        print(f"  Différence pnl per trade : {pnl_perTrade_diff:.4f}\n")
+        print(f"  Différence pnl per sample : {pnl_perSample_diff:.4f}\n")
 
     # Trouver et afficher le trial avec le meilleur pnl sur validation
     best_trial_pnl = max(study.trials, key=lambda t: t.values[0])
@@ -524,10 +524,10 @@ def print_callback(study, trial, X_train, y_train_label, config):
         f"(obtenue lors de l'essai numéro : {best_trial_pnl.number + 1})"
     )
 
-    # Trouver et afficher le trial avec la plus petite différence de pnl per trade
+    # Trouver et afficher le trial avec la plus petite différence de pnl per sample
     best_trial_pnl_diff = min(study.trials, key=lambda t: t.values[1])
     print(
-        f"Meilleur score de différence de pnl per trade : {best_trial_pnl_diff.values[1]:.4f} "
+        f"Meilleur score de différence de pnl per sample : {best_trial_pnl_diff.values[1]:.4f} "
         f"(obtenu lors de l'essai numéro : {best_trial_pnl_diff.number + 1})"
     )
 
@@ -1386,7 +1386,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
                                           weight_param['threshold']['max'])
 
     # Sélection de la fonction de métrique appropriée
-    if optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
+    if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
 
         # Suggérer les poids pour la métrique combinée
         profit_ratio_weight = trial.suggest_float('profit_ratio_weight', weight_param['profit_ratio_weight']['min'],
@@ -1412,7 +1412,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
             'selectivity_weight': selectivity_weight
         }
 
-    elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+    elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
 
 
         # Définir les paramètres spécifiques pour la métrique basée sur le profit
@@ -1485,7 +1485,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
 
             print(
-                    f"--->Essai {trial.number + 1}/{n_trials_optuna} , split {typeCV} {i}/{nb_split_tscv} X_val_cv: de {start_time_str} à {end_time_str}. "
+                    f"--->Essai Optuna {trial.number + 1}/{n_trials_optuna} , split {typeCV} {i}/{nb_split_tscv} X_val_cv: de {start_time_str} à {end_time_str}. "
                     f"Temps écoulé: {time_diff.months} mois, {time_diff.days} jours, {time_diff.minutes} minutes sur {val_sessions} sessions")
             print(f'X_train_cv:{len(X_train_cv)} // X_val_cv:{len(X_val_cv)}')
 
@@ -1509,7 +1509,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
             w_n = 1  # Vous pouvez également l'optimiser si nécessaire
 
             # Mettre à jour la fonction objective avec les poids optimisés
-            if optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+            if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
                 custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased(predtTrain, dtrain, metric_dict)
 
 
@@ -1551,9 +1551,9 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
                 print(f"XGBoost training time for this fold: {xgboost_train_time:.2f} seconds")
 
-                print("Evaluation Results:", evals_result)
+                print("Evaluation Results (evals_result):", evals_result)
                 print(
-                    f"Best Results: {val_score_best} à l'iteration num_boost : {best_iteration} / {num_boost_round}")
+                    f"   -Best Results sur Val: {val_score_best} à l'iteration num_boost : {best_iteration} / {num_boost_round}")
 
 
 
@@ -1569,7 +1569,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
                 tn_val, fp_val, fn_val, tp_val = confusion_matrix(y_val_cv, y_val_pred).ravel()
 
                 print(f"Pour le meilleur score de validation à l'itération {best_iteration}:")
-                print(f"TP (validation): {tp_val}, FP (validation): {fp_val}")
+                print(f"   -TP (validation): {tp_val}, FP (validation): {fp_val}")
 
                 # Faire des prédictions sur l'ensemble d'entraînement à la même itération
                 y_train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
@@ -1583,13 +1583,13 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
                 tn_train, fp_train, fn_train, tp_train = confusion_matrix(y_train_cv, y_train_pred).ravel()
 
                 print(f"Pour le score d'entraînement correspondant à l'itération {best_iteration}:")
-                print(f"TP (entraînement): {tp_train}, FP (entraînement): {fp_train}")
+                print(f"   -TP (entraînement): {tp_train}, FP (entraînement): {fp_train}")
 
                 # Accéder aux scores d'entraînement pour la métrique personnalisée
                 train_scores = evals_result['train']['custom_metric_ProfitBased']
                 # Obtenir le score d'entraînement à l'indice où le meilleur score de validation a été atteint
                 train_score_at_val_best = train_scores[val_score_bestIdx]
-                print(f"Score d'entraînement correspondant au meilleur score de validation : {train_score_at_val_best}")
+                print(f"   -Score d'entraînement correspondant au meilleur score de validation : {train_score_at_val_best}")
 
                 scores_ens_val_list.append(val_score_best)
                 scores_ens_train_list.append(train_score_at_val_best)
@@ -1675,7 +1675,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
         tp_percentage = 0
     total_trades_val = total_tp_val + total_fp_val
     win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
-    result_dict = {
+    result_dict_trialOptuna = {
         "cummulative_pnl": cummulative_pnl,
         "win_rate_percentage": round(win_rate, 2),
         "scores_ens_val_list": scores_ens_val_list,
@@ -1691,25 +1691,113 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
         "current_trial_number": trial.number+1
     }
     # Ajoutez le meilleur numéro d'essai seulement s'il y a des essais complétés
+    # Définir les poids pour les deux méthodes
+    # Définir les poids pour les deux méthodes
+    weight_pnl_val = 0.7  # Poids pour le PnL sur validation
+    weight_pnl_diff = 0.3  # Poids pour la différence de PnL par trade
+
+    # Vérifier que la somme des poids est égale à 1
+    if abs(weight_pnl_val + weight_pnl_diff - 1.0) > 1e-6:  # Tolérance d'erreur flottante
+        raise ValueError("La somme des poids (weight_pnl_val + weight_pnl_diff) doit être égale à 1.0")
+
+    # Pour la méthode de la moyenne pondérée
+    weights = np.array([weight_pnl_val, weight_pnl_diff])
+    selection_method=optuna_doubleMetrics.USE_DIST_TO_IDEAL
+    # Vérifier s'il y a des essais dans l'étude
     if study.trials:
+        # Filtrer les essais complétés
         completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if completed_trials:
-            result_dict["best_trial_number"] = study.best_trial.number+1
-            result_dict["best_score"] = study.best_value
+            if selection_method == optuna_doubleMetrics.USE_DIST_TO_IDEAL:
+                # --- Méthode de la distance au point idéal ---
+                # Récupérer les trials sur le front de Pareto
+                pareto_trials = study.best_trials
+
+                # Calculer les valeurs minimales et maximales pour la normalisation
+                min_pnl = min(t.values[0] for t in pareto_trials)
+                max_pnl = max(t.values[0] for t in pareto_trials)
+                min_pnl_diff = min(t.values[1] for t in pareto_trials)
+                max_pnl_diff = max(t.values[1] for t in pareto_trials)
+
+                # Gérer les cas où max et min sont égaux pour éviter la division par zéro
+                pnl_range = max_pnl - min_pnl if max_pnl - min_pnl != 0 else 1
+                pnl_diff_range = max_pnl_diff - min_pnl_diff if max_pnl_diff - min_pnl_diff != 0 else 1
+
+                # Définir la fonction distance_to_ideal
+                def distance_to_ideal(t):
+                    # Utiliser les poids définis en dehors de la fonction
+
+                    # Normalisation des objectifs
+                    pnl_val_normalized = (max_pnl - t.values[0]) / pnl_range
+                    pnl_diff_normalized = (t.values[1] - min_pnl_diff) / pnl_diff_range
+
+                    # Calcul de la distance pondérée
+                    return ((weight_pnl_val * pnl_val_normalized) ** 2 + (
+                                weight_pnl_diff * pnl_diff_normalized) ** 2) ** 0.5
+
+                # Sélectionner le trial avec la distance minimale
+                best_trial = min(pareto_trials, key=distance_to_ideal)
+
+            elif selection_method == optuna_doubleMetrics.USE_WEIGHTED_AVG:
+                # --- Méthode de la moyenne pondérée ---
+
+                # Convertir les essais en DataFrame
+                study_df = study.trials_dataframe()
+
+                # Supposons que vous avez retourné -PnL pour maximiser le PnL lors de l'optimisation
+                study_df['PnL_val'] = -study_df['values_0']
+                study_df['pnl_perTrade_diff'] = study_df['values_1']
+
+                # Normaliser les métriques
+                pnl_val_min = study_df['PnL_val'].min()
+                pnl_val_max = study_df['PnL_val'].max()
+                pnl_diff_min = study_df['pnl_perTrade_diff'].min()
+                pnl_diff_max = study_df['pnl_perTrade_diff'].max()
+
+                # Gérer les divisions par zéro
+                pnl_val_range = pnl_val_max - pnl_val_min if pnl_val_max - pnl_val_min != 0 else 1
+                pnl_diff_range = pnl_diff_max - pnl_diff_min if pnl_diff_max - pnl_diff_min != 0 else 1
+
+                study_df['PnL_val_normalized'] = (study_df['PnL_val'] - pnl_val_min) / pnl_val_range
+                study_df['pnl_perTrade_diff_normalized'] = (study_df[
+                                                                'pnl_perTrade_diff'] - pnl_diff_min) / pnl_diff_range
+
+                # Utiliser le tableau de poids défini en dehors
+                # weights = np.array([weight_pnl_val, weight_pnl_diff])
+
+                # Calculer la moyenne pondérée
+                study_df['weighted_average'] = study_df[['PnL_val_normalized', 'pnl_perTrade_diff_normalized']].dot(
+                    weights)
+
+                # Trouver l'indice de l'essai avec la plus petite moyenne pondérée
+                best_trial_index = study_df['weighted_average'].idxmin()
+                best_trial = study.trials[int(best_trial_index)]
+
+            else:
+                raise ValueError(f"Méthode de sélection inconnue : {selection_method}")
+
+            # Mettre à jour bestResult_dict avec les informations du meilleur essai
+            bestResult_dict["best_optunaTrial_number"] = best_trial.number + 1
+            bestResult_dict["best_pnl_val"] = best_trial.values[0]
+            bestResult_dict["best_pnl_perTrade_diff"] = best_trial.values[1]
+            bestResult_dict["best_params"] = best_trial.params
+
+            print(f"\nMeilleur trial selon la méthode '{selection_method}' : Trial numéro {best_trial.number + 1}")
+            print(f"  PnL sur validation : {best_trial.values[0]:.4f}")
+            print(f"  Différence de PnL par trade : {best_trial.values[1]:.4f}")
+            print(f"  Hyperparamètres : {best_trial.params}")
         else:
-            result_dict["best_trial_number"] = None
-            result_dict["best_score"] = None
+            bestResult_dict["best_optunaTrial_number"] = None
+            bestResult_dict["best_pnl_val"] = None
+            bestResult_dict["best_pnl_perTrade_diff"] = None
+            bestResult_dict["best_params"] = None
+            print("Aucun essai complété n'a été trouvé.")
     else:
-        result_dict["best_trial_number"] = None
-        result_dict["best_score"] = None
-
-    if score_adjustedStd_val > lastBest_score:
-        lastBest_score = score_adjustedStd_val
-        bestResult_dict.update(result_dict)  # Correction de la faute de frappe
-        print(f"Nouveau meilleur score trouvé : {score_adjustedStd_val:.6f}")
-        print(f"Updated bestResult_dict: {bestResult_dict}")
-
-
+        bestResult_dict["best_optunaTrial_number"] = None
+        bestResult_dict["best_pnl_val"] = None
+        bestResult_dict["best_pnl_perTrade_diff"] = None
+        bestResult_dict["best_params"] = None
+        print("Aucun essai n'a été trouvé dans l'étude.")
 
     trial.set_user_attr('last_score', last_score)
     trial.set_user_attr('score_variance', score_variance)
@@ -1731,9 +1819,6 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
     trial.set_user_attr('tp_percentage', tp_percentage)
 
-    import json
-    import tempfile
-    import shutil
 
     def convert_to_serializable(obj):
         if isinstance(obj, (np.int64, np.int32)):
@@ -1746,7 +1831,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
     def convert_to_serializable_config(obj):
         """Convert non-serializable objects to a format suitable for JSON."""
-        if isinstance(obj, optima_option):
+        if isinstance(obj, optuna_options):
             return str(obj)  # or obj.name or obj.value depending on the enum or custom class
         try:
             json.dumps(obj)  # Try to serialize it
@@ -1754,7 +1839,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
         except (TypeError, ValueError):
             return str(obj)  # If it's not serializable, convert it to string
 
-    def save_trial_results(trial_number, result_dict, params, model, config=None,xgb_param_optuna_range=None,weight_param=None,selected_columns=None, save_dir="optuna_results",
+    def save_trial_results(trial_number, result_dict_trialOptuna, params, model, config=None,xgb_param_optuna_range=None,weight_param=None,selected_columns=None, save_dir="optuna_results",
                            result_file="optuna_results.json"):
         global _first_call_save_r_trialesults
 
@@ -1806,7 +1891,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
         # Add new trial results
         results_data[f"trial_{trial_number+1}"] = {
-            "best_result": {k: convert_to_serializable(v) for k, v in result_dict.items()},
+            "best_result": {k: convert_to_serializable(v) for k, v in result_dict_trialOptuna.items()},
             "params": {k: convert_to_serializable(v) for k, v in params.items()}
         }
 
@@ -1829,13 +1914,14 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
     # Appel de la fonction save_trial_results
     save_trial_results(
         trial.number,
-        result_dict,
+        result_dict_trialOptuna,
         trial.params,
         model,config=config,
         xgb_param_optuna_range=xgb_param_optuna_range,selected_columns=selected_columns,weight_param=weight_param,
         save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
         result_file="optuna_results.json"
     )
+    """"
     if learning_curve_enabled and learning_curve_data_list:
         avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
         if avg_learning_curve_data is not None:
@@ -1846,8 +1932,8 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
                     title=f"Courbe d'apprentissage moyenne (Meilleur essai {trial.number})",
                     filename=f'learning_curve_best_trial_{trial.number}.png'
                 )
-
-    return score_adjustedStd_val, pnl_perTrade_diff,metric_dict,bestResult_dict
+    """
+    return score_adjustedStd_val, pnl_perSample_diff,metric_dict,bestResult_dict
 
 
 ########################################
@@ -2172,7 +2258,7 @@ def train_and_evaluate_XGBOOST_model(
         weight_param=None,
 ):
 
-    optima_option_method = config.get('optima_option_method', optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED)
+    optuna_options_method = config.get('optuna_options_method', optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED)
     device = config.get('device_', 'cuda')
     n_trials_optimization = config.get('n_trials_optuna', 4)
     nb_split_tscv = config.get('nb_split_tscv_', 10)
@@ -2287,30 +2373,24 @@ def train_and_evaluate_XGBOOST_model(
     sample_weights_test = compute_sample_weight('balanced', y=y_test_label)
     dtest = xgb.DMatrix(X_test, label=y_test_label, weight=sample_weights_test)
 
-    # Au début de votre script principal, ajoutez ceci :
-    global metric_dict
-    metric_dict = {}
 
-    global bestResult_dict
-    bestResult_dict = {}
 
-    # Ensuite, modifiez votre code comme suit :
-
-    def objective_wrapper(trial,study):
-        global bestResult_dict
-        global metric_dict
-        score_adjustedStd_val,pnl_perTrade_diff, updated_metric_dict, updated_bestResult_dict = objective_optuna(
+    def objective_wrapper(trial, study, metric_dict,bestResult_dict):
+        score_adjustedStd_val,pnl_perSample_diff, updated_metric_dict, updated_bestResult_dict = objective_optuna(
             trial=trial, study=study,X_train=X_train, y_train_label=y_train_label,X_train_full=X_train_full,
             device=device,
             xgb_param_optuna_range=xgb_param_optuna_range,config=config, nb_split_tscv=nb_split_tscv,
             learning_curve_enabled=learning_curve_enabled,
-            optima_score=optima_option_method, metric_dict=metric_dict,bestResult_dict=bestResult_dict, weight_param=weight_param, random_state_seed_=random_state_seed,
+            optima_score=optuna_options_method, metric_dict=metric_dict,bestResult_dict=bestResult_dict, weight_param=weight_param, random_state_seed_=random_state_seed,
             early_stopping_rounds=early_stopping_rounds,std_penalty_factor_=std_penalty_factor,cv_method=cv_method
         )
         if score_adjustedStd_val != float('-inf'):
             metric_dict.update(updated_metric_dict)
             bestResult_dict.update(updated_bestResult_dict)
-        return score_adjustedStd_val,pnl_perTrade_diff
+        return score_adjustedStd_val,pnl_perSample_diff
+
+    bestResult_dict = {}
+    metric_dict = {}
 
     study_xgb  = optuna.create_study(
         directions=["maximize", "minimize"],  # Comme vous retournez le PnL négatif pour le maximiser
@@ -2318,7 +2398,7 @@ def train_and_evaluate_XGBOOST_model(
     )
 
     study_xgb .optimize(
-        lambda trial: objective_wrapper(trial, study_xgb ),
+        lambda trial: objective_wrapper(trial, study_xgb,metric_dict,bestResult_dict ),
         n_trials=n_trials_optimization,
         callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train_label,config=config)],
         gc_after_trial=True
@@ -2329,26 +2409,29 @@ def train_and_evaluate_XGBOOST_model(
 
     # Après l'optimisation
 
+    best_params = bestResult_dict["best_params"]
 
-    print("Optimisation terminée.")
-    print("Meilleurs hyperparamètres trouvés: ", study_xgb.best_params)
-    print("Meilleur score: ", study_xgb.best_value)
-    optimal_threshold = study_xgb.best_params['threshold']
+    print(f"Optimisation terminée avec distance euclidienne. Meilleur essai Optuna {bestResult_dict['best_optunaTrial_number']}")
+    print(f"Meilleurs hyperparamètres trouvés: ", best_params)
+    print("Meilleur score best_pnl_val: ", bestResult_dict["best_pnl_val"])
+    print("Meilleur score best_pnl_perTrade_diff: ", bestResult_dict["best_pnl_perTrade_diff"]
+)
+
+    optimal_threshold = best_params['threshold']
     print(f"Seuil utilisé : {optimal_threshold:.4f}")
     print(f"Temps d'exécution total : {execution_time:.2f} secondes")
     print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
 
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
 
-    best_params = study_xgb.best_params.copy()
+    #best_params = study_xgb.best_params.copy()
     num_boost_round = best_params.pop('num_boost_round', None)
 
     best_params['tree_method'] = 'hist'
     best_params['device'] = device
 
-
     # Configurer custom_metric et obj_function si nécessaire
-    if optima_option_method == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+    if optuna_options_method == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
         custom_metric = lambda preds, dtrain: custom_metric_ProfitBased(preds, dtrain, metric_dict)
         obj_function = create_weighted_logistic_obj(best_params['w_p'], 1)
         best_params['disable_default_eval_metric'] = 1
@@ -2661,7 +2744,7 @@ def train_and_evaluate_XGBOOST_model(
             f"Probabilité {ranges[i]:.2f} - {ranges[i + 1]:.2f} : {hist[i]} prédictions, TP: {tp}, FP: {fp}, Winrate: {win_rate:.2f}%")
 
     total_trades_cum=cum_tp+cum_fp
-    Winrate=cum_tp/total_trades_cum
+    Winrate=cum_tp/total_trades_cum* 100 if total_trades_cum>0 else 0
     print(f"Test final: X_test avec model final optimisé : TP: {cum_tp}, FP: {cum_fp}, Winrate: {Winrate:.2f}%")
 
     print("Statistiques de y_pred_proba:")
@@ -3064,7 +3147,7 @@ if __name__ == "__main__":
 
 
  FILE_NAME_ = "Step5_4_0_4TP_1SL_080919_091024_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
- #FILE_NAME_ = "Step5_Step4_Step3_Step2_MergedAllFile_Step1_4_merged_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
+ FILE_NAME_ = "Step5_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
  DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge"
  FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
 
@@ -3122,10 +3205,10 @@ if __name__ == "__main__":
  # Création du dictionnaire de config
  config = {
      'target_directory':target_directory,
-     'optima_option_method': optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED,
+     'optuna_options_method': optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED,
      'device_': 'cuda',
-     'n_trials_optuna': 300,
-     'nb_split_tscv_': 6,
+     'n_trials_optuna': 3,
+     'nb_split_tscv_': 3,
      'nanvalue_to_newval_': np.nan,
      'learning_curve_enabled': False,
      'random_state_seed': 30,
@@ -3245,30 +3328,30 @@ if __name__ == "__main__":
 
 
 """
-                if optima_score == optima_option.USE_OPTIMA_ROCAUC:
+                if optima_score == optuna_options.USE_OPTIMA_ROCAUC:
                     val_score_best = roc_auc_score(y_val_cv, y_val_pred_proba_np)
-                elif optima_score == optima_option.USE_OPTIMA_AUCPR:
+                elif optima_score == optuna_options.USE_OPTIMA_AUCPR:
                     val_score_best = average_precision_score(y_val_cv, y_val_pred_proba_np)
-                elif optima_score == optima_option.USE_OPTIMA_F1:
+                elif optima_score == optuna_options.USE_OPTIMA_F1:
                     val_score_best = f1_score(y_val_cv, y_val_pred)
-                elif optima_score == optima_option.USE_OPTIMA_PRECISION:
+                elif optima_score == optuna_options.USE_OPTIMA_PRECISION:
                     val_score_best = precision_score(y_val_cv, y_val_pred)
-                elif optima_score == optima_option.USE_OPTIMA_RECALL:
+                elif optima_score == optuna_options.USE_OPTIMA_RECALL:
                     val_score_best = recall_score(y_val_cv, y_val_pred)
-                elif optima_score == optima_option.USE_OPTIMA_MCC:
+                elif optima_score == optuna_options.USE_OPTIMA_MCC:
                     val_score_best = matthews_corrcoef(y_val_cv, y_val_pred)
-                elif optima_score == optima_option.USE_OPTIMA_YOUDEN_J:
+                elif optima_score == optuna_options.USE_OPTIMA_YOUDEN_J:
                     tn, fp, fn, tp = confusion_matrix(y_val_cv, y_val_pred).ravel()
                     sensitivity = tp / (tp + fn)
                     specificity = tn / (tn + fp)
                     val_score_best = sensitivity + specificity - 1
-                elif optima_score == optima_option.USE_OPTIMA_SHARPE_RATIO:
+                elif optima_score == optuna_options.USE_OPTIMA_SHARPE_RATIO:
                     val_score_best = calculate_sharpe_ratio(y_val_cv, y_val_pred, price_changes_val)
-                elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+                elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
                     #val_score_best = optuna_profitBased_score(y_val_cv, y_val_pred_proba_np, metric_dict=metric_dict)
                     val_score_best = max(evals_result['eval']['custom_metric_ProfitBased'])
 
-                elif optima_score == optima_option.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
+                elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
                     val_score_best = optuna_TP_FP_score(y_val_cv, y_val_pred_proba_np, metric_dict=metric_dict)
                 else:
                     print("Invalid Optuna score")
