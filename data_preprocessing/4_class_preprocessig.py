@@ -9,7 +9,7 @@ import os
 # Charger les données
 # Nom du fichier
 file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnlyFullSession.csv"
-#+file_name = "Step3_4_0_8TP_1SL_080919_161024_extractOnly220LastFullSession.csv"
+file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession.csv"
 
 # Chemin du répertoire
 directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge"

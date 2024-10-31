@@ -56,7 +56,7 @@ adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
 file_name = "Step4_4_0_4TP_1SL_080919_091024_extractOnlyFullSession_OnlyShort.csv"
-#file_name = "Step4_4_0_8TP_1SL_080919_161024_extractOnly220LastFullSession_OnlyShort.csv"
+#file_name = "Step4_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort.csv"
 
 
 # Chemin du répertoire
@@ -791,13 +791,13 @@ repeatDownTickVolBlwBid_bigStand_extrem = df['repeatDownTickVolBlwBidDesc_bigSta
 #----- Calcul de bearish_askBigStand_abs_ratio_abv et bearish_askBigStand_abs_ratio_abv_special
 vol_ask_abv = upTickVolAbvAsk + repeatUpTickVolAbvAsk + repeatDownTickVolAbvAsk
 vol_ask_abv_bigStand = upTickVolAbvAsk_bigStand + repeatUpTickVolAbvAsk_bigStand + repeatDownTickVolAbvAsk_bigStand
-ratio_bearish = np.where(vol_ask_abv != 0, vol_ask_abv_bigStand / vol_ask_abv, 0)
-max_ratio_bearish = calculate_max_ratio(ratio_bearish, vol_ask_abv != 0)
+ratio_bearishask_abv_bigStand = np.where(vol_ask_abv != 0, vol_ask_abv_bigStand / vol_ask_abv, 0)
+max_ratio_bearish = calculate_max_ratio(ratio_bearishask_abv_bigStand, vol_ask_abv != 0)
 features_df['bearish_askBigStand_abs_ratio_abv'] = np.where(
     df['VolAbv'] == 0, valueY,  # Si VolAbv est nul, le ratio d'absorption est 0
     np.where(
         vol_ask_abv != 0,
-        ratio_bearish,
+        ratio_bearishask_abv_bigStand,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish  # Utilise le ratio maximal ou une valeur spécifique
     )
 )
@@ -947,24 +947,24 @@ features_df['bullish_bigHigh_abs_diff_blw'] = np.where(
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # a) Intensité du renversement dans la zone extrême
-features_df['bearish_extrem_revIntensity_ratio'] = np.where(
+features_df['bearish_extrem_revIntensity_ratio_extrem'] = np.where(
     df['VolAbv'] != 0,
     ((upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem) -
      (downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem)) / df['VolAbv'],
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
-features_df['bullish_extrem_revIntensity_ratio'] = np.where(
+features_df['bullish_extrem_revIntensity_ratio_extrem'] = np.where(
     df['VolBlw'] != 0,
     ((upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem) -
      (downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem)) / df['VolBlw'],
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # f) Ratio de volume dans la zone extrême par rapport à la zone de renversement
-features_df['bearish_extrem_zone_volume_ratio'] = np.where(
+features_df['bearish_extrem_zone_volume_ratio_extrem'] = np.where(
     df['VolAbv'] != 0,
     (upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatUpTickVolAbvBid_extrem +
      downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatDownTickVolAbvAsk_extrem) / df['VolAbv'],
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
-features_df['bullish_extrem_zone_volume_ratio'] = np.where(
+features_df['bullish_extrem_zone_volume_ratio_extrem'] = np.where(
     df['VolBlw'] != 0,
     (upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatUpTickVolBlwBid_extrem +
      downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatDownTickVolBlwAsk_extrem) / df['VolBlw'],
@@ -972,111 +972,111 @@ features_df['bullish_extrem_zone_volume_ratio'] = np.where(
 
 # b) Pression acheteur/vendeur dans la zone extrême
 #----- Calcul de bearish_extrem_pressure_ratio et bearish_extrem_pressure_ratio_special
-vol_ask_extrem_abv = upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem
-vol_bid_extrem_abv = downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
-ratio_bearish_pressure = np.where(vol_ask_extrem_abv != 0, vol_bid_extrem_abv / vol_ask_extrem_abv, 0)
-max_ratio_bearish_pressure = calculate_max_ratio(ratio_bearish_pressure, vol_ask_extrem_abv != 0)
-features_df['bearish_extrem_pressure_ratio'] = np.where(
+vol_ask_extrem_abv_extrem = upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem
+vol_bid_extrem_abv_extrem = downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
+ratio_bearish_pressure = np.where(vol_ask_extrem_abv_extrem != 0, vol_bid_extrem_abv_extrem / vol_ask_extrem_abv_extrem, 0)
+max_ratio_bearish_pressure = calculate_max_ratio(ratio_bearish_pressure, vol_ask_extrem_abv_extrem != 0)
+features_df['bearish_extrem_pressure_ratio_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
-        vol_ask_extrem_abv != 0,
+        vol_ask_extrem_abv_extrem != 0,
         ratio_bearish_pressure,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_pressure
     )
 )
-features_df['bearish_extrem_pressure_ratio_special'] =np.where(vol_bid_extrem_abv == 0, 10, 0)
+features_df['bearish_extrem_pressure_ratio_special_extrem'] =np.where(vol_bid_extrem_abv_extrem == 0, 10, 0)
 
 #----- Calcul de bullish_extrem_pressure_ratio et bullish_extrem_pressure_ratio_special
-vol_bid_extrem_blw = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
-vol_ask_extrem_blw = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem
-ratio_bullish_pressure = np.where(vol_bid_extrem_blw != 0, vol_ask_extrem_blw / vol_bid_extrem_blw, 0)
-max_ratio_bullish_pressure = calculate_max_ratio(ratio_bullish_pressure, vol_bid_extrem_blw != 0)
-features_df['bullish_extrem_pressure_ratio'] = np.where(
+vol_bid_extrem_blw_extrem = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
+vol_ask_extrem_blw_extrem = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem
+ratio_bullish_pressure_extrem = np.where(vol_bid_extrem_blw_extrem != 0, vol_ask_extrem_blw_extrem / vol_bid_extrem_blw_extrem, 0)
+max_ratio_bullish_pressure = calculate_max_ratio(ratio_bullish_pressure_extrem, vol_bid_extrem_blw_extrem != 0)
+features_df['bullish_extrem_pressure_ratio_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
-        vol_bid_extrem_blw != 0,
-        ratio_bullish_pressure,
+        vol_bid_extrem_blw_extrem != 0,
+        ratio_bullish_pressure_extrem,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_pressure
     )
 )
-features_df['bullish_extrem_pressure_ratio_special'] =np.where(vol_ask_extrem_blw == 0, 11, 0)
+features_df['bullish_extrem_pressure_ratio_special_extrem'] =np.where(vol_ask_extrem_blw_extrem == 0, 11, 0)
 #-----
 
 
 # c) Absorption dans la zone extrême
 #----- Calcul de bearish_extrem_abs_ratio et bearish_extrem_abs_ratio_special
-vol_bid_abs_extrem_abv = downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
+vol_bid_abs_extrem_abv_extrem = downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
 vol_ask_abs_extrem_abv = upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem
-ratio_bearish_abs = np.where(vol_bid_abs_extrem_abv != 0, vol_ask_abs_extrem_abv / vol_bid_abs_extrem_abv, 0)
-max_ratio_bearish_abs = calculate_max_ratio(ratio_bearish_abs, vol_bid_abs_extrem_abv != 0)
-features_df['bearish_extrem_abs_ratio'] = np.where(
+ratio_bearish_abs = np.where(vol_bid_abs_extrem_abv_extrem != 0, vol_ask_abs_extrem_abv / vol_bid_abs_extrem_abv_extrem, 0)
+max_ratio_bearish_abs = calculate_max_ratio(ratio_bearish_abs, vol_bid_abs_extrem_abv_extrem != 0)
+features_df['bearish_extrem_abs_ratio_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
-        vol_bid_abs_extrem_abv != 0,
+        vol_bid_abs_extrem_abv_extrem != 0,
         ratio_bearish_abs,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_abs
     )
 )
 
-features_df['bearish_extrem_abs_ratio_special'] =np.where(vol_ask_abs_extrem_abv == 0, 12, 0)
+features_df['bearish_extrem_abs_ratio_special_extrem'] =np.where(vol_ask_abs_extrem_abv == 0, 12, 0)
 
 #----- Calcul de bullish_extrem_abs_ratio et bullish_extrem_abs_ratio_special
-vol_bid_abs_extrem_blw = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
-vol_ask_abs_extrem_blw = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem
-ratio_bullish_abs = np.where(vol_bid_abs_extrem_blw != 0, vol_ask_abs_extrem_blw / vol_bid_abs_extrem_blw, 0)
-max_ratio_bullish_abs = calculate_max_ratio(ratio_bullish_abs, vol_bid_abs_extrem_blw != 0)
-features_df['bullish_extrem_abs_ratio'] = np.where(
+vol_bid_abs_extrem_blw_extrem = downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
+vol_ask_abs_extrem_blw_extrem = upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem
+ratio_bullish_abs = np.where(vol_bid_abs_extrem_blw_extrem != 0, vol_ask_abs_extrem_blw_extrem / vol_bid_abs_extrem_blw_extrem, 0)
+max_ratio_bullish_abs = calculate_max_ratio(ratio_bullish_abs, vol_bid_abs_extrem_blw_extrem != 0)
+features_df['bullish_extrem_abs_ratio_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
-        vol_bid_abs_extrem_blw != 0,
+        vol_bid_abs_extrem_blw_extrem != 0,
         ratio_bullish_abs,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_abs
     )
 )
-features_df['bullish_extrem_abs_ratio_special'] = np.where(vol_ask_abs_extrem_blw == 0, 13, 0)
+features_df['bullish_extrem_abs_ratio_special_extrem'] = np.where(vol_ask_abs_extrem_blw_extrem == 0, 13, 0)
 #-----
 
 
 # d) Comparaison de l'activité extrême vs. reste de la zone de renversement
 #----- Calcul de bearish_extrem_vs_rest_activity et bearish_extrem_vs_rest_activity_special
-vol_extrem_bearish = (
+vol_extrem_bearish_extrem = (
     upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
 )
-rest_vol_bearish = df['VolAbv'] - vol_extrem_bearish
-ratio_bearish_activity = np.where(rest_vol_bearish != 0, vol_extrem_bearish / rest_vol_bearish, 0)
-max_ratio_bearish_activity = calculate_max_ratio(ratio_bearish_activity, rest_vol_bearish != 0)
-features_df['bearish_extrem_vs_rest_activity'] = np.where(
+rest_vol_bearish_extrem = df['VolAbv'] - vol_extrem_bearish_extrem
+ratio_bearish_activity = np.where(rest_vol_bearish_extrem != 0, vol_extrem_bearish_extrem / rest_vol_bearish_extrem, 0)
+max_ratio_bearish_activity = calculate_max_ratio(ratio_bearish_activity, rest_vol_bearish_extrem != 0)
+features_df['bearish_extrem_vs_rest_activity_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
-        rest_vol_bearish != 0,
+        rest_vol_bearish_extrem != 0,
         ratio_bearish_activity,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_activity
     )
 )
-features_df['bearish_extrem_vs_rest_activity_special'] = np.where(rest_vol_bearish == 0, 14, 0)
+features_df['bearish_extrem_vs_rest_activity_special_extrem'] = np.where(rest_vol_bearish_extrem == 0, 14, 0)
 
 #----- Calcul de bullish_extrem_vs_rest_activity et bullish_extrem_vs_rest_activity_special
-vol_extrem_bullish = (
+vol_extrem_bullish_extrem = (
     upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem +
     downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
 )
-rest_vol_bullish = df['VolBlw'] - vol_extrem_bullish
-ratio_bullish_activity = np.where(rest_vol_bullish != 0, vol_extrem_bullish / rest_vol_bullish, 0)
-max_ratio_bullish_activity = calculate_max_ratio(ratio_bullish_activity, rest_vol_bullish != 0)
-features_df['bullish_extrem_vs_rest_activity'] = np.where(
+rest_vol_bullish_extrem = df['VolBlw'] - vol_extrem_bullish_extrem
+ratio_bullish_activity = np.where(rest_vol_bullish_extrem != 0, vol_extrem_bullish_extrem / rest_vol_bullish_extrem, 0)
+max_ratio_bullish_activity = calculate_max_ratio(ratio_bullish_activity, rest_vol_bullish_extrem != 0)
+features_df['bullish_extrem_vs_rest_activity_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
-        rest_vol_bullish != 0,
+        rest_vol_bullish_extrem != 0,
         ratio_bullish_activity,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_activity
     )
 )
-features_df['bullish_extrem_vs_rest_activity_special'] = np.where(rest_vol_bullish == 0, 15, 0)
+features_df['bullish_extrem_vs_rest_activity_special_extrem'] = np.where(rest_vol_bullish_extrem == 0, 15, 0)
 #-----
 
 # e) Indicateur de continuation vs. renversement dans la zone extrême
-#----- Calcul de bearish_continuation_vs_reversal et bearish_continuation_vs_reversal_special
+#----- Calcul de bearish_continuation_vs_reversal_extrem et bearish_continuation_vs_reversal_special_extrem
 total_vol_bearish_extrem = (
     upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
@@ -1084,20 +1084,20 @@ total_vol_bearish_extrem = (
 continuation_vol_bearish_extrem = (
     upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem
 )
-ratio_bearish_continuation = np.where(total_vol_bearish_extrem != 0, continuation_vol_bearish_extrem / total_vol_bearish_extrem, 0)
-max_ratio_bearish_continuation = calculate_max_ratio(ratio_bearish_continuation, total_vol_bearish_extrem != 0)
-features_df['bearish_continuation_vs_reversal'] = np.where(
+ratio_bearish_continuation_extrem = np.where(total_vol_bearish_extrem != 0, continuation_vol_bearish_extrem / total_vol_bearish_extrem, 0)
+max_ratio_bearish_continuation_extrem = calculate_max_ratio(ratio_bearish_continuation_extrem, total_vol_bearish_extrem != 0)
+features_df['bearish_continuation_vs_reversal_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
-        ratio_bearish_continuation,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_continuation
+        ratio_bearish_continuation_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_continuation_extrem
     )
 )
-features_df['bearish_continuation_vs_reversal_special'] = np.where(continuation_vol_bearish_extrem == 0, 16, 0)
+features_df['bearish_continuation_vs_reversal_special_extrem'] = np.where(continuation_vol_bearish_extrem == 0, 16, 0)
 
 
-#----- Calcul de bullish_continuation_vs_reversal et bullish_continuation_vs_reversal_special
+#----- Calcul de bullish_continuation_vs_reversal_extrem et bullish_continuation_vs_reversal_special_extrem
 total_vol_bullish_extrem = (
     upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem +
     downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
@@ -1105,22 +1105,22 @@ total_vol_bullish_extrem = (
 continuation_vol_bullish_extrem = (
     downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
 )
-ratio_bullish_continuation = np.where(total_vol_bullish_extrem != 0, continuation_vol_bullish_extrem / total_vol_bullish_extrem, 0)
-max_ratio_bullish_continuation = calculate_max_ratio(ratio_bullish_continuation, total_vol_bullish_extrem != 0)
-features_df['bullish_continuation_vs_reversal'] = np.where(
+ratio_bullish_continuation_extrem = np.where(total_vol_bullish_extrem != 0, continuation_vol_bullish_extrem / total_vol_bullish_extrem, 0)
+max_ratio_bullish_continuation_extrem = calculate_max_ratio(ratio_bullish_continuation_extrem, total_vol_bullish_extrem != 0)
+features_df['bullish_continuation_vs_reversal_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
-        ratio_bullish_continuation,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_continuation
+        ratio_bullish_continuation_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_continuation_extrem
     )
 )
-features_df['bullish_continuation_vs_reversal_special'] =np.where(continuation_vol_bullish_extrem == 0, 17, 0)
+features_df['bullish_continuation_vs_reversal_special_extrem'] =np.where(continuation_vol_bullish_extrem == 0, 17, 0)
 #-----
 
 
 # f) Ratio de repeat ticks dans la zone extrême
-#----- Calcul de bearish_repeat_ticks_ratio et bearish_repeat_ticks_ratio_special
+#----- Calcul de bearish_repeat_ticks_ratio_extrem et bearish_repeat_ticks_ratio_special_extrem
 total_vol_bearish_extrem = (
     upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
@@ -1129,19 +1129,19 @@ repeat_vol_bearish_extrem = (
     repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
 )
-ratio_bearish_repeat_ticks = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
-max_ratio_bearish_repeat_ticks = calculate_max_ratio(ratio_bearish_repeat_ticks, total_vol_bearish_extrem != 0)
-features_df['bearish_repeat_ticks_ratio'] = np.where(
+ratio_bearish_repeat_ticks_extrem = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
+max_ratio_bearish_repeat_ticks_extrem = calculate_max_ratio(ratio_bearish_repeat_ticks_extrem, total_vol_bearish_extrem != 0)
+features_df['bearish_repeat_ticks_ratio_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
-        ratio_bearish_repeat_ticks,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_repeat_ticks
+        ratio_bearish_repeat_ticks_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_repeat_ticks_extrem
     )
 )
-features_df['bearish_repeat_ticks_ratio_special'] =np.where(repeat_vol_bearish_extrem == 0, 18, 0)
+features_df['bearish_repeat_ticks_ratio_special_extrem'] =np.where(repeat_vol_bearish_extrem == 0, 18, 0)
 
-#----- Calcul de bullish_repeat_ticks_ratio et bullish_repeat_ticks_ratio_special
+#----- Calcul de bullish_repeat_ticks_ratio_extrem et bullish_repeat_ticks_ratio_special_extrem
 total_vol_bullish_extrem = (
     upTickVolBlwAsk_extrem + repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem +
     downTickVolBlwBid_extrem + repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
@@ -1150,17 +1150,17 @@ repeat_vol_bullish_extrem = (
     repeatUpTickVolBlwAsk_extrem + repeatDownTickVolBlwAsk_extrem +
     repeatDownTickVolBlwBid_extrem + repeatUpTickVolBlwBid_extrem
 )
-ratio_bullish_repeat_ticks = np.where(total_vol_bullish_extrem != 0, repeat_vol_bullish_extrem / total_vol_bullish_extrem, 0)
-max_ratio_bullish_repeat_ticks = calculate_max_ratio(ratio_bullish_repeat_ticks, total_vol_bullish_extrem != 0)
-features_df['bullish_repeat_ticks_ratio'] = np.where(
+ratio_bullish_repeat_ticks_extrem = np.where(total_vol_bullish_extrem != 0, repeat_vol_bullish_extrem / total_vol_bullish_extrem, 0)
+max_ratio_bullish_repeat_ticks = calculate_max_ratio(ratio_bullish_repeat_ticks_extrem, total_vol_bullish_extrem != 0)
+features_df['bullish_repeat_ticks_ratio_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
-        ratio_bullish_repeat_ticks,
+        ratio_bullish_repeat_ticks_extrem,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_repeat_ticks
     )
 )
-features_df['bullish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bullish_extrem == 0, 19, 0)
+features_df['bullish_repeat_ticks_ratio_special_extrem'] = np.where(repeat_vol_bullish_extrem == 0, 19, 0)
 
 
 # g) Big trades dans la zone extrême
@@ -1168,6 +1168,8 @@ features_df['bullish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bullish_
 
 
 #----- Calcul de bearish_big_trade_ratio_extrem et bearish_big_trade_ratio_extrem_special
+# Pour les bougies bearish (zone Abv)
+
 total_vol_bearish_extrem = (
     upTickVolAbvAsk_extrem + repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     downTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem + repeatUpTickVolAbvBid_extrem
@@ -1176,37 +1178,37 @@ big_trade_vol_bearish_extrem = (
     upTickVolAbvAsk_bigStand_extrem + repeatUpTickVolAbvAsk_bigStand_extrem + repeatDownTickVolAbvAsk_bigStand_extrem +
     downTickVolAbvBid_bigStand_extrem + repeatDownTickVolAbvBid_bigStand_extrem + repeatUpTickVolAbvBid_bigStand_extrem
 )
-ratio_bearish_big_trade = np.where(total_vol_bearish_extrem != 0, big_trade_vol_bearish_extrem / total_vol_bearish_extrem, 0)
-max_ratio_bearish_big_trade = calculate_max_ratio(ratio_bearish_big_trade, total_vol_bearish_extrem != 0)
+ratio_bearish_big_trade_extrem = np.where(total_vol_bearish_extrem != 0, big_trade_vol_bearish_extrem / total_vol_bearish_extrem, 0)
+max_ratio_bearish_big_trade_extrem = calculate_max_ratio(ratio_bearish_big_trade_extrem, total_vol_bearish_extrem != 0)
 features_df['bearish_big_trade_ratio_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
-        ratio_bearish_big_trade,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade
+        ratio_bearish_big_trade_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade_extrem
     )
 )
-features_df['bearish_big_trade_ratio_extrem_special'] =np.where(big_trade_vol_bearish_extrem == 0, 21, 0)
-#----- Calcul de bearish_big_trade_imbalance et bearish_big_trade_imbalance_special
-imbalance_vol_bearish_big_trade = (
+features_df['bearish_big_trade_ratio_special_extrem'] =np.where(big_trade_vol_bearish_extrem == 0, 21, 0)
+#----- Calcul de bearish_big_trade_imbalance_extrem et bearish_big_trade_imbalance_special_extrem
+imbalance_vol_bearish_big_trade_extrem = (
     (upTickVolAbvAsk_bigStand_extrem + repeatUpTickVolAbvAsk_bigStand_extrem + repeatDownTickVolAbvAsk_bigStand_extrem) -
     (downTickVolAbvBid_bigStand_extrem + repeatDownTickVolAbvBid_bigStand_extrem + repeatUpTickVolAbvBid_bigStand_extrem)
 )
-total_vol_bearish_big_trade = (
+total_vol_bearish_big_trade_extrem = (
     upTickVolAbvAsk_bigStand_extrem + repeatUpTickVolAbvAsk_bigStand_extrem + repeatDownTickVolAbvAsk_bigStand_extrem +
     downTickVolAbvBid_bigStand_extrem + repeatDownTickVolAbvBid_bigStand_extrem + repeatUpTickVolAbvBid_bigStand_extrem
 )
-ratio_bearish_big_trade_imbalance = np.where(total_vol_bearish_big_trade != 0, imbalance_vol_bearish_big_trade / total_vol_bearish_big_trade, 0)
-max_ratio_bearish_big_trade_imbalance = calculate_max_ratio(ratio_bearish_big_trade_imbalance, total_vol_bearish_big_trade != 0)
-features_df['bearish_big_trade_imbalance'] = np.where(
+ratio_bearish_big_trade_imbalance_extrem = np.where(total_vol_bearish_big_trade_extrem != 0, imbalance_vol_bearish_big_trade_extrem / total_vol_bearish_big_trade_extrem, 0)
+max_ratio_bearish_big_trade_imbalance_extrem = calculate_max_ratio(ratio_bearish_big_trade_imbalance_extrem, total_vol_bearish_big_trade_extrem != 0)
+features_df['bearish_big_trade_imbalance_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
-        total_vol_bearish_big_trade != 0,
-        ratio_bearish_big_trade_imbalance,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade_imbalance
+        total_vol_bearish_big_trade_extrem != 0,
+        ratio_bearish_big_trade_imbalance_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade_imbalance_extrem
     )
 )
-features_df['bearish_big_trade_imbalance_special'] = np.where(imbalance_vol_bearish_big_trade == 0, 22, 0)
+features_df['bearish_big_trade_imbalance_special_extrem'] = np.where(imbalance_vol_bearish_big_trade_extrem == 0, 22, 0)
 #-----
 
 
@@ -1220,37 +1222,37 @@ big_trade_vol_bullish_extrem = (
     upTickVolBlwAsk_bigStand_extrem + repeatUpTickVolBlwAsk_bigStand_extrem + repeatDownTickVolBlwAsk_bigStand_extrem +
     downTickVolBlwBid_bigStand_extrem + repeatDownTickVolBlwBid_bigStand_extrem + repeatUpTickVolBlwBid_bigStand_extrem
 )
-ratio_bullish_big_trade = np.where(total_vol_bullish_extrem != 0, big_trade_vol_bullish_extrem / total_vol_bullish_extrem, 0)
-max_ratio_bullish_big_trade = calculate_max_ratio(ratio_bullish_big_trade, total_vol_bullish_extrem != 0)
+ratio_bullish_big_trade_extrem = np.where(total_vol_bullish_extrem != 0, big_trade_vol_bullish_extrem / total_vol_bullish_extrem, 0)
+max_ratio_bullish_big_trade_extrem = calculate_max_ratio(ratio_bullish_big_trade_extrem, total_vol_bullish_extrem != 0)
 features_df['bullish_big_trade_ratio_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
-        ratio_bullish_big_trade,
-        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade
+        ratio_bullish_big_trade_extrem,
+        diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade_extrem
     )
 )
-features_df['bullish_big_trade_ratio_extrem_special'] = np.where(big_trade_vol_bullish_extrem == 0, 23, 0)
-#----- Calcul de bullish_big_trade_imbalance et bullish_big_trade_imbalance_special
-imbalance_vol_bullish_big_trade = (
+features_df['bullish_big_trade_ratio_special_extrem'] = np.where(big_trade_vol_bullish_extrem == 0, 23, 0)
+#----- Calcul de bullish_big_trade_imbalance_extrem et bullish_big_trade_imbalance_special_extrem
+imbalance_vol_bullish_big_trade_extrem = (
     (upTickVolBlwAsk_bigStand_extrem + repeatUpTickVolBlwAsk_bigStand_extrem + repeatDownTickVolBlwAsk_bigStand_extrem) -
     (downTickVolBlwBid_bigStand_extrem + repeatDownTickVolBlwBid_bigStand_extrem + repeatUpTickVolBlwBid_bigStand_extrem)
 )
-total_vol_bullish_big_trade = (
+total_vol_bullish_big_trade_extrem = (
     upTickVolBlwAsk_bigStand_extrem + repeatUpTickVolBlwAsk_bigStand_extrem + repeatDownTickVolBlwAsk_bigStand_extrem +
     downTickVolBlwBid_bigStand_extrem + repeatDownTickVolBlwBid_bigStand_extrem + repeatUpTickVolBlwBid_bigStand_extrem
 )
-ratio_bullish_big_trade_imbalance = np.where(total_vol_bullish_big_trade != 0, imbalance_vol_bullish_big_trade / total_vol_bullish_big_trade, 0)
-max_ratio_bullish_big_trade_imbalance = calculate_max_ratio(ratio_bullish_big_trade_imbalance, total_vol_bullish_big_trade != 0)
-features_df['bullish_big_trade_imbalance'] = np.where(
+ratio_bullish_big_trade_imbalance_extrem = np.where(total_vol_bullish_big_trade_extrem != 0, imbalance_vol_bullish_big_trade_extrem / total_vol_bullish_big_trade_extrem, 0)
+max_ratio_bullish_big_trade_imbalance = calculate_max_ratio(ratio_bullish_big_trade_imbalance_extrem, total_vol_bullish_big_trade_extrem != 0)
+features_df['bullish_big_trade_imbalance_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
-        total_vol_bullish_big_trade != 0,
-        ratio_bullish_big_trade_imbalance,
+        total_vol_bullish_big_trade_extrem != 0,
+        ratio_bullish_big_trade_imbalance_extrem,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_big_trade_imbalance
     )
 )
-features_df['bullish_big_trade_imbalance_special'] =np.where(imbalance_vol_bullish_big_trade == 0, 24, 0)
+features_df['bullish_big_trade_imbalance_special_extrem'] =np.where(imbalance_vol_bullish_big_trade_extrem == 0, 24, 0)
 #-----
 
 
@@ -1373,51 +1375,51 @@ features_df['bullish_dsc_ask_bid_delta_imbalance'] = np.where(
 print_notification("Calcul des features de la zone extrême")
 
 # Features bearish
-features_df['extrem_asc_ratio_bearish'] = np.where(
+features_df['extrem_asc_ratio_bearish_extrem'] = np.where(
     df['VolAbv'] != 0,
     (df['upTickVolAbvAskAsc_extrem'] + df['repeatUpTickVolAbvAskAsc_extrem'] + df['repeatDownTickVolAbvAskAsc_extrem']) / df['VolAbv'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-features_df['extrem_dsc_ratio_bearish'] = np.where(
+features_df['extrem_dsc_ratio_bearish_extrem'] = np.where(
     df['VolAbv'] != 0,
     (df['downTickVolAbvBidDesc_extrem'] + df['repeatUpTickVolAbvBidDesc_extrem'] + df['repeatDownTickVolAbvBidDesc_extrem']) / df['VolAbv'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-features_df['extrem_zone_significance_bearish'] = np.where(
+features_df['extrem_zone_significance_bearish_extrem'] = np.where(
     ( df['VolAbv'] != 0),
-    (features_df['extrem_asc_ratio_bearish'] + features_df['extrem_dsc_ratio_bearish']) *
-    abs(features_df['extrem_asc_ratio_bearish'] - features_df['extrem_dsc_ratio_bearish']),
+    (features_df['extrem_asc_ratio_bearish_extrem'] + features_df['extrem_dsc_ratio_bearish_extrem']) *
+    abs(features_df['extrem_asc_ratio_bearish_extrem'] - features_df['extrem_dsc_ratio_bearish_extrem']),
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 #----- Calcul de extrem_ask_bid_imbalance_bearish et extrem_ask_bid_imbalance_bearish_special
-total_vol_extrem_bearish = (
+total_vol_extrem_bearish_extrem = (
     df['upTickVolAbvAskAsc_extrem'] + df['repeatUpTickVolAbvAskAsc_extrem'] + df['repeatDownTickVolAbvAskAsc_extrem'] +
     df['downTickVolAbvBidDesc_extrem'] + df['repeatUpTickVolAbvBidDesc_extrem'] + df['repeatDownTickVolAbvBidDesc_extrem']
 )
-imbalance_vol_extrem_bearish = (
+imbalance_vol_extrem_bearish_extrem = (
     df['upTickVolAbvAskAsc_extrem'] + df['repeatUpTickVolAbvAskAsc_extrem'] + df['repeatDownTickVolAbvAskAsc_extrem'] -
     (df['downTickVolAbvBidDesc_extrem'] + df['repeatUpTickVolAbvBidDesc_extrem'] + df['repeatDownTickVolAbvBidDesc_extrem'])
 )
-ratio_extrem_ask_bid_imbalance_bearish = np.where(total_vol_extrem_bearish != 0, imbalance_vol_extrem_bearish / total_vol_extrem_bearish, 0)
-max_ratio_extrem_ask_bid_imbalance_bearish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bearish, total_vol_extrem_bearish != 0)
-features_df['extrem_ask_bid_imbalance_bearish'] = np.where(
+ratio_extrem_ask_bid_imbalance_bearish = np.where(total_vol_extrem_bearish_extrem != 0, imbalance_vol_extrem_bearish_extrem / total_vol_extrem_bearish_extrem, 0)
+max_ratio_extrem_ask_bid_imbalance_bearish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bearish, total_vol_extrem_bearish_extrem != 0)
+features_df['extrem_ask_bid_imbalance_bearish_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
-        total_vol_extrem_bearish != 0,
+        total_vol_extrem_bearish_extrem != 0,
         ratio_extrem_ask_bid_imbalance_bearish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_extrem_ask_bid_imbalance_bearish
     )
 )
-features_df['extrem_ask_bid_imbalance_bearish_special'] = np.where(imbalance_vol_extrem_bearish == 0, 27, 0)
+features_df['extrem_ask_bid_imbalance_bearish_special_extrem'] = np.where(imbalance_vol_extrem_bearish_extrem == 0, 27, 0)
 #-----
 
 
-features_df['extrem_asc_dsc_comparison_bearish'] = np.where(
+features_df['extrem_asc_dsc_comparison_bearish_extrem'] = np.where(
     ( df['VolAbv'] != 0),
-    features_df['extrem_asc_ratio_bearish'] / features_df['extrem_dsc_ratio_bearish'],
+    features_df['extrem_asc_ratio_bearish_extrem'] / features_df['extrem_dsc_ratio_bearish_extrem'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-#----- Calcul de bearish_repeat_ticks_ratio et bearish_repeat_ticks_ratio_special
+#----- Calcul de bearish_repeat_ticks_ratio_extrem et bearish_repeat_ticks_ratio_special_extrem
 total_vol_bearish_extrem = (
     upTickVolAbvAsk_extrem + downTickVolAbvBid_extrem + repeatUpTickVolAbvAsk_extrem +
     repeatDownTickVolAbvAsk_extrem + repeatUpTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem
@@ -1426,39 +1428,39 @@ repeat_vol_bearish_extrem = (
     repeatUpTickVolAbvAsk_extrem + repeatDownTickVolAbvAsk_extrem +
     repeatUpTickVolAbvBid_extrem + repeatDownTickVolAbvBid_extrem
 )
-ratio_bearish_repeat_ticks = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
-max_ratio_bearish_repeat_ticks = calculate_max_ratio(ratio_bearish_repeat_ticks, total_vol_bearish_extrem != 0)
-features_df['bearish_repeat_ticks_ratio'] = np.where(
+ratio_bearish_repeat_ticks_extrem = np.where(total_vol_bearish_extrem != 0, repeat_vol_bearish_extrem / total_vol_bearish_extrem, 0)
+max_ratio_bearish_repeat_ticks = calculate_max_ratio(ratio_bearish_repeat_ticks_extrem, total_vol_bearish_extrem != 0)
+features_df['bearish_repeat_ticks_ratio_extrem'] = np.where(
     df['VolAbv'] == 0, valueY,
     np.where(
         total_vol_bearish_extrem != 0,
-        ratio_bearish_repeat_ticks,
+        ratio_bearish_repeat_ticks_extrem,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_repeat_ticks
     )
 )
-features_df['bearish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bearish_extrem == 0, 28, 0)
+features_df['bearish_repeat_ticks_ratio_special_extrem'] = np.where(repeat_vol_bearish_extrem == 0, 28, 0)
 #-----
 
 
 # Features bullish
-features_df['extrem_asc_ratio_bullish'] = np.where(
+features_df['extrem_asc_ratio_bullish_extrem'] = np.where(
     df['VolBlw'] != 0,
     (df['upTickVolBlwAskAsc_extrem'] + df['repeatUpTickVolBlwAskAsc_extrem'] + df['repeatDownTickVolBlwAskAsc_extrem']) / df['VolBlw'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-features_df['extrem_dsc_ratio_bullish'] = np.where(
+features_df['extrem_dsc_ratio_bullish_extrem'] = np.where(
     df['VolBlw'] != 0,
     (df['downTickVolBlwBidDesc_extrem'] + df['repeatUpTickVolBlwBidDesc_extrem'] + df['repeatDownTickVolBlwBidDesc_extrem']) / df['VolBlw'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-features_df['extrem_zone_significance_bullish'] = np.where(
+features_df['extrem_zone_significance_bullish_extrem'] = np.where(
     ( df['VolBlw'] != 0),
-    (features_df['extrem_asc_ratio_bullish'] + features_df['extrem_dsc_ratio_bullish']) *
-    abs(features_df['extrem_asc_ratio_bullish'] - features_df['extrem_dsc_ratio_bullish']),
+    (features_df['extrem_asc_ratio_bullish_extrem'] + features_df['extrem_dsc_ratio_bullish_extrem']) *
+    abs(features_df['extrem_asc_ratio_bullish_extrem'] - features_df['extrem_dsc_ratio_bullish_extrem']),
     diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-#----- Calcul de extrem_ask_bid_imbalance_bullish et extrem_ask_bid_imbalance_bullish_special
-total_vol_extrem_bullish = (
+#----- Calcul de extrem_ask_bid_imbalance_bullish_extrem et extrem_ask_bid_imbalance_bullish_special_extrem
+total_vol_extrem_bullish_extrem = (
     df['upTickVolBlwAskAsc_extrem'] + df['repeatUpTickVolBlwAskAsc_extrem'] + df['repeatDownTickVolBlwAskAsc_extrem'] +
     df['downTickVolBlwBidDesc_extrem'] + df['repeatUpTickVolBlwBidDesc_extrem'] + df['repeatDownTickVolBlwBidDesc_extrem']
 )
@@ -1466,23 +1468,23 @@ imbalance_vol_extrem_bullish = (
     df['upTickVolBlwAskAsc_extrem'] + df['repeatUpTickVolBlwAskAsc_extrem'] + df['repeatDownTickVolBlwAskAsc_extrem'] -
     (df['downTickVolBlwBidDesc_extrem'] + df['repeatUpTickVolBlwBidDesc_extrem'] + df['repeatDownTickVolBlwBidDesc_extrem'])
 )
-ratio_extrem_ask_bid_imbalance_bullish = np.where(total_vol_extrem_bullish != 0, imbalance_vol_extrem_bullish / total_vol_extrem_bullish, 0)
-max_ratio_extrem_ask_bid_imbalance_bullish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bullish, total_vol_extrem_bullish != 0)
+ratio_extrem_ask_bid_imbalance_bullish = np.where(total_vol_extrem_bullish_extrem != 0, imbalance_vol_extrem_bullish / total_vol_extrem_bullish_extrem, 0)
+max_ratio_extrem_ask_bid_imbalance_bullish = calculate_max_ratio(ratio_extrem_ask_bid_imbalance_bullish, total_vol_extrem_bullish_extrem != 0)
 features_df['extrem_ask_bid_imbalance_bullish'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
-        total_vol_extrem_bullish != 0,
+        total_vol_extrem_bullish_extrem != 0,
         ratio_extrem_ask_bid_imbalance_bullish,
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_extrem_ask_bid_imbalance_bullish
     )
 )
-features_df['extrem_ask_bid_imbalance_bullish_special'] = np.where(imbalance_vol_extrem_bullish == 0, 29, 0)
+features_df['extrem_ask_bid_imbalance_bullish_special_extrem'] = np.where(imbalance_vol_extrem_bullish == 0, 29, 0)
 #-----
 
 
-features_df['extrem_asc_dsc_comparison_bullish'] = np.where(
+features_df['extrem_asc_dsc_comparison_bullish_extrem'] = np.where(
     ( df['VolBlw'] != 0),
-    features_df['extrem_asc_ratio_bullish'] / features_df['extrem_dsc_ratio_bullish'],
+    features_df['extrem_asc_ratio_bullish_extrem'] / features_df['extrem_dsc_ratio_bullish_extrem'],
     addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 #----- Calcul de bullish_repeat_ticks_ratio et bullish_repeat_ticks_ratio_special
@@ -1496,7 +1498,7 @@ repeat_vol_bullish_extrem = (
 )
 ratio_bullish_repeat_ticks = np.where(total_vol_bullish_extrem != 0, repeat_vol_bullish_extrem / total_vol_bullish_extrem, 0)
 max_ratio_bullish_repeat_ticks = calculate_max_ratio(ratio_bullish_repeat_ticks, total_vol_bullish_extrem != 0)
-features_df['bullish_repeat_ticks_ratio'] = np.where(
+features_df['bullish_repeat_ticks_ratio_extrem'] = np.where(
     df['VolBlw'] == 0, valueY,
     np.where(
         total_vol_bullish_extrem != 0,
@@ -1504,7 +1506,7 @@ features_df['bullish_repeat_ticks_ratio'] = np.where(
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bullish_repeat_ticks
     )
 )
-features_df['bullish_repeat_ticks_ratio_special'] = np.where(repeat_vol_bullish_extrem == 0, 30, 0)
+features_df['bullish_repeat_ticks_ratio_special_extrem'] = np.where(repeat_vol_bullish_extrem == 0, 30, 0)
 #-----
 
 #----- Calcul de bearish_absorption_ratio et bearish_absorption_ratio_special
@@ -1559,7 +1561,7 @@ features_df['bearish_big_trade_ratio2_extrem'] = np.where(
         diffDivBy0 if DEFAULT_DIV_BY0 else max_ratio_bearish_big_trade2
     )
 )
-features_df['bearish_big_trade_ratio2_extrem_special'] = np.where(big_trade_vol_bearish_extrem == 0, 33, 0)
+features_df['bearish_big_trade_ratio2_special_extrem'] = np.where(big_trade_vol_bearish_extrem == 0, 33, 0)
 
 #----- Calcul de bullish_big_trade_ratio2_extrem et bullish_big_trade_ratio2_extrem_special
 total_vol_bullish_extrem = upTickVolBlwAsk_extrem + downTickVolBlwBid_extrem
@@ -2037,38 +2039,38 @@ column_settings = {
     'bullish_bigHigh_abs_diff_blw':           (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok2
 
     # Extreme zone features
-    'bearish_extrem_revIntensity_ratio':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_revIntensity_ratio':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_extrem_zone_volume_ratio':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_zone_volume_ratio':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_extrem_pressure_ratio':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_extrem_pressure_ratio_special': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bullish_extrem_pressure_ratio':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_pressure_ratio_special': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bearish_extrem_abs_ratio':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_extrem_abs_ratio_special':               (False, False, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_abs_ratio':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_abs_ratio_special': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bearish_extrem_vs_rest_activity':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_extrem_vs_rest_activity_special': (False, False, 1, 98, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bullish_extrem_vs_rest_activity':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_extrem_vs_rest_activity_special':        (False, False, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_continuation_vs_reversal':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_continuation_vs_reversal_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bullish_continuation_vs_reversal':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_continuation_vs_reversal_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bearish_repeat_ticks_ratio':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_repeat_ticks_ratio_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bullish_repeat_ticks_ratio':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_repeat_ticks_ratio_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bearish_extrem_revIntensity_ratio_extrem':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_revIntensity_ratio_extrem':      (True, True, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_zone_volume_ratio_extrem':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_zone_volume_ratio_extrem':       (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_pressure_ratio_extrem':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_pressure_ratio_special_extrem': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_extrem_pressure_ratio_extrem':          (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_pressure_ratio_special_extrem': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bearish_extrem_abs_ratio_extrem':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_abs_ratio_special_extrem':               (False, False, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_abs_ratio_extrem':               (False, True, 1, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_abs_ratio_special_extrem': (False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bearish_extrem_vs_rest_activity_extrem':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_extrem_vs_rest_activity_special_extrem': (False, False, 1, 98, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_extrem_vs_rest_activity_extrem':        (True, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_extrem_vs_rest_activity_special_extrem':        (False, False, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_continuation_vs_reversal_extrem':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_continuation_vs_reversal_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_continuation_vs_reversal_extrem':       (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_continuation_vs_reversal_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bearish_repeat_ticks_ratio_extrem':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_repeat_ticks_ratio_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_repeat_ticks_ratio_extrem':             (True, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_repeat_ticks_ratio_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
     'bearish_big_trade_ratio_extrem':         (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-'bearish_big_trade_ratio_extrem_special':         (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_big_trade_imbalance':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bearish_big_trade_imbalance_special':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+'bearish_big_trade_ratio_special_extrem':         (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_big_trade_imbalance_extrem':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bearish_big_trade_imbalance_special_extrem':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
     'bullish_big_trade_ratio_extrem':          (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_big_trade_ratio_extrem_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
-    'bullish_big_trade_imbalance':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
-    'bullish_big_trade_imbalance_special': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_big_trade_ratio_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
+    'bullish_big_trade_imbalance_extrem':            (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
+    'bullish_big_trade_imbalance_special_extrem': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok3
 
     # Ascending/Descending features
     'bearish_asc_dsc_ratio':                  (False, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok3
@@ -2093,18 +2095,18 @@ column_settings = {
     'bullish_dsc_ask_bid_delta_imbalance':    (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
 
     # Extreme zone additional features
-    'extrem_asc_ratio_bearish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_dsc_ratio_bearish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_zone_significance_bearish':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_ask_bid_imbalance_bearish':       (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
-'extrem_ask_bid_imbalance_bearish_special':       (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_asc_dsc_comparison_bearish':      (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_asc_ratio_bullish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_dsc_ratio_bullish':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_zone_significance_bullish':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_ratio_bearish_extrem':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_dsc_ratio_bearish_extrem':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_zone_significance_bearish_extrem':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_ask_bid_imbalance_bearish_extrem':       (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+'extrem_ask_bid_imbalance_bearish_special_extrem':       (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_dsc_comparison_bearish_extrem':      (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_asc_ratio_bullish_extrem':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_dsc_ratio_bullish_extrem':               (False, True, 0.5, 99,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_zone_significance_bullish_extrem':       (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
     'extrem_ask_bid_imbalance_bullish':      (False, False, 0.5, 99.5,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'extrem_ask_bid_imbalance_bullish_special': (False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok4
-    'extrem_asc_dsc_comparison_bullish':     (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
+    'extrem_ask_bid_imbalance_bullish_special_extrem': (False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok4
+    'extrem_asc_dsc_comparison_bullish_extrem':     (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
 
     # Absorption and big trade features
     'bearish_absorption_ratio':               (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
@@ -2112,7 +2114,7 @@ column_settings = {
     'bullish_absorption_ratio':               (False, True, 0.5, 97,toBeDisplayed_if_s(user_choice, False)),#ok4
     'bullish_absorption_ratio_special': (False, False, 0.5, 97, toBeDisplayed_if_s(user_choice, False)),  # ok4
     'bearish_big_trade_ratio2_extrem':        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
-    'bearish_big_trade_ratio2_extrem_special': (False, False, 0.5, 98, toBeDisplayed_if_s(user_choice, False)),  # ok4
+    'bearish_big_trade_ratio2_special_extrem': (False, False, 0.5, 98, toBeDisplayed_if_s(user_choice, False)),  # ok4
     'bullish_big_trade_ratio2_extrem':        (False, True, 0.5, 98,toBeDisplayed_if_s(user_choice, False)),#ok4
     'bullish_big_trade_ratio2_extrem_special': (False, False, 0.5, 98, toBeDisplayed_if_s(user_choice, False)),  # ok4
 

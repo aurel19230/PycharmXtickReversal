@@ -1,7 +1,9 @@
 import pandas as pd
 import xgboost as xgb
 from sklearn.model_selection import TimeSeriesSplit
-from standardFunc import load_data, split_sessions, print_notification, plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability, timestamp_to_date_utc,calculate_and_display_sessions
+from standardFunc import (load_data, split_sessions, print_notification,
+                          plot_calibrationCurve_distrib,plot_fp_tp_rates, check_gpu_availability,
+                          timestamp_to_date_utc,calculate_and_display_sessions,calculate_weighted_adjusted_score_custom, sigmoidCustom)
 import optuna
 import time
 from sklearn.utils.class_weight import compute_sample_weight
@@ -22,6 +24,8 @@ from sklearn.model_selection import KFold, TimeSeriesSplit
 import json
 import tempfile
 import shutil
+import shap
+from colorama import Fore, Style, init
 
 # Define the custom_metric class using Enum
 from enum import Enum
@@ -401,42 +405,35 @@ def average_learning_curves(learning_curve_data_list):
         'val_scores_mean': avg_val_scores
     }
 
-
+"""
+# Fonction pour calculer les scores d'entraînement et de validation
 def calculate_scores_for_cv_split_learning_curve(
         params, num_boost_round, X_train, y_train_label, X_val,
         y_val, weight_dict, combined_metric, metric_dict, custom_metric):
-    """
-    Calcule les scores d'entraînement et de validation pour un split de validation croisée.
-    """
-    # Créer des DMatrix pour l'entraînement et la validation
     sample_weights = np.array([weight_dict[label] for label in y_train_label])
     dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights)
     dval = xgb.DMatrix(X_val, label=y_val)
 
-    # Entraîner le modèle
     booster = xgb.train(params, dtrain, num_boost_round=num_boost_round, maximize=True, custom_metric=custom_metric)
 
-    # Prédire sur les ensembles d'entraînement et de validation
     train_pred = booster.predict(dtrain)
     val_pred = booster.predict(dval)
 
-    # Calculer les scores
     train_score = combined_metric(y_train_label, train_pred, metric_dict=metric_dict)
-
     val_score_best = combined_metric(y_val, val_pred, metric_dict=metric_dict)
 
     return {
-        'train_sizes': [len(X_train)],  # Ajout de cette ligne
-        'train_scores_mean': [train_score],  # Modification ici
-        'val_scores_mean': [val_score_best]  # Modification ici
+        'train_sizes': [len(X_train)],
+        'train_scores_mean': [train_score],
+        'val_scores_mean': [val_score_best]
     }
-
+"""
 
 from sklearn.model_selection import train_test_split
 
-
+"""
 def print_callback(study, trial, X_train, y_train_label, config):
-    trial_values = trial.values  # [score_adjustedStd_val, pnl_perSample_diff]
+    trial_values = trial.values  # [score_adjustedStd_val, pnl_perTrade_diff]
 
     learning_curve_data = trial.user_attrs.get('learning_curve_data')
     best_val_score= trial_values[0]  # Premier objectif (maximize)
@@ -463,6 +460,13 @@ def print_callback(study, trial, X_train, y_train_label, config):
     tp_fp_diff = trial.user_attrs.get('tp_fp_diff', 0)
     cummulative_pnl = trial.user_attrs.get('cummulative_pnl', 0)
 
+    weight_param_FromAttr = trial.user_attrs['weight_param']
+
+    cummulative_pnl_FromAttr = total_tp_val * weight_param_FromAttr['profit_per_tp']['min'] + total_fp_val * weight_param_FromAttr['loss_per_fp'][
+        'max']
+
+    print(f"{cummulative_pnl} {cummulative_pnl_FromAttr}")
+    exit(23)
     tp_percentage = trial.user_attrs.get('tp_percentage', 0)
     total_trades_val = total_tp_val + total_fp_val
     win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
@@ -474,7 +478,7 @@ def print_callback(study, trial, X_train, y_train_label, config):
     print(f"   -Différence (TP - FP)          : {tp_fp_diff}")
     print(f"   -PNL                           : {cummulative_pnl}")
     print(f"   -Nombre de trades              : {total_tp_val+total_fp_val+total_tn_train+total_fn_train}")
-    """
+    
     if learning_curve_data:
         train_scores = learning_curve_data['train_scores_mean']
         val_scores = learning_curve_data['val_scores_mean']
@@ -504,18 +508,18 @@ def print_callback(study, trial, X_train, y_train_label, config):
             f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size / total_train_size * 100:.2f}% du total)")
     #else:
      #   print("Option Courbe d'Apprentissage non activé")
-    """
+    
     # Afficher les trials sur le front de Pareto
     print("\nTrials sur le front de Pareto :") #ensemble d'essais dits optimaux qui constituent le front de Pareto
     #Un essai est considéré sur ce front s'il n'est pas "dominé" par un autre essai sur tous les objectifs.
 
     for trial in study.best_trials:
         pnl_val = trial.values[0]
-        pnl_perSample_diff = trial.values[1]
+        pnl_perTrade_diff = trial.values[1]
         trial_number = trial.number + 1
         print(f"Trial numéro {trial_number}:")
         print(f"  pnl sur validation : {pnl_val:.4f}")
-        print(f"  Différence pnl per sample : {pnl_perSample_diff:.4f}\n")
+        print(f"  Différence pnl per trade : {pnl_perTrade_diff:.4f}\n")
 
     # Trouver et afficher le trial avec le meilleur pnl sur validation
     best_trial_pnl = max(study.trials, key=lambda t: t.values[0])
@@ -524,14 +528,15 @@ def print_callback(study, trial, X_train, y_train_label, config):
         f"(obtenue lors de l'essai numéro : {best_trial_pnl.number + 1})"
     )
 
-    # Trouver et afficher le trial avec la plus petite différence de pnl per sample
+    # Trouver et afficher le trial avec la plus petite différence de pnl per trade
     best_trial_pnl_diff = min(study.trials, key=lambda t: t.values[1])
     print(
-        f"Meilleur score de différence de pnl per sample : {best_trial_pnl_diff.values[1]:.4f} "
+        f"Meilleur score de différence de pnl per trade : {best_trial_pnl_diff.values[1]:.4f} "
         f"(obtenu lors de l'essai numéro : {best_trial_pnl_diff.number + 1})"
     )
 
     print("------")
+"""
 
 
 # Fonctions supplémentaires pour l'analyse des erreurs et SHAP
@@ -1093,18 +1098,6 @@ def weighted_logistic_hessian_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: f
 
 # Fonctions GPU mises à jour
 
-def sigmoidCustom_simple(x):
-    """Custom sigmoid function."""
-    return 1 / (1 + cp.exp(-x))
-
-def sigmoidCustom(x):
-    """Numerically stable sigmoid function."""
-    x = cp.asarray(x)
-    return cp.where(
-        x >= 0,
-        1 / (1 + cp.exp(-x)),
-        cp.exp(x) / (1 + cp.exp(x))
-    )
 
 
 def weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n):
@@ -1244,8 +1237,6 @@ def custom_metric_ProfitBased(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dic
     return custom_metric_Profit(predt, dtrain, metric_dict, normalize=False)
 
 
-def custom_metric_ProfitBased_norm(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
-    return custom_metric_Profit(predt, dtrain, metric_dict, normalize=True)
 
 
 def create_custom_metric_wrapper(metric_dict):
@@ -1340,334 +1331,53 @@ def calculate_time_difference(start_date_str, end_date_str):
     end_date = datetime.strptime(end_date_str, date_format)
     diff = relativedelta(end_date, start_date)
     return diff
-def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
-                     device,
-                     xgb_param_optuna_range,config=None,nb_split_tscv= None,
-                     learning_curve_enabled=None,
-                     optima_score=None, metric_dict=None, bestResult_dict=None, weight_param=None, random_state_seed_=None,
-                     early_stopping_rounds=None, std_penalty_factor_=None,
-                     cv_method=cv_config.TIME_SERIE_SPLIT ):  # Ajouter le paramètre cv_method
-    np.random.seed(random_state_seed_)
-    global global_predt
 
-    global lastBest_score
-    params = {
-        'max_depth': trial.suggest_int('max_depth', xgb_param_optuna_range['max_depth']['min'], xgb_param_optuna_range['max_depth']['max']),
-        'learning_rate': trial.suggest_float('learning_rate', xgb_param_optuna_range['learning_rate']['min'],
-                                             xgb_param_optuna_range['learning_rate']['max'],
-                                             log=xgb_param_optuna_range['learning_rate'].get('log', False)),
-        'min_child_weight': trial.suggest_int('min_child_weight', xgb_param_optuna_range['min_child_weight']['min'],
-                                              xgb_param_optuna_range['min_child_weight']['max']),
-        'subsample': trial.suggest_float('subsample', xgb_param_optuna_range['subsample']['min'], xgb_param_optuna_range['subsample']['max']),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', xgb_param_optuna_range['colsample_bytree']['min'],
-                                                xgb_param_optuna_range['colsample_bytree']['max']),
-        'colsample_bylevel': trial.suggest_float('colsample_bylevel', xgb_param_optuna_range['colsample_bylevel']['min'],
-                                                 xgb_param_optuna_range['colsample_bylevel']['max']),
-        'colsample_bynode': trial.suggest_float('colsample_bynode', xgb_param_optuna_range['colsample_bynode']['min'],
-                                                xgb_param_optuna_range['colsample_bynode']['max']),
-        'gamma': trial.suggest_float('gamma', xgb_param_optuna_range['gamma']['min'], xgb_param_optuna_range['gamma']['max']),
-        'reg_alpha': trial.suggest_float('reg_alpha', xgb_param_optuna_range['reg_alpha']['min'], xgb_param_optuna_range['reg_alpha']['max'],
-                                         log=xgb_param_optuna_range['reg_alpha'].get('log', False)),
-        'reg_lambda': trial.suggest_float('reg_lambda', xgb_param_optuna_range['reg_lambda']['min'], xgb_param_optuna_range['reg_lambda']['max'],
-                                          log=xgb_param_optuna_range['reg_lambda'].get('log', False)),
-        'random_state': random_state_seed_,
-        'tree_method': 'hist',
-        'device': device,
-    }
 
-    # Initialiser les compteurs
-    total_tp_val = total_fp_val =total_tn_val = total_fn_val= total_samples_val = 0
-    total_tp_train = total_fp_train = total_tn_train=total_fn_train=total_samples_train = 0
-
-
-    # Fonction englobante qui intègre metric_dict
-
-    threshold_value = trial.suggest_float('threshold', weight_param['threshold']['min'],
-                                          weight_param['threshold']['max'])
-
-    # Sélection de la fonction de métrique appropriée
-    if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
-
-        # Suggérer les poids pour la métrique combinée
-        profit_ratio_weight = trial.suggest_float('profit_ratio_weight', weight_param['profit_ratio_weight']['min'],
-                                                  weight_param['profit_ratio_weight']['max'])
-
-        win_rate_weight = trial.suggest_float('win_rate_weight', weight_param['win_rate_weight']['min'],
-                                              weight_param['win_rate_weight']['max'])
-
-        selectivity_weight = trial.suggest_float('selectivity_weight', weight_param['selectivity_weight']['min'],
-                                                 weight_param['selectivity_weight']['max'])
-
-        # Normaliser les poids pour qu'ils somment à 1
-        total_weight = profit_ratio_weight + win_rate_weight + selectivity_weight
-        profit_ratio_weight /= total_weight
-        win_rate_weight /= total_weight
-        selectivity_weight /= total_weight
-
-        # Définir la préférence de sélectivité
-
-        metric_dict = {
-            'profit_ratio_weight': profit_ratio_weight,
-            'win_rate_weight': win_rate_weight,
-            'selectivity_weight': selectivity_weight
-        }
-
-    elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
-
-
-        # Définir les paramètres spécifiques pour la métrique basée sur le profit
-        metric_dict = {
-            'profit_per_tp': trial.suggest_float('profit_per_tp', weight_param['profit_per_tp']['min'],
-                                                 weight_param['profit_per_tp']['max']),
-            'loss_per_fp': trial.suggest_float('loss_per_fp', weight_param['loss_per_fp']['min'],
-                                               weight_param['loss_per_fp']['max']),
-            'penalty_per_fn': trial.suggest_float('penalty_per_fn', weight_param['penalty_per_fn']['min'],
-                                               weight_param['penalty_per_fn']['max'])
-        }
-    metric_dict['threshold']=threshold_value
-
-    num_boost_round = trial.suggest_int('num_boost_round', xgb_param_optuna_range['num_boost_round']['min'],
-                                        xgb_param_optuna_range['num_boost_round']['max'])
-
-    scores_ens_val_list = []
-    scores_ens_train_list = []
-
-    last_score = None
-    learning_curve_data_list = []
-
-    if nb_split_tscv < 2:
-        print("nb_split_tscv < 2")
-        exit(1)
-    else:
-        # Choisir la méthode de validation croisée en fonction du paramètre cv_method
-        if cv_method == cv_config.TIME_SERIE_SPLIT:
-            cv = TimeSeriesSplit(n_splits=nb_split_tscv)
-            typeCV = 'timeSerie'
-        elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
-
-            x_percent = 50  # La fenêtre d'entraînement est 50 % plus grande que celle de validation
-            n_samples = len(X_train)
-            n_splits = nb_split_tscv  # Nombre de splits (nb_split_tscv)
-            size_per_split = n_samples / (n_splits   + 1)  # = 1000 / (5 + 1) = 166.67 (rounded down to 166)
-
-            validation_size = size_per_split / (1 + x_percent / 100)  # = 166 / 1.5 = 110
-            train_window = int((1 + x_percent / 100) * validation_size)  # = int(1.5 * 110) = 165
-
-            cv = CustomTimeSeriesSplitter(n_splits=n_splits, train_window=train_window, val_window=validation_size)
-
-        elif cv_method == cv_config.K_FOLD:
-            cv = KFold(n_splits=nb_split_tscv, shuffle=False)
-            typeCV = 'kfold'
-        elif cv_method == cv_config.K_FOLD_SHUFFLE:
-            cv = KFold(n_splits=nb_split_tscv, shuffle=True, random_state=42)
-            typeCV = 'kfold_shuffle'
-        else:
-            raise ValueError(f"Unknown cv_method: {cv_method}")
-
-        i = 0
-        xgboost_train_time_cum = 0
-        for_loop_start_time = time.time()
-
-        for train_index, val_index in cv.split(X_train):
-            X_train_cv, X_val_cv = X_train.iloc[train_index], X_train.iloc[val_index]
-            y_train_cv, y_val_cv = y_train_label.iloc[train_index], y_train_label.iloc[val_index]
-            # Votre code d'entraînement et de validation ici
-
-            #X_train_cv_full, X_val_cv_full = X_train_full.iloc[train_index], X_train_full.iloc[val_index]
-            i += 1
-
-            #if cv_method ==cv_config.TIME_SERIE_SPLIT :
-            start_time, end_time, val_sessions = get_val_cv_time_range(X_train_full, X_train, X_val_cv)
-            start_time_str = timestamp_to_date_utc_(start_time)
-            end_time_str = timestamp_to_date_utc_(end_time)
-            time_diff = calculate_time_difference(start_time_str, end_time_str)
-            n_trials_optuna = config.get('n_trials_optuna', 4)
-
-
-            print(
-                    f"--->Essai Optuna {trial.number + 1}/{n_trials_optuna} , split {typeCV} {i}/{nb_split_tscv} X_val_cv: de {start_time_str} à {end_time_str}. "
-                    f"Temps écoulé: {time_diff.months} mois, {time_diff.days} jours, {time_diff.minutes} minutes sur {val_sessions} sessions")
-            print(f'X_train_cv:{len(X_train_cv)} // X_val_cv:{len(X_val_cv)}')
-
-            #else:
-             #   print(f"---> split {i}/{nb_split_tscv}")
-
-            if len(X_train_cv) == 0 or len(y_train_cv) == 0:
-                print("Warning: Empty training set after filtering")
-                continue
-
-            # Recalculer les poids des échantillons
-            sample_weights = compute_sample_weight('balanced', y=y_train_cv)
-
-            # Créer les DMatrix pour XGBoost
-            dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
-            dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
-
-            # Optimiser les poids de l'objectif
-            w_p = trial.suggest_float('w_p', weight_param['w_p']['min'],
-                                      weight_param['w_p']['max'])
-            w_n = 1  # Vous pouvez également l'optimiser si nécessaire
-
-            # Mettre à jour la fonction objective avec les poids optimisés
-            if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
-                custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased(predtTrain, dtrain, metric_dict)
-
-
-                obj_function = create_weighted_logistic_obj(w_p, w_n)
-                params['disable_default_eval_metric'] = 1
-            else:
-                params['objective'] = 'binary:logistic'
-                params['eval_metric'] = ['aucpr', 'logloss']
-                obj_function = None
-                custom_metrics = None
-                params['disable_default_eval_metric'] = 0
-
-            try:
-                # Entraîner le modèle
-                evals_result = {}
-                xgboost_start_time = time.time()
-                model = xgb.train(
-                    params,
-                    dtrain,
-                    num_boost_round=num_boost_round,
-                    evals=[(dtrain, 'train'), (dval, 'eval')],
-                    obj=obj_function,
-                    custom_metric=custom_metric,
-                    early_stopping_rounds=early_stopping_rounds,
-                    verbose_eval=False,
-                    evals_result=evals_result,
-                    maximize=True
-                )
-                xgboost_end_time = time.time()
-
-                xgboost_train_time = xgboost_end_time - xgboost_start_time
-                xgboost_train_time_cum += xgboost_train_time
-                eval_scores = evals_result['eval']['custom_metric_ProfitBased']
-
-                # Trouver le meilleur score de validation et son indice
-                val_score_best = max(eval_scores) #equivanlent de model.best_score
-                val_score_bestIdx = eval_scores.index(val_score_best)
-                best_iteration = val_score_bestIdx + 1 #equivant de model.best_iteration+1
-
-                print(f"XGBoost training time for this fold: {xgboost_train_time:.2f} seconds")
-
-                print("Evaluation Results (evals_result):", evals_result)
-                print(
-                    f"   -Best Results sur Val: {val_score_best} à l'iteration num_boost : {best_iteration} / {num_boost_round}")
-
-
-
-                # Faire des prédictions sur l'ensemble de validation à l'itération du meilleur score
-                y_val_pred_proba = model.predict(dval, iteration_range=(0, best_iteration))
-                y_val_pred_proba = cp.asarray(y_val_pred_proba)
-                y_val_pred_proba = sigmoidCustom(y_val_pred_proba)
-                y_val_pred_proba = cp.clip(y_val_pred_proba, 0.0, 1.0)
-                y_val_pred_proba_np = y_val_pred_proba.get()
-                y_val_pred = (y_val_pred_proba_np > metric_dict['threshold']).astype(int)
-
-                # Calculer TP et FP pour l'ensemble de validation
-                tn_val, fp_val, fn_val, tp_val = confusion_matrix(y_val_cv, y_val_pred).ravel()
-
-                print(f"Pour le meilleur score de validation à l'itération {best_iteration}:")
-                print(f"   -TP (validation): {tp_val}, FP (validation): {fp_val}")
-
-                # Faire des prédictions sur l'ensemble d'entraînement à la même itération
-                y_train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
-                y_train_pred_proba = cp.asarray(y_train_pred_proba)
-                y_train_pred_proba = sigmoidCustom(y_train_pred_proba)
-                y_train_pred_proba = cp.clip(y_train_pred_proba, 0.0, 1.0)
-                y_train_pred_proba_np = y_train_pred_proba.get()
-                y_train_pred = (y_train_pred_proba_np > metric_dict['threshold']).astype(int)
-
-                # Calculer TP et FP pour l'ensemble d'entraînement
-                tn_train, fp_train, fn_train, tp_train = confusion_matrix(y_train_cv, y_train_pred).ravel()
-
-                print(f"Pour le score d'entraînement correspondant à l'itération {best_iteration}:")
-                print(f"   -TP (entraînement): {tp_train}, FP (entraînement): {fp_train}")
-
-                # Accéder aux scores d'entraînement pour la métrique personnalisée
-                train_scores = evals_result['train']['custom_metric_ProfitBased']
-                # Obtenir le score d'entraînement à l'indice où le meilleur score de validation a été atteint
-                train_score_at_val_best = train_scores[val_score_bestIdx]
-                print(f"   -Score d'entraînement correspondant au meilleur score de validation : {train_score_at_val_best}")
-
-                scores_ens_val_list.append(val_score_best)
-                scores_ens_train_list.append(train_score_at_val_best)
-
-                last_score = val_score_best
-
-                if learning_curve_enabled:
-                    exit(4)
-                    """
-                    # Calculer les scores pour ce split CV
-                    split_scores = calculate_scores_for_cv_split_learning_curve(
-                        params,
-                        num_boost_round,
-                        X_train_cv, y_train_cv,
-                        X_val_cv, y_val_cv,
-                        weight_dict, optuna_score, metric_dict,custom_metric
-                    )
-
-                    # Ajouter les données pour ce split
-                    learning_curve_data_list.append(split_scores)
-                    """
-                total_samples_val += len(y_val_cv)
-
-                pnl_val = tp_val * weight_param['profit_per_tp']['min'] + fp_val * \
-                       weight_param['loss_per_fp']['min']
-                pnl_train = tp_train * weight_param['profit_per_tp']['min'] + fp_train * \
-                          weight_param['loss_per_fp']['min']
-
-                print(f"----Split croisé {i}/{nb_split_tscv}//  Val: {len(y_val_pred)} trades, PNL : {pnl_val} // Train: {len(y_train_pred)} trades, PNL : {pnl_train}")
-
-                total_tp_val += tp_val
-                total_fp_val += fp_val
-                total_tn_val += tn_val
-                total_fn_val += fn_val
-                total_tp_train += tp_train
-                total_fp_train += fp_train
-            except Exception as e:
-                print(f"Error during training or evaluation: {e}")
-                exit(4)
-
-    total_samples_val = total_tp_val + total_fp_val
-    total_samples_train = total_tp_train + total_fp_train
-
-    total_pnl_val = sum(scores_ens_val_list)
-    total_pnl_train = sum(scores_ens_train_list)
-
-    val_pnl_perSample = total_pnl_val / total_samples_val if total_samples_val > 0 else 0
-    train_pnl_perSample = total_pnl_train / total_samples_train if total_samples_train > 0 else 0
-
-    # Calculer la différence absolue du PnL par trade
-    pnl_perSample_diff = abs(val_pnl_perSample - train_pnl_perSample)
-    print(f"---Val, pnl per sample: {val_pnl_perSample} // Train, pnl per sample: {train_pnl_perSample} => diff val-train PNL per sample={pnl_perSample_diff}")
-
-    # Ajustement du score avec l'écart-type
-    std_penalty_factor = std_penalty_factor_  # À ajuster selon vos besoins
-    for_loop_end_time = time.time()
-    total_for_loop_time = for_loop_end_time - for_loop_start_time
-    print(f"\nTotal time spent in for loop: {total_for_loop_time:.2f} sec // Cullative time spent in xgb.train {xgboost_train_time_cum:.2f} sec")
-
-    if not scores_ens_val_list:
-        return float('-inf'), metric_dict, bestResult_dict  # Retourne les trois valeurs même en cas d'erreur
-
-    mean_cv_score = np.mean(scores_ens_val_list)
-    std_dev_score = np.std(scores_ens_val_list, ddof=1)  # ddof=1 pour l'estimation non biaisée
-
-    score_adjustedStd_val = mean_cv_score - std_penalty_factor * std_dev_score
-    score_variance = np.var(scores_ens_val_list)
-    tp_fp_diff = total_tp_val-total_fp_val
-    cummulative_pnl=total_tp_val*weight_param['profit_per_tp']['min'] +total_fp_val*weight_param['loss_per_fp']['max']
-
-    print("cummulative_pnl : ", cummulative_pnl)
-
-
-    print("scores_ens_val_list:", scores_ens_val_list)
-    print(f"Score mean sur les {nb_split_tscv} iterations : {mean_cv_score:.3f} et std_dev_score : {std_dev_score}")
-    print(f"-> std_penalty_factor de {std_penalty_factor} donc score_adjustedStd_val : {score_adjustedStd_val:.3f}")
-
-    print(f"std_dev_score: {std_dev_score:.6f}")
+def report_trial_optuna(trial,best_trial_with_2_obj):
+    # Récupération des valeurs depuis trial.user_attrs
+    total_tp_val = trial.user_attrs['total_tp_val']
+    total_fp_val = trial.user_attrs['total_fp_val']
+    total_tn_val = trial.user_attrs['total_tn_val']
+    total_fn_val = trial.user_attrs['total_fn_val']
+    weight_param = trial.user_attrs['weight_param']
+    nb_split_tscv = trial.user_attrs['nb_split_tscv']
+    mean_cv_score = trial.user_attrs['mean_cv_score']
+    std_dev_score = trial.user_attrs['std_dev_score']
+    std_penalty_factor = trial.user_attrs['std_penalty_factor']
+    score_adjustedStd_val = trial.user_attrs['score_adjustedStd_val']
+    train_pnl_perTrades = trial.user_attrs['train_pnl_perTrades']
+    val_pnl_perTrades = trial.user_attrs['val_pnl_perTrades']
+    pnl_perTrade_diff = trial.user_attrs['pnl_perTrade_diff']
+    total_samples_val = trial.user_attrs['total_samples_val']
+    n_trials_optuna = trial.user_attrs['n_trials_optuna']
+    total_samples_val = trial.user_attrs['total_samples_val']
+    cummulative_pnl_val = trial.user_attrs['cummulative_pnl_val']
+    scores_ens_val_list= trial.user_attrs['scores_ens_val_list']
+    tp_fp_diff_val = trial.user_attrs['tp_fp_diff_val']
+    tp_percentage = trial.user_attrs['tp_percentage']
+    win_rate = trial.user_attrs['win_rate']
+
+    trial.set_user_attr('win_rate', win_rate)
+    weight_split = trial.user_attrs['weight_split']
+    nb_split_weight = trial.user_attrs['nb_split_weight']
+
+
+    print(f"   ##Essai actuel: ")
+    print(
+        f"    =>Objective 1, cummulative_pnl sur ens de Val : {cummulative_pnl_val} avec weight_split {weight_split} nb_split_weight {nb_split_weight}")
+
+    print(f"     -Moyenne des pnl des {nb_split_tscv} iterations : {mean_cv_score:.2f}, std_dev_score : {std_dev_score}, std_penalty_factor={std_penalty_factor} => score_adjustedStd_val(objective 1) : {score_adjustedStd_val:.2f}")
+    print(f"    =>Objective 2, pnl per trade: train {train_pnl_perTrades} // Val {val_pnl_perTrades} "
+          f"donc diff val-train PNL per trade {pnl_perTrade_diff}")
+
+    print(f"    =>Principal métrique pour l'essai en cours :")
+    print(f"     -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
+      f"TN (True Negative) : {total_tn_val}, FN (False Negative) : {total_fn_val},")
+    print(f"     -Pourcentage Winrate           : {win_rate:.2f}%")
+    print(f"     -Pourcentage de TP             : {tp_percentage:.2f}%")
+    print(f"     -Différence (TP - FP)          : {tp_fp_diff_val}")
+    print(f"     -PNL                           : {cummulative_pnl_val}, orginal: (scores_ens_val_list: {scores_ens_val_list})")
+    print(f"     -Nombre de trades              : {total_tp_val + total_fp_val + total_tn_val + total_fn_val}")
 
     if total_samples_val > 0:
         tp_percentage = (total_tp_val / total_samples_val) * 100
@@ -1676,148 +1386,21 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
     total_trades_val = total_tp_val + total_fp_val
     win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
     result_dict_trialOptuna = {
-        "cummulative_pnl": cummulative_pnl,
+        "cummulative_pnl": cummulative_pnl_val,
         "win_rate_percentage": round(win_rate, 2),
         "scores_ens_val_list": scores_ens_val_list,
         "score_adjustedStd_val": score_adjustedStd_val,
-        "std_dev_score":std_dev_score,
-        "tp_fp_diff": tp_fp_diff,
+        "std_dev_score": std_dev_score,
+        "tp_fp_diff_val": tp_fp_diff_val,
         "total_trades_val": total_trades_val,
         "tp_percentage": round(tp_percentage, 3),
         "total_tp_val": total_tp_val,
         "total_fp_val": total_fp_val,
-        "total_tn_train": total_tn_train,
-        "total_fn_train": total_fn_train,
-        "current_trial_number": trial.number+1
+        "total_tn_val": total_tn_val,
+        "total_fn_val": total_fn_val,
+        "current_trial_number": trial.number + 1,
+        "best_trial_with_2_Obj": best_trial_with_2_obj
     }
-    # Ajoutez le meilleur numéro d'essai seulement s'il y a des essais complétés
-    # Définir les poids pour les deux méthodes
-    # Définir les poids pour les deux méthodes
-    weight_pnl_val = 0.7  # Poids pour le PnL sur validation
-    weight_pnl_diff = 0.3  # Poids pour la différence de PnL par trade
-
-    # Vérifier que la somme des poids est égale à 1
-    if abs(weight_pnl_val + weight_pnl_diff - 1.0) > 1e-6:  # Tolérance d'erreur flottante
-        raise ValueError("La somme des poids (weight_pnl_val + weight_pnl_diff) doit être égale à 1.0")
-
-    # Pour la méthode de la moyenne pondérée
-    weights = np.array([weight_pnl_val, weight_pnl_diff])
-    selection_method=optuna_doubleMetrics.USE_DIST_TO_IDEAL
-    # Vérifier s'il y a des essais dans l'étude
-    if study.trials:
-        # Filtrer les essais complétés
-        completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-        if completed_trials:
-            if selection_method == optuna_doubleMetrics.USE_DIST_TO_IDEAL:
-                # --- Méthode de la distance au point idéal ---
-                # Récupérer les trials sur le front de Pareto
-                pareto_trials = study.best_trials
-
-                # Calculer les valeurs minimales et maximales pour la normalisation
-                min_pnl = min(t.values[0] for t in pareto_trials)
-                max_pnl = max(t.values[0] for t in pareto_trials)
-                min_pnl_diff = min(t.values[1] for t in pareto_trials)
-                max_pnl_diff = max(t.values[1] for t in pareto_trials)
-
-                # Gérer les cas où max et min sont égaux pour éviter la division par zéro
-                pnl_range = max_pnl - min_pnl if max_pnl - min_pnl != 0 else 1
-                pnl_diff_range = max_pnl_diff - min_pnl_diff if max_pnl_diff - min_pnl_diff != 0 else 1
-
-                # Définir la fonction distance_to_ideal
-                def distance_to_ideal(t):
-                    # Utiliser les poids définis en dehors de la fonction
-
-                    # Normalisation des objectifs
-                    pnl_val_normalized = (max_pnl - t.values[0]) / pnl_range
-                    pnl_diff_normalized = (t.values[1] - min_pnl_diff) / pnl_diff_range
-
-                    # Calcul de la distance pondérée
-                    return ((weight_pnl_val * pnl_val_normalized) ** 2 + (
-                                weight_pnl_diff * pnl_diff_normalized) ** 2) ** 0.5
-
-                # Sélectionner le trial avec la distance minimale
-                best_trial = min(pareto_trials, key=distance_to_ideal)
-
-            elif selection_method == optuna_doubleMetrics.USE_WEIGHTED_AVG:
-                # --- Méthode de la moyenne pondérée ---
-
-                # Convertir les essais en DataFrame
-                study_df = study.trials_dataframe()
-
-                # Supposons que vous avez retourné -PnL pour maximiser le PnL lors de l'optimisation
-                study_df['PnL_val'] = -study_df['values_0']
-                study_df['pnl_perTrade_diff'] = study_df['values_1']
-
-                # Normaliser les métriques
-                pnl_val_min = study_df['PnL_val'].min()
-                pnl_val_max = study_df['PnL_val'].max()
-                pnl_diff_min = study_df['pnl_perTrade_diff'].min()
-                pnl_diff_max = study_df['pnl_perTrade_diff'].max()
-
-                # Gérer les divisions par zéro
-                pnl_val_range = pnl_val_max - pnl_val_min if pnl_val_max - pnl_val_min != 0 else 1
-                pnl_diff_range = pnl_diff_max - pnl_diff_min if pnl_diff_max - pnl_diff_min != 0 else 1
-
-                study_df['PnL_val_normalized'] = (study_df['PnL_val'] - pnl_val_min) / pnl_val_range
-                study_df['pnl_perTrade_diff_normalized'] = (study_df[
-                                                                'pnl_perTrade_diff'] - pnl_diff_min) / pnl_diff_range
-
-                # Utiliser le tableau de poids défini en dehors
-                # weights = np.array([weight_pnl_val, weight_pnl_diff])
-
-                # Calculer la moyenne pondérée
-                study_df['weighted_average'] = study_df[['PnL_val_normalized', 'pnl_perTrade_diff_normalized']].dot(
-                    weights)
-
-                # Trouver l'indice de l'essai avec la plus petite moyenne pondérée
-                best_trial_index = study_df['weighted_average'].idxmin()
-                best_trial = study.trials[int(best_trial_index)]
-
-            else:
-                raise ValueError(f"Méthode de sélection inconnue : {selection_method}")
-
-            # Mettre à jour bestResult_dict avec les informations du meilleur essai
-            bestResult_dict["best_optunaTrial_number"] = best_trial.number + 1
-            bestResult_dict["best_pnl_val"] = best_trial.values[0]
-            bestResult_dict["best_pnl_perTrade_diff"] = best_trial.values[1]
-            bestResult_dict["best_params"] = best_trial.params
-
-            print(f"\nMeilleur trial selon la méthode '{selection_method}' : Trial numéro {best_trial.number + 1}")
-            print(f"  PnL sur validation : {best_trial.values[0]:.4f}")
-            print(f"  Différence de PnL par trade : {best_trial.values[1]:.4f}")
-            print(f"  Hyperparamètres : {best_trial.params}")
-        else:
-            bestResult_dict["best_optunaTrial_number"] = None
-            bestResult_dict["best_pnl_val"] = None
-            bestResult_dict["best_pnl_perTrade_diff"] = None
-            bestResult_dict["best_params"] = None
-            print("Aucun essai complété n'a été trouvé.")
-    else:
-        bestResult_dict["best_optunaTrial_number"] = None
-        bestResult_dict["best_pnl_val"] = None
-        bestResult_dict["best_pnl_perTrade_diff"] = None
-        bestResult_dict["best_params"] = None
-        print("Aucun essai n'a été trouvé dans l'étude.")
-
-    trial.set_user_attr('last_score', last_score)
-    trial.set_user_attr('score_variance', score_variance)
-    trial.set_user_attr('std_dev_score', std_dev_score)
-
-    # Après la boucle de validation croisée
-    if total_samples_val > 0:
-        tp_percentage = (total_tp_val / total_samples_val) * 100
-    else:
-        tp_percentage = 0
-
-    # Stocker les valeurs dans trial.user_attrs
-    trial.set_user_attr('total_tp_val', total_tp_val)
-    trial.set_user_attr('total_fp_val', total_fp_val)
-    trial.set_user_attr('total_tn_train', total_tn_train)
-    trial.set_user_attr('total_fn_train', total_fn_train)
-    trial.set_user_attr('tp_fp_diff', tp_fp_diff)
-    trial.set_user_attr('cummulative_pnl', cummulative_pnl)
-
-    trial.set_user_attr('tp_percentage', tp_percentage)
 
 
     def convert_to_serializable(obj):
@@ -1839,10 +1422,14 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
         except (TypeError, ValueError):
             return str(obj)  # If it's not serializable, convert it to string
 
-    def save_trial_results(trial_number, result_dict_trialOptuna, params, model, config=None,xgb_param_optuna_range=None,weight_param=None,selected_columns=None, save_dir="optuna_results",
+    def save_trial_results(trial, result_dict_trialOptuna, config=None,
+                           xgb_param_optuna_range=None, weight_param=None, selected_columns=None,
+                           save_dir="optuna_results",
                            result_file="optuna_results.json"):
         global _first_call_save_r_trialesults
-
+        params=trial.params
+        model = trial.user_attrs['model']
+        trial_number=trial.number
         # Suppression du contenu du répertoire seulement au premier appel
         if _first_call_save_r_trialesults:
             if os.path.exists(save_dir) and os.listdir(save_dir):
@@ -1890,7 +1477,7 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
             results_data['xgb_param_optuna_range'] = xgb_param_optuna_range
 
         # Add new trial results
-        results_data[f"trial_{trial_number+1}"] = {
+        results_data[f"trial_{trial_number + 1}"] = {
             "best_result": {k: convert_to_serializable(v) for k, v in result_dict_trialOptuna.items()},
             "params": {k: convert_to_serializable(v) for k, v in params.items()}
         }
@@ -1904,23 +1491,23 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
         os.replace(temp_filename, result_file_path)
 
         # Save the XGBoost model
-        model_file = os.path.join(save_dir, f"model_trial_{trial_number+1}.json")
+        model_file = os.path.join(save_dir, f"model_trial_{trial_number + 1}.json")
         model.save_model(model_file)
 
-        print(f"Trial {trial_number+1} results and model saved successfully.")
 
-    print(config)
+    #print(f"   Config: {config}")
 
     # Appel de la fonction save_trial_results
     save_trial_results(
-        trial.number,
+        trial,
         result_dict_trialOptuna,
-        trial.params,
-        model,config=config,
-        xgb_param_optuna_range=xgb_param_optuna_range,selected_columns=selected_columns,weight_param=weight_param,
+       config=config,
+        xgb_param_optuna_range=xgb_param_optuna_range, selected_columns=selected_columns, weight_param=weight_param,
         save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
         result_file="optuna_results.json"
     )
+    print(f"   {trial.number + 1}/{n_trials_optuna} Optuna results and model saved successfully.")
+
     """"
     if learning_curve_enabled and learning_curve_data_list:
         avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
@@ -1933,33 +1520,387 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
                     filename=f'learning_curve_best_trial_{trial.number}.png'
                 )
     """
-    return score_adjustedStd_val, pnl_perSample_diff,metric_dict,bestResult_dict
+def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
+                     device,
+                     xgb_param_optuna_range, config=None, nb_split_tscv=None,
+                     learning_curve_enabled=None,
+                     optima_score=None, metric_dict=None, weight_param=None, random_state_seed_=None,
+                     early_stopping_rounds=None,
+                     cv_method=cv_config.TIME_SERIE_SPLIT):
+    np.random.seed(random_state_seed_)
+    global global_predt
+
+    global lastBest_score
+    params = {
+        'max_depth': trial.suggest_int('max_depth', xgb_param_optuna_range['max_depth']['min'],
+                                       xgb_param_optuna_range['max_depth']['max']),
+        'learning_rate': trial.suggest_float('learning_rate', xgb_param_optuna_range['learning_rate']['min'],
+                                             xgb_param_optuna_range['learning_rate']['max'],
+                                             log=xgb_param_optuna_range['learning_rate'].get('log', False)),
+        'min_child_weight': trial.suggest_int('min_child_weight', xgb_param_optuna_range['min_child_weight']['min'],
+                                              xgb_param_optuna_range['min_child_weight']['max']),
+        'subsample': trial.suggest_float('subsample', xgb_param_optuna_range['subsample']['min'],
+                                         xgb_param_optuna_range['subsample']['max']),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', xgb_param_optuna_range['colsample_bytree']['min'],
+                                                xgb_param_optuna_range['colsample_bytree']['max']),
+        'colsample_bylevel': trial.suggest_float('colsample_bylevel',
+                                                 xgb_param_optuna_range['colsample_bylevel']['min'],
+                                                 xgb_param_optuna_range['colsample_bylevel']['max']),
+        'colsample_bynode': trial.suggest_float('colsample_bynode', xgb_param_optuna_range['colsample_bynode']['min'],
+                                                xgb_param_optuna_range['colsample_bynode']['max']),
+        'gamma': trial.suggest_float('gamma', xgb_param_optuna_range['gamma']['min'],
+                                     xgb_param_optuna_range['gamma']['max']),
+        'reg_alpha': trial.suggest_float('reg_alpha', xgb_param_optuna_range['reg_alpha']['min'],
+                                         xgb_param_optuna_range['reg_alpha']['max'],
+                                         log=xgb_param_optuna_range['reg_alpha'].get('log', False)),
+        'reg_lambda': trial.suggest_float('reg_lambda', xgb_param_optuna_range['reg_lambda']['min'],
+                                          xgb_param_optuna_range['reg_lambda']['max'],
+                                          log=xgb_param_optuna_range['reg_lambda'].get('log', False)),
+        'random_state': random_state_seed_,
+        'tree_method': 'hist',
+        'device': device,
+    }
+    n_trials_optuna = config.get('n_trials_optuna', 4)
+
+    print(f"\n## Optuna {trial.number + 1}/{n_trials_optuna} ##")
+
+    # Initialiser les compteurs
+    total_tp_val = total_fp_val = total_tn_val = total_fn_val = total_samples_val = 0
+    total_tp_train = total_fp_train = total_tn_train = total_fn_train = total_samples_train = 0
+
+    # Fonction englobante qui intègre metric_dict
+
+    threshold_value = trial.suggest_float('threshold', weight_param['threshold']['min'],
+                                          weight_param['threshold']['max'])
+
+    # Sélection de la fonction de métrique appropriée
+    if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
+
+        # Suggérer les poids pour la métrique combinée
+        profit_ratio_weight = trial.suggest_float('profit_ratio_weight', weight_param['profit_ratio_weight']['min'],
+                                                  weight_param['profit_ratio_weight']['max'])
+
+        win_rate_weight = trial.suggest_float('win_rate_weight', weight_param['win_rate_weight']['min'],
+                                              weight_param['win_rate_weight']['max'])
+
+        selectivity_weight = trial.suggest_float('selectivity_weight', weight_param['selectivity_weight']['min'],
+                                                 weight_param['selectivity_weight']['max'])
+
+        # Normaliser les poids pour qu'ils somment à 1
+        total_weight = profit_ratio_weight + win_rate_weight + selectivity_weight
+        profit_ratio_weight /= total_weight
+        win_rate_weight /= total_weight
+        selectivity_weight /= total_weight
+
+        # Définir la préférence de sélectivité
+
+        metric_dict = {
+            'profit_ratio_weight': profit_ratio_weight,
+            'win_rate_weight': win_rate_weight,
+            'selectivity_weight': selectivity_weight
+        }
+
+    elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+
+        # Définir les paramètres spécifiques pour la métrique basée sur le profit
+        metric_dict = {
+            'profit_per_tp': trial.suggest_float('profit_per_tp', weight_param['profit_per_tp']['min'],
+                                                 weight_param['profit_per_tp']['max']),
+            'loss_per_fp': trial.suggest_float('loss_per_fp', weight_param['loss_per_fp']['min'],
+                                               weight_param['loss_per_fp']['max']),
+            'penalty_per_fn': trial.suggest_float('penalty_per_fn', weight_param['penalty_per_fn']['min'],
+                                                  weight_param['penalty_per_fn']['max'])
+        }
+    metric_dict['threshold'] = threshold_value
+
+    num_boost_round = trial.suggest_int('num_boost_round', xgb_param_optuna_range['num_boost_round']['min'],
+                                        xgb_param_optuna_range['num_boost_round']['max'])
+
+    scores_ens_val_list = []
+    scores_ens_train_list = []
+
+    last_score = None
+    learning_curve_data_list = []
+
+    if nb_split_tscv < 2:
+        print("nb_split_tscv < 2")
+        exit(1)
+    else:
+        # Choisir la méthode de validation croisée en fonction du paramètre cv_method
+        if cv_method == cv_config.TIME_SERIE_SPLIT:
+            cv = TimeSeriesSplit(n_splits=nb_split_tscv)
+            typeCV = 'timeSerie'
+        elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
+
+            x_percent = 50  # La fenêtre d'entraînement est 50 % plus grande que celle de validation
+            n_samples = len(X_train)
+            n_splits = nb_split_tscv  # Nombre de splits (nb_split_tscv)
+            size_per_split = n_samples / (n_splits + 1)  # = 1000 / (5 + 1) = 166.67 (rounded down to 166)
+
+            validation_size = size_per_split / (1 + x_percent / 100)  # = 166 / 1.5 = 110
+            train_window = int((1 + x_percent / 100) * validation_size)  # = int(1.5 * 110) = 165
+
+            cv = CustomTimeSeriesSplitter(n_splits=n_splits, train_window=train_window, val_window=validation_size)
+
+        elif cv_method == cv_config.K_FOLD:
+            cv = KFold(n_splits=nb_split_tscv, shuffle=False)
+            typeCV = 'kfold'
+        elif cv_method == cv_config.K_FOLD_SHUFFLE:
+            cv = KFold(n_splits=nb_split_tscv, shuffle=True, random_state=42)
+            typeCV = 'kfold_shuffle'
+        else:
+            raise ValueError(f"Unknown cv_method: {cv_method}")
+
+        i = 0
+        xgboost_train_time_cum = 0
+        for_loop_start_time = time.time()
+
+        for train_index, val_index in cv.split(X_train):
+            X_train_cv, X_val_cv = X_train.iloc[train_index], X_train.iloc[val_index]
+            y_train_cv, y_val_cv = y_train_label.iloc[train_index], y_train_label.iloc[val_index]
+            # Votre code d'entraînement et de validation ici
+
+            # X_train_cv_full, X_val_cv_full = X_train_full.iloc[train_index], X_train_full.iloc[val_index]
+            i += 1
+
+            # if cv_method ==cv_config.TIME_SERIE_SPLIT :
+            start_time, end_time, val_sessions = get_val_cv_time_range(X_train_full, X_train, X_val_cv)
+            start_time_str = timestamp_to_date_utc_(start_time)
+            end_time_str = timestamp_to_date_utc_(end_time)
+            time_diff = calculate_time_difference(start_time_str, end_time_str)
+            print(
+                f" ->Split ({typeCV} {i}/{nb_split_tscv}) X_val_cv: de {start_time_str} à {end_time_str}. "
+                f"Temps écoulé: {time_diff.months} mois, {time_diff.days} jours, {time_diff.minutes} minutes sur {val_sessions} sessions")
+            print(f'   X_train_cv:{len(X_train_cv)} // X_val_cv:{len(X_val_cv)}')
+
+            # else:
+            #   print(f"---> split {i}/{nb_split_tscv}")
+
+            if len(X_train_cv) == 0 or len(y_train_cv) == 0:
+                print("Warning: Empty training set after filtering")
+                continue
+
+            # Recalculer les poids des échantillons
+            sample_weights = compute_sample_weight('balanced', y=y_train_cv)
+
+            # Créer les DMatrix pour XGBoost
+            dtrain = xgb.DMatrix(X_train_cv, label=y_train_cv, weight=sample_weights)
+            dval = xgb.DMatrix(X_val_cv, label=y_val_cv)
+
+            # Optimiser les poids de l'objectif
+            w_p = trial.suggest_float('w_p', weight_param['w_p']['min'],
+                                      weight_param['w_p']['max'])
+            w_n = trial.suggest_float('w_n', weight_param['w_n']['min'],
+                                      weight_param['w_n']['max'])
+
+            # Mettre à jour la fonction objective avec les poids optimisés
+            if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+                custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased(predtTrain, dtrain, metric_dict)
+
+                obj_function = create_weighted_logistic_obj(w_p, w_n)
+                params['disable_default_eval_metric'] = 1
+            else:
+                params['objective'] = 'binary:logistic'
+                params['eval_metric'] = ['aucpr', 'logloss']
+                obj_function = None
+                custom_metrics = None
+                params['disable_default_eval_metric'] = 0
+
+            try:
+                # Entraîner le modèle
+                evals_result = {}
+                xgboost_start_time = time.time()
+                model = xgb.train(
+                    params,
+                    dtrain,
+                    num_boost_round=num_boost_round,
+                    evals=[(dtrain, 'train'), (dval, 'eval')],
+                    obj=obj_function,
+                    custom_metric=custom_metric,
+                    early_stopping_rounds=early_stopping_rounds,
+                    verbose_eval=False,
+                    evals_result=evals_result,
+                    maximize=True
+                )
+                xgboost_end_time = time.time()
+
+                xgboost_train_time = xgboost_end_time - xgboost_start_time
+                xgboost_train_time_cum += xgboost_train_time
+                eval_scores = evals_result['eval']['custom_metric_ProfitBased']
+
+                # Trouver le meilleur score de validation et son indice
+                val_score_best = max(eval_scores)  # equivanlent de model.best_score
+                val_score_bestIdx = eval_scores.index(val_score_best)
+                best_iteration = val_score_bestIdx + 1  # equivant de model.best_iteration+1
+
+                val_scores = evals_result['eval']['custom_metric_ProfitBased']
+
+                # Faire des prédictions sur l'ensemble de validation à l'itération du meilleur score
+                y_val_pred_proba = model.predict(dval, iteration_range=(0, best_iteration))
+                y_val_pred_proba = cp.asarray(y_val_pred_proba)
+                y_val_pred_proba = sigmoidCustom(y_val_pred_proba)
+                y_val_pred_proba = cp.clip(y_val_pred_proba, 0.0, 1.0)
+                y_val_pred_proba_np = y_val_pred_proba.get()
+                y_val_pred = (y_val_pred_proba_np > metric_dict['threshold']).astype(int)
+
+                # Calculer TP et FP pour l'ensemble de validation
+                tn_val, fp_val, fn_val, tp_val = confusion_matrix(y_val_cv, y_val_pred).ravel()
+                print(
+                    f"   *Val, ensemble des scores val_scores: {val_scores}")
+                print(
+                    f"      -Meilleur résultat {val_score_best} à l'iteration num_boost {best_iteration} / {num_boost_round}")
+                print(f"      -TP (validation): {tp_val}, FP (validation): {fp_val}")
+
+                # Faire des prédictions sur l'ensemble d'entraînement à la même itération
+                y_train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
+                y_train_pred_proba = cp.asarray(y_train_pred_proba)
+                y_train_pred_proba = sigmoidCustom(y_train_pred_proba)
+                y_train_pred_proba = cp.clip(y_train_pred_proba, 0.0, 1.0)
+                y_train_pred_proba_np = y_train_pred_proba.get()
+                y_train_pred = (y_train_pred_proba_np > metric_dict['threshold']).astype(int)
+
+                # Calculer TP et FP pour l'ensemble d'entraînement
+                tn_train, fp_train, fn_train, tp_train = confusion_matrix(y_train_cv, y_train_pred).ravel()
+                train_scores = evals_result['train']['custom_metric_ProfitBased']
+                train_score_at_val_best = train_scores[val_score_bestIdx]
+
+                print(
+                    f"   *Train, ensemble des scores train_scores: {train_scores}")
+                print(
+                    f"      -Meilleuur résultat {train_score_at_val_best} équivalent de l'itération de Val {best_iteration} / {num_boost_round}")
+                print(f"      -TP (entraînement): {tp_train}, FP (entraînement): {fp_train}")
+
+                # Accéder aux scores d'entraînement pour la métrique personnalisée
+                # Obtenir le score d'entraînement à l'indice où le meilleur score de validation a été atteint
+
+                scores_ens_val_list.append(val_score_best)
+                scores_ens_train_list.append(train_score_at_val_best)
+
+                """
+                if learning_curve_enabled:
+                    exit(4)
+
+                    # Calculer les scores pour ce split CV
+                    split_scores = calculate_scores_for_cv_split_learning_curve(
+                        params,
+                        num_boost_round,
+                        X_train_cv, y_train_cv,
+                        X_val_cv, y_val_cv,
+                        weight_dict, optuna_score, metric_dict,custom_metric
+                    )
+
+                    # Ajouter les données pour ce split
+                    learning_curve_data_list.append(split_scores)
+                """
+                total_samples_val += len(y_val_cv)
+
+                total_tp_val += tp_val
+                total_fp_val += fp_val
+                total_tn_val += tn_val
+                total_fn_val += fn_val
+                total_tp_train += tp_train
+                total_fp_train += fp_train
+                total_tn_train += tn_train
+                total_fn_train += fn_train
+            except Exception as e:
+                print(f"Error during training or evaluation: {e}")
+                exit(4)
+
+    for_loop_end_time = time.time()
+    total_for_loop_time = for_loop_end_time - for_loop_start_time
+
+    print(
+        f"\n <Total time spent in for loop: {total_for_loop_time:.2f} sec // Cummulative time spent in xgb.train {xgboost_train_time_cum:.2f} sec>")
+
+    total_samples_val = total_tp_val + total_fp_val+total_tn_val + total_fn_val
+    total_samples_train = total_tp_train + total_fp_train+total_tn_train + total_fn_train
+    total_trades_val = total_tp_val + total_fp_val
+    total_trades_train = total_tp_train + total_fp_train
+
+
+    
+    total_pnl_val = sum(scores_ens_val_list)
+    total_pnl_train = sum(scores_ens_train_list)
+
+    val_pnl_perTrades = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
+    train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_val > 0 else 0
+
+    #val_pnl_perTrades = total_pnl_val / total_samples_val if total_samples_val > 0 else 0
+    #train_pnl_perTrades = total_pnl_train / total_samples_train if total_samples_train > 0 else 0
+
+    # Calculer la différence absolue du PnL par trade
+    pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
+    # Ajustement du score avec l'écart-type
+    if not scores_ens_val_list:
+        return  0, 0  # Retourne les trois valeurs même en cas d'erreur
+
+    weight_split = trial.suggest_float('weight_split',
+                                       weight_param['weight_split']['min'],
+                                       weight_param['weight_split']['max'])
+
+    nb_split_weight = trial.suggest_int('nb_split_weight',
+                                        weight_param['nb_split_weight']['min'],
+                                        weight_param['nb_split_weight']['max'])
+
+    std_penalty_factor = trial.suggest_float('std_penalty_factor',
+                                        weight_param['std_penalty_factor']['min'],
+                                        weight_param['std_penalty_factor']['max'])
+
+
+
+    score_adjustedStd_val,mean_cv_score,std_dev_score = calculate_weighted_adjusted_score_custom(
+    scores_ens_val_list,
+    weight_split=weight_split,
+    nb_split_weight=nb_split_weight,
+    std_penalty_factor=std_penalty_factor)
+
+    if total_samples_val > 0:
+        tp_percentage = (total_tp_val / total_samples_val) * 100
+    else:
+        tp_percentage = 0
+    total_trades = total_tp_val + total_fp_val
+    win_rate = total_tp_val / total_trades_val * 100 if total_trades > 0 else 0
+    tp_fp_diff_val = total_tp_val - total_fp_val
+    cummulative_pnl_val = total_tp_val * weight_param['profit_per_tp']['min'] + total_fp_val * weight_param['loss_per_fp'][
+        'max']
+
+    # Stocker les valeurs dans trial.user_attrs
+    trial.set_user_attr('total_tp_val', total_tp_val)
+    trial.set_user_attr('total_fp_val', total_fp_val)
+    trial.set_user_attr('total_tn_val', total_tn_val)
+    trial.set_user_attr('total_fn_val', total_fn_val)
+    trial.set_user_attr('weight_param', weight_param)
+    trial.set_user_attr('scores_ens_val_list', scores_ens_val_list)
+    trial.set_user_attr('nb_split_tscv', nb_split_tscv)
+    trial.set_user_attr('mean_cv_score', mean_cv_score)
+    trial.set_user_attr('std_dev_score', std_dev_score)
+    trial.set_user_attr('std_penalty_factor', std_penalty_factor)
+    trial.set_user_attr('score_adjustedStd_val', score_adjustedStd_val)
+    trial.set_user_attr('train_pnl_perTrades', train_pnl_perTrades)
+    trial.set_user_attr('val_pnl_perTrades', val_pnl_perTrades)
+    trial.set_user_attr('pnl_perTrade_diff', pnl_perTrade_diff)
+    trial.set_user_attr('total_samples_val', total_samples_val)
+    trial.set_user_attr('n_trials_optuna', n_trials_optuna)
+    trial.set_user_attr('tp_percentage', tp_percentage)
+    trial.set_user_attr('win_rate', win_rate)
+    trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
+    trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
+    trial.set_user_attr('scores_ens_val_list', scores_ens_val_list)
+    trial.set_user_attr('weight_split', weight_split)
+    trial.set_user_attr('nb_split_weight', nb_split_weight)
+
+
+    trial.set_user_attr('model', model)
+
+
+    return score_adjustedStd_val, pnl_perTrade_diff
 
 
 ########################################
 #########   END FUNCTION DEF   #########
 ########################################
-def prepare_xgboost_params(study, device):
-    """Prépare les paramètres XGBoost à partir des résultats de l'étude Optuna."""
-    best_params = study.best_params.copy()
-    num_boost_round = best_params.pop('num_boost_round', None)
-    if num_boost_round is None:
-        raise ValueError("num_boost_round n'est pas présent dans best_params")
-
-    xgb_valid_params = [
-        'max_depth', 'learning_rate', 'min_child_weight', 'subsample',
-        'colsample_bytree', 'colsample_bylevel', 'objective', 'eval_metric',
-        'random_state', 'tree_method', 'device'
-    ]
-    best_params = {key: value for key, value in best_params.items() if key in xgb_valid_params}
-    best_params['objective'] = 'binary:logistic'
-    best_params['tree_method'] = 'hist'
-    best_params['device'] = device
-
-    return best_params, num_boost_round
 
 
-import shap
 
 
 def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False, max_dependence_plots=3,
@@ -2249,6 +2190,8 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
 
 def train_and_evaluate_XGBOOST_model(
         df=None,
+
+
         config=None,  # Add config parameter here
         xgb_param_optuna_range=None,
         selected_columns=None,
@@ -2266,7 +2209,6 @@ def train_and_evaluate_XGBOOST_model(
     learning_curve_enabled = config.get('learning_curve_enabled', False)
     random_state_seed = config.get('random_state_seed', 30)
     early_stopping_rounds = config.get('early_stopping_rounds', 60)
-    std_penalty_factor = config.get('std_penalty_factor_', 0.5)
     preShapImportance = config.get('preShapImportance', 1)
     use_shapeImportance_file = config.get('use_shapeImportance_file', r'C:\Users\aulac\Downloads')
     cv_method = config.get('cv_method', cv_config.K_FOLD_SHUFFLE)
@@ -2282,11 +2224,7 @@ def train_and_evaluate_XGBOOST_model(
         nan_value = np.nan
 
 
-    # Affichage des informations sur les NaN dans chaque colonne
-    print(f"Analyses des Nan:)")
-    for column in df.columns:
-        nan_count = df[column].isna().sum()
-        print(f"Colonne: {column}, Nombre de NaN: {nan_count}")
+
 
     # Division en ensembles d'entraînement et de test
     print("Division des données en ensembles d'entraînement et de test...")
@@ -2373,53 +2311,188 @@ def train_and_evaluate_XGBOOST_model(
     sample_weights_test = compute_sample_weight('balanced', y=y_test_label)
     dtest = xgb.DMatrix(X_test, label=y_test_label, weight=sample_weights_test)
 
-
-
-    def objective_wrapper(trial, study, metric_dict,bestResult_dict):
-        score_adjustedStd_val,pnl_perSample_diff, updated_metric_dict, updated_bestResult_dict = objective_optuna(
-            trial=trial, study=study,X_train=X_train, y_train_label=y_train_label,X_train_full=X_train_full,
+    def objective_wrapper(trial, study, metric_dict):
+        score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(
+            trial=trial, study=study, X_train=X_train, y_train_label=y_train_label, X_train_full=X_train_full,
             device=device,
-            xgb_param_optuna_range=xgb_param_optuna_range,config=config, nb_split_tscv=nb_split_tscv,
+            xgb_param_optuna_range=xgb_param_optuna_range, config=config, nb_split_tscv=nb_split_tscv,
             learning_curve_enabled=learning_curve_enabled,
-            optima_score=optuna_options_method, metric_dict=metric_dict,bestResult_dict=bestResult_dict, weight_param=weight_param, random_state_seed_=random_state_seed,
-            early_stopping_rounds=early_stopping_rounds,std_penalty_factor_=std_penalty_factor,cv_method=cv_method
+            optima_score=optuna_options_method, metric_dict=metric_dict, weight_param=weight_param,
+            random_state_seed_=random_state_seed,
+            early_stopping_rounds=early_stopping_rounds, cv_method=cv_method
         )
-        if score_adjustedStd_val != float('-inf'):
-            metric_dict.update(updated_metric_dict)
-            bestResult_dict.update(updated_bestResult_dict)
-        return score_adjustedStd_val,pnl_perSample_diff
+        return score_adjustedStd_val, pnl_perTrade_diff
 
-    bestResult_dict = {}
+
     metric_dict = {}
 
-    study_xgb  = optuna.create_study(
-        directions=["maximize", "minimize"],  # Comme vous retournez le PnL négatif pour le maximiser
-        sampler=optuna.samplers.NSGAIISampler(seed=42)
+    weightPareto_pnl_val=config.get('weightPareto_pnl_val', 0.7)
+    weightPareto_pnl_diff=config.get('weightPareto_pnl_diff', 0.3)
+
+    # Vérifier que la somme des poids est égale à 1
+    if abs(weightPareto_pnl_val + weightPareto_pnl_diff - 1.0) > 1e-6:  # Tolérance d'erreur flottante
+        raise ValueError("La somme des poids (weightPareto_pnl_val + weightPareto_pnl_diff) doit être égale à 1.0")
+
+    def callback_optuna(study, trial):
+        current_trial = trial.number  # Commence à 0 pour le premier essai
+
+        color_code=Fore.CYAN
+        print(f"\n {color_code}Optuna Callback essai {current_trial + 1}:{Style.RESET_ALL}")
+
+        bestResult_dict = {}
+        # Obtenir le numéro de l'essai actuel
+
+        # Pour la méthode de la moyenne pondérée
+        weights = np.array([weightPareto_pnl_val, weightPareto_pnl_diff])
+        selection_method = optuna_doubleMetrics.USE_DIST_TO_IDEAL
+        # Vérifier si l'essai est complet
+        if trial.state == optuna.trial.TrialState.COMPLETE:
+            # Obtenir la liste des essais complétés
+            completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            if completed_trials:
+                if selection_method == optuna_doubleMetrics.USE_DIST_TO_IDEAL:
+                    # --- Méthode de la distance au point idéal ---
+                    # Récupérer les essais sur le front de Pareto
+                    pareto_trials = study.best_trials
+
+                    # Calculer les valeurs minimales et maximales pour la normalisation
+                    min_pnl = min(t.values[0] for t in pareto_trials)
+                    max_pnl = max(t.values[0] for t in pareto_trials)
+                    min_pnl_diff = min(t.values[1] for t in pareto_trials)
+                    max_pnl_diff = max(t.values[1] for t in pareto_trials)
+
+                    # Gérer les divisions par zéro
+                    pnl_range = max_pnl - min_pnl if max_pnl - min_pnl != 0 else 1
+                    pnl_diff_range = max_pnl_diff - min_pnl_diff if max_pnl_diff - min_pnl_diff != 0 else 1
+
+                    # Définir la fonction distance_to_ideal
+                    def distance_to_ideal(t):
+                        # Normalisation des objectifs
+                        pnl_val_normalized = (max_pnl - t.values[0]) / pnl_range
+                        pnl_diff_normalized = (t.values[1] - min_pnl_diff) / pnl_diff_range
+
+                        # Calcul de la distance pondérée
+                        return ((weightPareto_pnl_val * pnl_val_normalized) ** 2 + (
+                                    weightPareto_pnl_diff * pnl_diff_normalized) ** 2) ** 0.5
+
+                    # Sélectionner le trial avec la distance minimale
+                    best_trial = min(pareto_trials, key=distance_to_ideal)
+
+                elif selection_method == optuna_doubleMetrics.USE_WEIGHTED_AVG:
+                    # --- Méthode de la moyenne pondérée ---
+                    # Convertir les essais en DataFrame
+                    study_df = study.trials_dataframe()
+
+                    # Ajuster pour la maximisation si nécessaire
+                    study_df['PnL_val'] = -study_df['values_0']
+                    study_df['pnl_perTrade_diff'] = study_df['values_1']
+
+                    # Normaliser les métriques
+                    pnl_val_min = study_df['PnL_val'].min()
+                    pnl_val_max = study_df['PnL_val'].max()
+                    pnl_diff_min = study_df['pnl_perTrade_diff'].min()
+                    pnl_diff_max = study_df['pnl_perTrade_diff'].max()
+
+                    # Gérer les divisions par zéro
+                    pnl_val_range = pnl_val_max - pnl_val_min if pnl_val_max - pnl_val_min != 0 else 1
+                    pnl_diff_range = pnl_diff_max - pnl_diff_min if pnl_diff_max - pnl_diff_min != 0 else 1
+
+                    study_df['PnL_val_normalized'] = (study_df['PnL_val'] - pnl_val_min) / pnl_val_range
+                    study_df['pnl_perTrade_diff_normalized'] = (study_df[
+                                                                    'pnl_perTrade_diff'] - pnl_diff_min) / pnl_diff_range
+
+                    # Calculer la moyenne pondérée
+                    study_df['weighted_average'] = study_df[['PnL_val_normalized', 'pnl_perTrade_diff_normalized']].dot(
+                        weights)
+
+                    # Trouver l'indice de l'essai avec la plus petite moyenne pondérée
+                    best_trial_index = study_df['weighted_average'].idxmin()
+                    best_trial = study.trials[int(best_trial_index)]
+                else:
+                    raise ValueError(f"Méthode de sélection inconnue : {selection_method}")
+
+                # Mettre à jour bestResult_dict
+                bestResult_dict["best_optunaTrial_number"] = best_trial.number + 1
+                bestResult_dict["best_pnl_val"] = best_trial.values[0]
+                bestResult_dict["best_pnl_perTrade_diff"] = best_trial.values[1]
+                bestResult_dict["best_params"] = best_trial.params
+
+                total_tp_val = best_trial.user_attrs['total_tp_val']
+                total_fp_val = best_trial.user_attrs['total_fp_val']
+                total_tn_val = best_trial.user_attrs['total_tn_val']
+                total_fn_val = best_trial.user_attrs['total_fn_val']
+                cummulative_pnl_val = best_trial.user_attrs['cummulative_pnl_val']
+                tp_fp_diff_val = best_trial.user_attrs['tp_fp_diff_val']
+                tp_percentage = best_trial.user_attrs['tp_percentage']
+                win_rate = best_trial.user_attrs['win_rate']
+                scores_ens_val_list = best_trial.user_attrs['scores_ens_val_list']
+                weight_split= best_trial.user_attrs['weight_split']
+                nb_split_weight= best_trial.user_attrs['nb_split_weight']
+
+                report_trial_optuna(trial,best_trial.number + 1)
+
+                color_code=Fore.BLUE
+                print(f"   {color_code}##Meilleur essai jusqu'à present: {best_trial.number + 1}, Méthode: '{selection_method}##{Style.RESET_ALL}")
+                print(f"    =>Objective 1: score_adjustedStd_val -> {best_trial.values[0]:.4f} avec weight_split: {weight_split} nb_split_weight {nb_split_weight}")
+                print(f"    =>Objective 2: score différence par trade (train - val) -> {best_trial.values[1]:.4f}")
+                print(f"    Principal métrique pour le meilleur essai:")
+                print(f"     -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
+                      f"TN (True Negative) : {total_tn_val}, FN (False Negative) : {total_fn_val},")
+                print(f"     -Pourcentage Winrate           : {win_rate:.2f}%")
+                print(f"     -Pourcentage de TP             : {tp_percentage:.2f}%")
+                print(f"     -Différence (TP - FP)          : {tp_fp_diff_val}")
+                print(f"     -PNL                           : {cummulative_pnl_val}, original: {(scores_ens_val_list)}")
+                print(
+                    f"     -Nombre de trades              : {total_tp_val + total_fp_val + total_tn_val + total_fn_val}")
+                print(f"    =>Hyperparamètres du meilleur score trouvé à date: {best_trial.params}")
+            else:
+                bestResult_dict["best_optunaTrial_number"] = None
+                bestResult_dict["best_pnl_val"] = None
+                bestResult_dict["best_pnl_perTrade_diff"] = None
+                bestResult_dict["best_params"] = None
+                print("Aucun essai complété n'a été trouvé.")
+
+
+
+        study_xgb.set_user_attr('bestResult_dict', bestResult_dict)
+
+
+    ##end callback_optuna
+
+    # Créer l'étude
+    study_xgb = optuna.create_study(
+        directions=["maximize", "minimize"],
+        sampler=optuna.samplers.NSGAIISampler(seed=42),
+        pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)  # Vous pouvez ajuster n_warmup_steps selon vos besoins
+
     )
 
-    study_xgb .optimize(
-        lambda trial: objective_wrapper(trial, study_xgb,metric_dict,bestResult_dict ),
+    # Lancer l'optimisation
+    study_xgb.optimize(
+        lambda trial: objective_wrapper(trial, study_xgb, metric_dict),
         n_trials=n_trials_optimization,
-        callbacks=[lambda study, trial: print_callback(study, trial, X_train, y_train_label,config=config)],
-        gc_after_trial=True
-
+        callbacks=[callback_optuna],
     )
     end_time = time.time()
     execution_time = end_time - start_time
 
+    bestResult_dict = study_xgb.user_attrs['bestResult_dict']
+
     # Après l'optimisation
-
     best_params = bestResult_dict["best_params"]
-
-    print(f"Optimisation terminée avec distance euclidienne. Meilleur essai Optuna {bestResult_dict['best_optunaTrial_number']}")
-    print(f"Meilleurs hyperparamètres trouvés: ", best_params)
-    print("Meilleur score best_pnl_val: ", bestResult_dict["best_pnl_val"])
-    print("Meilleur score best_pnl_perTrade_diff: ", bestResult_dict["best_pnl_perTrade_diff"]
-)
-
+    print(f"\nTemps d'exécution total : {execution_time:.2f} secondes")
+    print("#################################")
+    print("#################################")
+    print(f"## Optimisation Optuna terminée avec distance euclidienne. Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
+    print(f"## Meilleurs hyperparamètres trouvés: ", best_params)
     optimal_threshold = best_params['threshold']
-    print(f"Seuil utilisé : {optimal_threshold:.4f}")
-    print(f"Temps d'exécution total : {execution_time:.2f} secondes")
+    print(f"## Seuil utilisé : {optimal_threshold:.4f}")
+    print("## Meilleur score Objective 1 (best_pnl_val): ", bestResult_dict["best_pnl_val"])
+    print("## Meilleur score Objective 2 (best_pnl_perTrade_diff): ", bestResult_dict["best_pnl_perTrade_diff"])
+    print("#################################")
+    print("#################################\n")
+
+
     print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
 
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
@@ -2432,8 +2505,14 @@ def train_and_evaluate_XGBOOST_model(
 
     # Configurer custom_metric et obj_function si nécessaire
     if optuna_options_method == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+        metric_dict = {
+            'profit_per_tp': best_params['profit_per_tp'],
+            'loss_per_fp': best_params['loss_per_fp'],
+            'penalty_per_fn': best_params['penalty_per_fn'],
+            'threshold':optimal_threshold
+        }
         custom_metric = lambda preds, dtrain: custom_metric_ProfitBased(preds, dtrain, metric_dict)
-        obj_function = create_weighted_logistic_obj(best_params['w_p'], 1)
+        obj_function = create_weighted_logistic_obj(best_params['w_p'],best_params['w_n'])
         best_params['disable_default_eval_metric'] = 1
     else:
         custom_metric = None
@@ -2442,7 +2521,7 @@ def train_and_evaluate_XGBOOST_model(
         best_params['eval_metric'] = ['aucpr', 'logloss']
     print(f"Seuil optimal: {best_params['threshold']}")
     # Supprimer les paramètres non utilisés par XGBoost mais uniquement dans l'optimisation
-    parameters_to_removetoAvoidXgboostError = ['loss_per_fp', 'penalty_per_fn', 'profit_per_tp', 'threshold', 'w_p']
+    parameters_to_removetoAvoidXgboostError = ['loss_per_fp', 'penalty_per_fn', 'profit_per_tp', 'threshold', 'w_p','w_n']
     for param in parameters_to_removetoAvoidXgboostError:
         best_params.pop(param, None)  # None est la valeur par défaut si la clé n'existe pas
 
@@ -2739,7 +2818,7 @@ def train_and_evaluate_XGBOOST_model(
         total_trades_val = tp + fp
         win_rate = tp / total_trades_val * 100 if total_trades_val > 0 else 0
         cum_tp = cum_tp+tp
-        cum_fp = cum_tp+fp
+        cum_fp = cum_fp+fp
         print(
             f"Probabilité {ranges[i]:.2f} - {ranges[i + 1]:.2f} : {hist[i]} prédictions, TP: {tp}, FP: {fp}, Winrate: {win_rate:.2f}%")
 
@@ -3147,7 +3226,7 @@ if __name__ == "__main__":
 
 
  FILE_NAME_ = "Step5_4_0_4TP_1SL_080919_091024_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
- FILE_NAME_ = "Step5_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
+ #FILE_NAME_ = "Step5_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
  DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge"
  FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
 
@@ -3207,26 +3286,32 @@ if __name__ == "__main__":
      'target_directory':target_directory,
      'optuna_options_method': optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED,
      'device_': 'cuda',
-     'n_trials_optuna': 3,
-     'nb_split_tscv_': 3,
+     'n_trials_optuna': 700,
+     'nb_split_tscv_': 6,
      'nanvalue_to_newval_': np.nan,
      'learning_curve_enabled': False,
      'random_state_seed': 30,
-     'early_stopping_rounds': 80,
-     'std_penalty_factor_': 1,
+     'early_stopping_rounds': 100,
      'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
      'preShapImportance': 1,
-     'cv_method': cv_config.K_FOLD
+     'cv_method': cv_config.K_FOLD,
+    'weightPareto_pnl_val':0.7,
+    'weightPareto_pnl_diff':0.3
  }
 
  # Définir les paramètres supplémentaires
 
  weight_param = {
-     'threshold': {'min': 0.55, 'max': 0.72},  # total_trades_val = tp + fp
+     'threshold': {'min': 0.52, 'max': 0.72},  # total_trades_val = tp + fp
      'w_p': {'min': 1, 'max': 2.2},  # poid pour la class 1 dans objective
+     'w_n': {'min': 1, 'max': 1},  # poid pour la class 0 dans objective
      'profit_per_tp': {'min': 1, 'max': 1}, #fixe, dépend des profits par trade
      'loss_per_fp': {'min': -1.1, 'max': -1.1}, #fixe, dépend des pertes par trade
-    'penalty_per_fn': {'min': -0.000, 'max': -0.000}
+    'penalty_per_fn': {'min': -0.000, 'max': -0.000},
+     'weight_split': {'min': 0.65, 'max': 0.65},
+     'nb_split_weight': {'min': 2, 'max': 2}, # si 0, pas d'utilisation de weight_split
+     'std_penalty_factor': {'min': 1, 'max': 1.1}  # si 0, pas d'utilisation de weight_split
+
  }
 
  # 'profit_ratio_weight': {'min': 0.4, 'max': 0.4},  # profit_ratio = (tp - fp) / total_trades_val
@@ -3234,17 +3319,17 @@ if __name__ == "__main__":
  # 'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades_val / total_samples
 
  xgb_param_optuna_range = {
-     'num_boost_round': {'min': 200, 'max': 700},
-     'max_depth': {'min': 6, 'max': 11},
-     'learning_rate': {'min': 0.01, 'max': 0.2, 'log': True},
-     'min_child_weight': {'min': 3, 'max': 10},
+     'num_boost_round': {'min': 700, 'max': 1700},
+     'max_depth': {'min': 8, 'max': 15},
+     'learning_rate': {'min': 0.001, 'max': 0.07, 'log': True},
+     'min_child_weight': {'min': 1, 'max': 5},
      'subsample': {'min': 0.7, 'max': 0.9},
-     'colsample_bytree': {'min': 0.55, 'max': 0.8},
+     'colsample_bytree': {'min': 0.55, 'max': 0.85},
      'colsample_bylevel': {'min': 0.6, 'max': 0.85},
-     'colsample_bynode': {'min': 0.5, 'max': 1.0},
-     'gamma': {'min': 0, 'max': 5},
-     'reg_alpha': {'min': 1, 'max': 15.0, 'log': True},
-     'reg_lambda': {'min': 2, 'max': 20.0, 'log': True},
+     'colsample_bynode': {'min': 0.5, 'max': 0.85},
+     'gamma': {'min': 0, 'max': 10},
+     'reg_alpha': {'min': 0.1, 'max': 9, 'log': True},
+     'reg_lambda': {'min': 0.1, 'max': 9, 'log': True},
  }
 
  print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
@@ -3278,7 +3363,25 @@ if __name__ == "__main__":
          'meanVolx',
          'total_count_abv',
          'total_count_blw',
-         """
+
+     'bearish_big_trade_imbalance_extrem',  # nan 90.87
+     'bearish_big_trade_ratio2_extrem',  # nan zero  90.88
+     'bearish_big_trade_ratio_extrem',  # nan zero 90.87
+     #'extrem_ask_bid_imbalance_bearish_extrem',  # nan  51.64
+     #'extrem_asc_dsc_comparison_bearish_extrem',  # nan 54.89
+     # 'bearish_extrem_abs_ratio_extrem',  # nan 54.27
+     # 'extrem_asc_dsc_comparison_bearish_extrem',  # nan  54.89
+     # 'bearish_extrem_pressure_ratio_extrem',  # nan 51.62
+     # 'bearish_continuation_vs_reversal_extrem',  # nan 50.69
+     'bearish_repeat_ticks_ratio_extrem',  # nan 50.69
+     'bearish_bidBigStand_abs_ratio_abv',  # NaN+Zeros(%)  84.53  (bcp de 0)=> new
+     'bearish_askBigStand_abs_ratio_abv', # NaN+Zeros(%)  84.72  (bcp de 0)=> new
+    'bullish_askBigStand_abs_ratio_blw', #NaN+Zeros(%) 92.46 abev bcp de zerp
+     'bullish_bidBigStand_abs_ratio_blw',
+     'bearish_bigStand_abs_diff_abv', #NaN+Zeros(%) 92.46 abev bcp de zerp
+     'staked00_high',
+     'staked00_low',
+     """
          'perct_VA6P',
          'ratio_delta_vol_VA6P',
          'diffPriceClose_VA6PPoc',
@@ -3305,9 +3408,38 @@ if __name__ == "__main__":
          'poc_diff_ratio_11P_16P'
         """
      ]
- selected_columns = [col for col in df.columns if col not in excluded_columns and '_special' not in col]
-
+ selected_columns = [col for col in df.columns if col not in excluded_columns
+                     and '_special' not in col
+                     and '_6Tick' not in col
+                     and 'BigHigh' not in col
+                     and 'bigHigh' not in col
+                     and 'big' not in col]
  print(f"Nb de features après exlusion: {len(selected_columns)}\n")
+
+ # Affichage des informations sur les NaN et zéros dans chaque colonne
+ print(f"\nAnalyses détaillée des features selectionnées:")
+ print("=" * 100)
+ print(f"{'Feature':<50} {'NaN Count':>10} {'NaN%':>8} {'Zeros%':>8} {'NaN+Zeros%':>12}")
+ print("-" * 100)
+
+ for column in selected_columns:
+     nan_count = df[column].isna().sum()
+     nan_percentage = (nan_count / len(df)) * 100
+
+     try:
+         zeros_count = (df[column] == 0).sum()
+         zeros_percentage = (zeros_count / len(df)) * 100
+     except:
+         zeros_percentage = 0
+
+     total_percentage = nan_percentage + zeros_percentage
+
+     print(f"{column:<50} {nan_count:>10} {nan_percentage:>8.2f} {zeros_percentage:>8.2f} {total_percentage:>12.2f}")
+
+ print("\nRésumé:")
+ print(f"Nombre total de features sélectionnées: {len(selected_columns)}")
+ print(f"Nombre total d'échantillons: {len(df)}")
+
 
  results = train_and_evaluate_XGBOOST_model(
      df=df,
