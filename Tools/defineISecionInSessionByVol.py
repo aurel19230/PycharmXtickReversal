@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 CONFIG = {
     'NUM_GROUPS': 9,
     'MIN_RANGE': 30,  # en minutes
-    'FILE_PATH': r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL\merge\\MergedAllFile_030619_300824_merged_extractOnlyFullSession.csv",
+    'FILE_PATH': r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\\4_0_6TP_1SL\merge\Step3_4_0_6TP_1SL_080919_141024_extractOnlyFullSession.csv",
     'TRADING_START_TIME': "22:00",
     'FIGURE_SIZE': (20, 10),
     'GRID_ALPHA': 0.7,

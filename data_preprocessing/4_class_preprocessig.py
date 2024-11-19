@@ -8,11 +8,11 @@ import os
 
 # Charger les données
 # Nom du fichier
-file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnlyFullSession.csv"
-file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession.csv"
+file_name = "Step3_4_0_6TP_1SL_080919_141024_extractOnlyFullSession.csv"
+#file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_4TP_1SL\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_6TP_1SL\\merge"
 
 # Combiner le chemin du répertoire avec le nom du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -22,6 +22,7 @@ user_choice = input("Entrez 'Entrée' pour prendre en compte les shorts et longs
 
 # Charger les données
 df = load_data(file_path)
+
 df['timeStampOpening'] = pd.to_numeric(df['timeStampOpening'], errors='coerce')
 
 # Convertir la colonne timeStamp en datetime

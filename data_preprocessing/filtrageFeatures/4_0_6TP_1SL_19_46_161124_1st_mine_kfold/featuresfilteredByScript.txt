@@ -1,0 +1,13 @@
+selected_columnsByFiltering = [
+    'perctBB',
+    'diffPriceClosePoc_0_2',
+    'bull_imbalance_high_0',
+    'deltaTimestampOpeningSection5min',
+    'bearish_repeatAskBid_ratio',
+    'bear_imbalance_high_1',
+    'finished_auction_high',
+    'diffVolCandle_0_1Ratio',
+    'diffVolDelta_0_1Ratio',
+    'bull_imbalance_high_1',
+    'diffHighPrice_0_1',
+]

@@ -17,7 +17,29 @@ import seaborn as sns
 import matplotlib.ticker as ticker
 from PIL import Image
 import sys
+import csv
+import logging
+from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.feature_selection import RFECV
 
+import math
+from functools import partial
+from sklearn.model_selection import KFold, TimeSeriesSplit
+
+
+# Définition des sections personnalisées
+CUSTOM_SECTIONS = [
+    {"name": "preAsian", "start": 0, "end": 240, "index": 0},
+    {"name": "asianAndPreEurop", "start": 240, "end": 540, "index": 1},
+    {"name": "europMorning", "start": 540, "end": 810, "index": 2},
+    {"name": "europLunch", "start": 810, "end": 870, "index": 3},
+    {"name": "preUS", "start": 870, "end": 930, "index": 4},
+    {"name": "usMoning", "start": 930, "end": 1065, "index": 5},
+    {"name": "usAfternoon", "start": 1065, "end": 1200, "index": 6},
+    {"name": "usEvening", "start": 1200, "end": 1290, "index": 7},
+    {"name": "usEnd", "start": 1290, "end": 1335, "index": 8},
+    {"name": "closing", "start": 1335, "end": 1380, "index": 9},
+]
 
 class optuna_options(Enum):
     USE_OPTIMA_ROCAUC = 1
@@ -31,10 +53,6 @@ class optuna_options(Enum):
     USE_OPTIMA_CUSTOM_METRIC_PROFITBASED = 10
     USE_OPTIMA_CUSTOM_METRIC_TP_FP = 11
 
-
-class optuna_doubleMetrics(Enum):
-    USE_DIST_TO_IDEAL = 0
-    USE_WEIGHTED_AVG = 1
 
 
 
@@ -260,6 +278,8 @@ def load_data(file_path: str) -> pd.DataFrame:
     print_notification(f"Début du chargement des données de: \n "
                        f"{file_path}")
     df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
+    print(f"Colonnes chargées: {df.columns.tolist()}")
+    print(f"Premières lignes:\n{df.head()}")
     print_notification("Données chargées avec succès")
     return df
 from sklearn.calibration import calibration_curve
@@ -406,7 +426,7 @@ def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='un
 from datetime import datetime, timedelta
 
 
-def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_threshold, user_input=None, index_size=5,results_directory=None):
+def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_deltaTime_name, optimal_threshold, user_input=None, index_size=5,results_directory=None):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(35, 20))
 
     def index_to_time(index):
@@ -441,8 +461,8 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
         ax.bar(x + width / 2, rates['TP_rate'], width, label='Taux de Vrais Positifs', color='green', alpha=0.7)
 
         ax.set_ylabel('Taux', fontsize=14)
-        ax.set_xlabel(feature_name, fontsize=14)
-        ax.set_title(f'Taux de FP et TP par {feature_name} (bins={n_bins_feature})', fontsize=14)
+        ax.set_xlabel(feature_deltaTime_name, fontsize=14)
+        ax.set_title(f'Taux de FP et TP par {feature_deltaTime_name} (bins={n_bins_feature})', fontsize=14)
         ax.set_xticks(x)
 
         # Conversion des index en format heure
@@ -452,7 +472,7 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
         ax.legend(fontsize=12)
         ax.grid(True)
 
-    feature_values = X_test[feature_name].values
+    feature_values = X_test[feature_deltaTime_name].values
 
     # Graphique avec 25 bins
     plot_rates(ax1, 25)
@@ -473,7 +493,7 @@ def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_name, optimal_thresho
     # Fermer la figure après l'affichage
     plt.close()
 
-    feature_values = X_test[feature_name].values
+    feature_values = X_test[feature_deltaTime_name].values
 
     # Graphique avec 25 bins
     plot_rates(ax1, 25)
@@ -556,6 +576,36 @@ def calculate_and_display_sessions(df):
     return total_sessions,date_startSection,date_endSection
 
 
+
+def sigmoidCustom(x):
+# Supposons que x est déjà un tableau CuPy
+  return 1 / (1 + cp.exp(-x))
+def sigmoidCustom_cpu(x):
+    """Custom sigmoid function."""
+    return 1 / (1 + np.exp(-x))
+def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
+    tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
+    fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
+    tn = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 0))
+    fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
+    return tn.item(), fp.item(), fn.item(), tp.item()
+
+def weighted_logistic_gradient_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le gradient pour la perte logistique pondérée (CPU)."""
+    y = dtrain.get_label()
+    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
+    weights = np.where(y == 1, w_p, w_n)
+    grad = weights * (predt - y)
+    return grad
+
+def weighted_logistic_hessian_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
+    """Calcule le hessien pour la perte logistique pondérée (CPU)."""
+    y = dtrain.get_label()
+    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
+    weights = np.where(y == 1, w_p, w_n)
+    hess = weights * predt * (1.0 - predt)
+    return hess
+
 def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weight, std_penalty_factor=1.0):
     """
     Calcule le score ajusté pondéré avec gestion spéciale du cas nb_split_weight=0
@@ -588,36 +638,9 @@ def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weig
 
     return weighted_mean - std_penalty_factor * weighted_std,weighted_mean,weighted_std
 
-def sigmoidCustom_simple(x):
-    """Custom sigmoid function."""
-    return 1 / (1 + cp.exp(-x))
 
-def sigmoidCustom(x):
-    """Numerically stable sigmoid function."""
-    x = cp.asarray(x)
-    return cp.where(
-        x >= 0,
-        1 / (1 + cp.exp(-x)),
-        cp.exp(x) / (1 + cp.exp(x))
-    )
 
-    # Fonctions CPU (inchangées)
 
-def weighted_logistic_gradient_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
-    """Calcule le gradient pour la perte logistique pondérée (CPU)."""
-    y = dtrain.get_label()
-    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
-    weights = np.where(y == 1, w_p, w_n)
-    grad = weights * (predt - y)
-    return grad
-
-def weighted_logistic_hessian_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
-    """Calcule le hessien pour la perte logistique pondérée (CPU)."""
-    y = dtrain.get_label()
-    predt = 1.0 / (1.0 + np.exp(-predt))  # Fonction sigmoïde
-    weights = np.where(y == 1, w_p, w_n)
-    hess = weights * predt * (1.0 - predt)
-    return hess
 
 # Fonctions GPU mises à jour
 
@@ -631,7 +654,7 @@ def weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n):
     weights = cp.where(y_gpu == 1, w_p, w_n)
     grad *= weights
 
-    return cp.asnumpy(grad)
+    return grad  # Retourner directement le tableau CuPy
 
 def weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n):
     predt_gpu = cp.asarray(predt)
@@ -643,15 +666,13 @@ def weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n):
     weights = cp.where(y_gpu == 1, w_p, w_n)
     hess *= weights
 
-    return cp.asnumpy(hess)
-    return cp.asnumpy(hess)
+    return hess  # Retourner directement le tableau CuPy
 
-def create_weighted_logistic_obj(w_p: float, w_n: float):
+def create_weighted_logistic_obj_gpu(w_p: float, w_n: float):
     def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
         grad = weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n)
         hess = weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n)
         return grad, hess
-
     return weighted_logistic_obj
 
 # Fonction pour vérifier la disponibilité du GPU
@@ -679,19 +700,7 @@ def calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict):
 
     return float(normalized_profit)  # Assurez-vous que c'est un float Python
     """
-    return float(total_profit), tp, fp
-
-"""
-def optuna_profitBased_score(y_true, y_pred_proba, metric_dict):
-
-    threshold = metric_dict.get('threshold', 0.7)
-    print(metric_dict)
-    print(f"--- optuna_profitBased_score avec seuil {threshold} ---")
-    y_pred_threshold = (y_pred_proba > threshold).astype(int)
-    return calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict)
-"""
-
-import logging
+    return float(total_profit), int(tp), int(fp)
 
 def custom_metric_Profit(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[
     str, float]:
@@ -743,24 +752,117 @@ def custom_metric_Profit(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, no
         final_profit = total_profit
         metric_name = 'custom_metric_ProfitBased'
 
-    return metric_name, final_profit
+    return metric_name, float(final_profit)
 
 # Création des deux fonctions spécifiques à partir de la fonction commune
-def custom_metric_ProfitBased(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
+def custom_metric_ProfitBased_gpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
     return custom_metric_Profit(predt, dtrain, metric_dict, normalize=False)
 
-"""
-def create_custom_metric_wrapper(metric_dict):
-    def custom_metric_wrapper(predt, dtrain):
-        return custom_metric_ProfitBased(predt, dtrain, metric_dict)
 
-    return custom_metric_wrapper
-"""
+
+def calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred_threshold)
+    tp = np.sum((y_true == 1) & (y_pred == 1))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    fn = np.sum((y_true == 1) & (y_pred == 0))
+    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
+    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
+    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
+    return float(total_profit), int(tp), int(fp)
+
+def custom_metric_Profit_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[str, float]:
+    y_true = dtrain.get_label()
+    CHECK_THRESHOLD = 0.55555555
+    threshold = metric_dict.get('threshold', CHECK_THRESHOLD)
+
+    predt = np.array(predt)
+    predt = sigmoidCustom_cpu(predt)
+    predt = np.clip(predt, 0.0, 1.0)
+
+    mean_pred = np.mean(predt)
+    std_pred = np.std(predt)
+    min_val = np.min(predt)
+    max_val = np.max(predt)
+
+    if min_val < 0 or max_val > 1:
+        logging.warning(f"Les prédictions sont hors de l'intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
+        exit(12)
+
+    y_pred_threshold = (predt > threshold).astype(int)
+
+    total_profit, tp, fp = calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict)
+
+    if normalize:
+        total_trades_val = tp + fp
+        if total_trades_val > 0:
+            final_profit = total_profit / total_trades_val
+        else:
+            final_profit = 0.0
+        metric_name = 'custom_metric_ProfitBased_norm'
+    else:
+        final_profit = total_profit
+        metric_name = 'custom_metric_ProfitBased'
+
+    return metric_name, float(final_profit)
+
+def custom_metric_ProfitBased_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
+    return custom_metric_Profit_cpu(predt, dtrain, metric_dict, normalize=False)
+
+def create_weighted_logistic_obj_cpu(w_p: float, w_n: float):
+    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        grad = weighted_logistic_gradient_cpu(predt, dtrain, w_p, w_n)
+        hess = weighted_logistic_hessian_cpu(predt, dtrain, w_p, w_n)
+        return grad, hess
+    return weighted_logistic_obj
+
+import traceback
+
+
+def create_custom_importance_plot(shap_df, dataset_name, save_dir):
+    """
+    Crée un graphique personnalisé basé sur les valeurs SHAP du CSV
+    avec code couleur rouge/bleu selon le signe
+    """
+    plt.figure(figsize=(12, 8))
+
+    # Prendre les 20 premières features pour la lisibilité
+    top_n = 20
+    df_plot = shap_df.head(top_n).iloc[::-1]  # Inverse l'ordre pour l'affichage de bas en haut
+
+    # Création des barres
+    y_pos = np.arange(len(df_plot))
+    bars = plt.barh(y_pos, df_plot['importance'].abs(),
+                    color=[('red' if x < 0 else 'blue') for x in df_plot['importance']])
+
+    # Personnalisation du graphique
+    plt.yticks(y_pos, df_plot['feature'])
+    plt.xlabel('mean(|SHAP value|) (average impact on model output magnitude)')
+    plt.title(f'SHAP Feature Importance - {dataset_name}')
+
+    # Ajout des valeurs sur les barres
+    for i, bar in enumerate(bars):
+        width = bar.get_width()
+        value = df_plot['importance'].iloc[i]
+        plt.text(width, bar.get_y() + bar.get_height() / 2,
+                 f'{value:.2e}',
+                 ha='left', va='center', fontsize=8)
+
+    # Ajustements de la mise en page
+    plt.tight_layout()
+
+    # Sauvegarde
+    plt.savefig(os.path.join(save_dir, f'shap_importance_{dataset_name}.png'),
+                dpi=300, bbox_inches='tight')
+    plt.close()
+
 
 def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False, max_dependence_plots=3,
                         save_dir='./shap_dependencies_results/'):
     """
     Analyse les valeurs SHAP pour un ensemble de données et génère des visualisations.
+    Version corrigée avec calcul approprié des importances SHAP et tri par valeur absolue.
 
     Parameters:
     -----------
@@ -769,8 +871,7 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
     X : pandas.DataFrame
         Les features de l'ensemble de données.
     y : pandas.Series
-        Les labels de l'ensemble de données (non utilisés directement dans la fonction,
-        mais inclus pour une cohérence future).
+        Les labels de l'ensemble de données.
     dataset_name : str
         Le nom de l'ensemble de données, utilisé pour nommer les fichiers de sortie.
     create_dependence_plots : bool, optional (default=False)
@@ -782,75 +883,123 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
 
     Returns:
     --------
-    numpy.ndarray
-        Les valeurs SHAP calculées pour l'ensemble de données.
-
-    Side Effects:
-    -------------
-    - Sauvegarde un graphique résumé de l'importance des features SHAP.
-    - Sauvegarde un fichier CSV contenant les valeurs SHAP et les importances cumulées.
-    - Si create_dependence_plots est True, sauvegarde des graphiques de dépendance
-      pour les features les plus importantes.
+    Tuple[numpy.ndarray, shap.Explanation]
+        Les valeurs SHAP calculées et l'objet d'explication SHAP.
     """
-    # Créer le répertoire de sauvegarde s'il n'existe pas
+    # Création du répertoire de sauvegarde
     os.makedirs(save_dir, exist_ok=True)
 
-    # Créer un explainer SHAP
-    explainer = shap.TreeExplainer(model)
+    print(f"\n=== Analyse SHAP pour {dataset_name} ===")
+    print(f"Dimensions des données: {X.shape}")
 
-    # Calculer les valeurs SHAP
-    shap_values = explainer.shap_values(X)
+    # Création de l'explainer SHAP
+    try:
+        explainer = shap.TreeExplainer(model)
+        print("TreeExplainer créé avec succès")
+    except Exception as e:
+        print(f"Erreur lors de la création de l'explainer: {str(e)}")
+        traceback.print_exc()
+        raise
 
-    # Pour les problèmes de classification binaire, prendre le deuxième élément si nécessaire
+    # Calcul des valeurs SHAP
+    try:
+        shap_values_explanation = explainer(X)
+        shap_values = explainer.shap_values(X)
+        print("Valeurs SHAP calculées avec succès")
+
+        # Affichage des dimensions des valeurs SHAP
+        if isinstance(shap_values, list):
+            print(f"Type de sortie: Liste de {len(shap_values)} tableaux")
+            for i, sv in enumerate(shap_values):
+                print(f"Shape des valeurs SHAP classe {i}: {sv.shape}")
+        else:
+            print(f"Shape des valeurs SHAP: {shap_values.shape}")
+
+    except Exception as e:
+        print(f"Erreur lors du calcul des valeurs SHAP: {str(e)}")
+        traceback.print_exc()
+        raise
+
+    # Gestion des problèmes de classification binaire
     if isinstance(shap_values, list) and len(shap_values) == 2:
+        print("Détection de classification binaire - utilisation des valeurs de la classe positive")
         shap_values = shap_values[1]
 
-    # Créer le résumé des valeurs SHAP
-    shap.summary_plot(shap_values, X, plot_type="bar", show=False)
-    plt.title(f"SHAP Feature Importance - {dataset_name}")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, f'shap_importance_{dataset_name}.png'))
-    plt.close()
+    # Création du graphique résumé
+    try:
+        plt.figure(figsize=(12, 8))
+        shap.summary_plot(shap_values, X, plot_type="bar", show=False)
+        plt.title(f"SHAP Feature Importance - {dataset_name}")
+        plt.tight_layout()
+        summary_path = os.path.join(save_dir, f'shap_importance_{dataset_name}.png')
+        plt.savefig(summary_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Graphique résumé SHAP créé et sauvegardé dans: {summary_path}")
+    except Exception as e:
+        print(f"Erreur lors de la création du graphique résumé: {str(e)}")
+        traceback.print_exc()
 
-    # Créer un DataFrame avec les valeurs SHAP
-    feature_importance = np.abs(shap_values).mean(0)
-    shap_df = pd.DataFrame({
-        'feature': X.columns,
-        'importance': feature_importance
-    })
+    # Calcul des importances SHAP
+    try:
+        # Calcul des valeurs SHAP moyennes pour chaque feature
+        feature_importance_signed = np.mean(shap_values, axis=0)
 
-    # Trier le DataFrame par importance décroissante
-    shap_df = shap_df.sort_values('importance', ascending=False)
+        # Création du DataFrame avec les importances
+        shap_df = pd.DataFrame({
+            'feature': X.columns,
+            'importance': feature_importance_signed,
+        })
 
-    # Calculer la somme cumulée de l'importance
-    total_importance = shap_df['importance'].sum()
-    shap_df['cumulative_importance'] = shap_df['importance'].cumsum() / total_importance
+        # Ajout de la colonne des valeurs absolues pour le tri
+        shap_df['abs_importance'] = np.abs(shap_df['importance'])
 
-    # S'assurer que la dernière valeur est exactement 1.0
-    shap_df.loc[shap_df.index[-1], 'cumulative_importance'] = 1.0
+        # Tri par importance absolue décroissante
+        shap_df = shap_df.sort_values('abs_importance', ascending=False)
 
-    # Ajouter une colonne pour le pourcentage
-    shap_df['importance_percentage'] = shap_df['importance'] / total_importance * 100
-    shap_df['cumulative_importance_percentage'] = shap_df['cumulative_importance'] * 100
+        # Calcul des métriques cumulatives
+        total_abs_importance = shap_df['abs_importance'].sum()
+        shap_df['importance_percentage'] = (shap_df['abs_importance'] / total_abs_importance) * 100
+        shap_df['cumulative_importance_percentage'] = shap_df['importance_percentage'].cumsum()
 
-    # Sauvegarder le DataFrame dans un fichier CSV
-    csv_path = os.path.join(save_dir, f'shap_values_{dataset_name}.csv')
-    shap_df.to_csv(csv_path, index=False, sep=';')
-    print(f"Les valeurs SHAP ont été sauvegardées dans : {csv_path}")
+        # Créer le graphique personnalisé au lieu du summary_plot
+        create_custom_importance_plot(shap_df, dataset_name, save_dir)
 
+        # Nettoyage avant sauvegarde
+        shap_df = shap_df.drop('abs_importance', axis=1)
+
+        # Sauvegarde du CSV
+        csv_path = os.path.join(save_dir, f'shap_values_{dataset_name}.csv')
+        shap_df.to_csv(csv_path, index=False, sep=';')
+        print(f"\nValeurs SHAP sauvegardées dans: {csv_path}")
+
+    except Exception as e:
+        print(f"Erreur lors du calcul des importances: {str(e)}")
+        traceback.print_exc()
+        raise
+
+    # Création des graphiques de dépendance si demandé
     if create_dependence_plots:
+        print("\nCréation des graphiques de dépendance...")
         most_important_features = shap_df['feature'].head(max_dependence_plots)
 
         for feature in most_important_features:
-            shap.dependence_plot(feature, shap_values, X, show=False)
-            plt.title(f"SHAP Dependence Plot - {feature} - {dataset_name}")
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_dir, f'shap_dependence_{feature}_{dataset_name}.png'))
-            plt.close()
+            try:
+                plt.figure(figsize=(10, 6))
+                shap.dependence_plot(feature, shap_values, X, show=False)
+                plt.title(f"SHAP Dependence Plot - {feature} - {dataset_name}")
+                plt.tight_layout()
+                dep_plot_path = os.path.join(save_dir, f'shap_dependence_{feature}_{dataset_name}.png')
+                plt.savefig(dep_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                print(f"Graphique de dépendance créé pour {feature}")
+            except Exception as e:
+                print(f"Erreur lors de la création du graphique de dépendance pour {feature}: {str(e)}")
+                traceback.print_exc()
 
-    print(f"Les graphiques SHAP ont été sauvegardés dans le répertoire : {save_dir}")
+    print(f"\nAnalyse SHAP terminée - Tous les résultats sont sauvegardés dans: {save_dir}")
 
-    return shap_values
+    return shap_values, shap_values_explanation
+
 
 
 
@@ -902,7 +1051,8 @@ def compare_feature_importance(shap_values_train, shap_values_test, X_train, X_t
     top_features = importance_df.head(top_n)
 
     plt.figure(figsize=(12, 8))
-    sns.barplot(x='Difference', y='Feature', data=top_features, palette='coolwarm')
+    #sns.barplot(x='Difference', y='Feature', data=top_features, palette='coolwarm')
+    sns.barplot(x='Difference', y='Feature', hue='Feature', data=top_features, palette='coolwarm', legend=False)
     plt.title(f"Top {top_n} Differences in Feature Importance (Train - Test)")
     plt.xlabel("Difference in Importance")
     plt.tight_layout()
@@ -918,8 +1068,10 @@ def compare_feature_importance(shap_values_train, shap_values_test, X_train, X_t
 
 
 
-def compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_test, top_n=10,
-                               save_dir='./shap_dependencies_results/'):
+def compare_shap_distributions(shap_values_train=None, shap_explanation_train=None, shap_values_test=None, shap_explanation_test=None,
+                             X_train=None, y_train_label=None, X_test=None, y_test_label=None,
+                             top_n=10,
+                             save_dir='./shap_dependencies_results/'):
     """
     Compare les distributions des valeurs SHAP entre l'ensemble d'entraînement et de test.
 
@@ -927,12 +1079,20 @@ def compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_t
     -----------
     shap_values_train : numpy.ndarray
         Valeurs SHAP pour l'ensemble d'entraînement
+    shap_explanation_train : shap.Explanation
+        Objet Explanation SHAP pour l'ensemble d'entraînement (pour les scatter plots)
     shap_values_test : numpy.ndarray
         Valeurs SHAP pour l'ensemble de test
+    shap_explanation_test : shap.Explanation
+        Objet Explanation SHAP pour l'ensemble de test (non utilisé actuellement)
     X_train : pandas.DataFrame
         DataFrame contenant les features d'entraînement
+    y_train_label : numpy.ndarray
+        Labels de l'ensemble d'entraînement
     X_test : pandas.DataFrame
         DataFrame contenant les features de test
+    y_test_label : numpy.ndarray
+        Labels de l'ensemble de test
     top_n : int, optional
         Nombre de top features à comparer (par défaut 10)
     save_dir : str, optional
@@ -941,6 +1101,7 @@ def compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_t
     Returns:
     --------
     None
+        Sauvegarde les graphiques dans le répertoire spécifié
     """
     # Créer le répertoire de sauvegarde s'il n'existe pas
     os.makedirs(save_dir, exist_ok=True)
@@ -949,26 +1110,158 @@ def compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_t
     if not all(X_train.columns == X_test.columns):
         raise ValueError("Les colonnes de X_train et X_test doivent être identiques.")
 
+    # Calculer l'importance des features basée sur les valeurs SHAP absolues moyennes
     feature_importance = np.abs(shap_values_train).mean(0)
     top_features = X_train.columns[np.argsort(feature_importance)[-top_n:]]
 
+    # Pour chaque feature importante
     for feature in top_features:
-        plt.figure(figsize=(10, 6))
-        sns.kdeplot(shap_values_train[:, X_train.columns.get_loc(feature)], label='Train', fill=True)
-        sns.kdeplot(shap_values_test[:, X_test.columns.get_loc(feature)], label='Test', fill=True)
-        plt.title(f"SHAP Value Distribution - {feature}")
-        plt.xlabel("SHAP Value")
-        plt.ylabel("Density")
-        plt.legend()
+        # Créer une figure avec 3 sous-graphiques côte à côte
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
+
+        # 1. Distribution Train/Test
+        sns.kdeplot(data=shap_values_train[:, X_train.columns.get_loc(feature)],
+                    label='Train', fill=True, ax=ax1)
+        sns.kdeplot(data=shap_values_test[:, X_test.columns.get_loc(feature)],
+                    label='Test', fill=True, ax=ax1)
+        ax1.set_title("Train/Test Distribution")
+        ax1.set_xlabel("SHAP Value")
+        ax1.set_ylabel("Density")
+        ax1.legend()
+
+        # 2. Distribution par classe
+        feature_idx = X_train.columns.get_loc(feature)
+
+        # Stats pour debug
+        print(f"\nAnalyse pour {feature}:")
+        print(
+            f"Moyenne des valeurs SHAP pour classe 0: {shap_values_train[y_train_label == 0, feature_idx].mean():.6f}")
+        print(
+            f"Moyenne des valeurs SHAP pour classe 1: {shap_values_train[y_train_label == 1, feature_idx].mean():.6f}")
+        print(f"Nombre d'exemples classe 0: {sum(y_train_label == 0)}")
+        print(f"Nombre d'exemples classe 1: {sum(y_train_label == 1)}")
+
+        # Histogramme à la place du KDE
+        ax2.hist(shap_values_train[y_train_label == 0, feature_idx],
+                 bins=50, alpha=0.5, color='blue', label='Classe 0', density=True)
+        ax2.hist(shap_values_train[y_train_label == 1, feature_idx],
+                 bins=50, alpha=0.5, color='red', label='Classe 1', density=True)
+
+        ax2.set_title("Distribution par Classe")
+        ax2.set_xlabel("SHAP Value")
+        ax2.set_ylabel("Density")
+        ax2.legend()
+
+        # 3. Scatter plot SHAP
+        feature_idx = list(X_train.columns).index(feature)
+        shap.plots.scatter(shap_explanation_train[:, feature_idx], ax=ax3, show=False)
+        ax3.set_title("SHAP Scatter Plot")
+
+        # Ajout du titre global
+        plt.suptitle(f"SHAP Analysis - {feature}", fontsize=16, y=1.05)
         plt.tight_layout()
 
-        # Sauvegarder le graphique dans le répertoire spécifié
-        plt.savefig(os.path.join(save_dir, f'shap_distribution_{feature}.png'))
+        # Sauvegarde de la figure
+        plt.savefig(os.path.join(save_dir, f'shap_combined_analysis_{feature}.png'),
+                    bbox_inches='tight', dpi=300)
         plt.close()
 
     print(f"Les graphiques de distribution SHAP ont été sauvegardés dans {save_dir}")
 
+    # Afficher un récapitulatif des features analysées
+    print("Features analysées : " + " | ".join(f"{i}. {feature}" for i, feature in enumerate(top_features, 1)))
+    # Dans la fonction compare_shap_distributions, avant la boucle des features
+    # Calculer la somme des SHAP values pour chaque exemple
+    shap_sums_train = shap_values_train.sum(axis=1)  # somme sur toutes les features
 
+    print("\nAnalyse des sommes SHAP:")
+    print(f"Moyenne des sommes SHAP pour classe 0: {shap_sums_train[y_train_label == 0].mean():.6f}")
+    print(f"Moyenne des sommes SHAP pour classe 1: {shap_sums_train[y_train_label == 1].mean():.6f}")
+
+    # Créer un nouveau plot pour la distribution des sommes
+    plt.figure(figsize=(10, 6))
+    plt.hist(shap_sums_train[y_train_label == 0], bins=50, alpha=0.5, color='blue', label='Classe 0', density=True)
+    plt.hist(shap_sums_train[y_train_label == 1], bins=50, alpha=0.5, color='red', label='Classe 1', density=True)
+    plt.title("Distribution des sommes des valeurs SHAP par classe")
+    plt.xlabel("Somme des valeurs SHAP")
+    plt.ylabel("Densité")
+    plt.legend()
+    plt.savefig(os.path.join(save_dir, 'shap_sums_distribution_perClass.png'))
+
+    # Créer une figure pour les top 20 features
+    plt.figure(figsize=(16, 14))
+    shap.summary_plot(shap_values_train, X_train, show=False, max_display=20)
+    plt.title("Top 20 Features", fontsize=14, pad=20)
+    plt.savefig(os.path.join(save_dir, 'shap_summary_plot_split1_top20.png'),
+                bbox_inches='tight',
+                dpi=300,
+                pad_inches=1)
+    plt.close()
+
+    # Créer une figure séparée pour les features 21-40
+    plt.figure(figsize=(16, 14))
+    feature_importance = np.abs(shap_values_train).mean(0)
+    sorted_idx = np.argsort(feature_importance)
+    X_train_subset = X_train.iloc[:, sorted_idx[-40:-20]]
+    shap_values_subset = shap_values_train[:, sorted_idx[-40:-20]]
+    shap.summary_plot(shap_values_subset, X_train_subset, show=False, max_display=20)
+    plt.title("Features 21-40", fontsize=14, pad=20)
+    plt.savefig(os.path.join(save_dir, 'shap_summary_plot_split2_21_40.png'),
+                bbox_inches='tight',
+                dpi=300,
+                pad_inches=1)
+    plt.close()
+
+    from PIL import Image
+
+    def merge_images_horizontal(image1_path, image2_path, output_path, spacing=20):
+        """
+        Fusionner deux images horizontalement (côte à côte)
+
+        Args:
+            image1_path (str): Chemin vers la première image
+            image2_path (str): Chemin vers la deuxième image
+            output_path (str): Chemin pour sauvegarder l'image fusionnée
+            spacing (int): Espace en pixels entre les images
+        """
+        # Ouvrir les images
+        img1 = Image.open(image1_path)
+        img2 = Image.open(image2_path)
+
+        # Obtenir les dimensions
+        width1, height1 = img1.size
+        width2, height2 = img2.size
+
+        # Utiliser la hauteur maximale
+        max_height = max(height1, height2)
+
+        # Redimensionner les images si nécessaire pour avoir la même hauteur
+        if height1 != max_height:
+            new_width1 = int(width1 * (max_height / height1))
+            img1 = img1.resize((new_width1, max_height), Image.Resampling.LANCZOS)
+            width1 = new_width1
+
+        if height2 != max_height:
+            new_width2 = int(width2 * (max_height / height2))
+            img2 = img2.resize((new_width2, max_height), Image.Resampling.LANCZOS)
+            width2 = new_width2
+
+        # Créer une nouvelle image avec la largeur combinée (+ l'espacement)
+        merged_image = Image.new('RGB', (width1 + spacing + width2, max_height), 'white')
+
+        # Coller les images
+        merged_image.paste(img1, (0, 0))
+        merged_image.paste(img2, (width1 + spacing, 0))
+
+        # Sauvegarder l'image fusionnée
+        merged_image.save(output_path, 'PNG', dpi=(300, 300))
+
+    # Utilisation
+    image1_path = os.path.join(save_dir, 'shap_summary_plot_split1_top20.png')
+    image2_path = os.path.join(save_dir, 'shap_summary_plot_split2_21_40.png')
+    output_path = os.path.join(save_dir, 'shap_summary_plot_combined.png')
+
+    merge_images_horizontal(image1_path, image2_path, output_path)
 def compare_mean_shap_values(shap_values_train, shap_values_test, X_train, save_dir='./shap_dependencies_results/'):
     """
     Compare les valeurs SHAP moyennes entre l'ensemble d'entraînement et de test.
@@ -1030,18 +1323,22 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
     """Fonction principale pour l'analyse SHAP."""
 
     # Analyse SHAP sur l'ensemble d'entraînement et de test
-    shap_values_train = analyze_shap_values(final_model, X_train, y_train_label, "Training_Set",
+    shap_values_train,shap_explanation_train = analyze_shap_values(final_model, X_train, y_train_label, "Training_Set",
                                             create_dependence_plots=True,
                                             max_dependence_plots=3, save_dir=save_dir)
-    shap_values_test = analyze_shap_values(final_model, X_test, y_test_label, "Test_Set", create_dependence_plots=True,
+    shap_values_test,shap_explanation_test = analyze_shap_values(final_model, X_test, y_test_label, "Test_Set", create_dependence_plots=True,
                                            max_dependence_plots=3, save_dir=save_dir)
 
     # Comparaison des importances de features et des distributions SHAP
     importance_df = compare_feature_importance(shap_values_train, shap_values_test, X_train, X_test, save_dir=save_dir)
-    compare_shap_distributions(shap_values_train, shap_values_test, X_train, X_test, top_n=10, save_dir=save_dir)
+    compare_shap_distributions(
+        shap_values_train=shap_values_train,shap_explanation_train=shap_explanation_train, shap_values_test=shap_values_test,shap_explanation_test=shap_explanation_test,
+        X_train=X_train,y_train_label=y_train_label, X_test=X_test,y_test_label=y_test_label ,
+        top_n=40, save_dir=save_dir)
 
     # Comparaison des valeurs SHAP moyennes
-    shap_comparison = compare_mean_shap_values(shap_values_train, shap_values_test, X_train, save_dir=save_dir)
+    shap_comparison = compare_mean_shap_values(
+        shap_values_train=shap_values_train, shap_values_test=shap_values_test, X_train=X_train, save_dir=save_dir)
 
     return importance_df, shap_comparison, shap_values_train, shap_values_test
 
@@ -1400,13 +1697,13 @@ def analyze_errors(X_test, y_test_label, y_pred_threshold, y_pred_proba, feature
     print("Nombre d'erreurs:", len(errors))
 
     # Créer un subplot pour chaque feature (si top_features est fourni)
-    if top_features and len(top_features) >= 10:
-        fig, axes = plt.subplots(5, 2, figsize=(20, 25))
-        fig.suptitle('Distribution des 10 features les plus importantes par type d\'erreur', fontsize=16)
+    if top_features and len(top_features) >= 40:
+        fig, axes = plt.subplots(5, 8, figsize=(60, 30))  # Grille 5x8
+        fig.suptitle('Distribution des 40 features les plus importantes par type d\'erreur', fontsize=16)
 
-        for i, feature in enumerate(top_features[:10]):
-            row = i // 2
-            col = i % 2
+        for i, feature in enumerate(top_features[:40]):
+            row = i // 8  # Division entière par 8 (nombre de colonnes)
+            col = i % 8  # Modulo 8 pour obtenir la colonne
             sns.boxplot(x='error_type', y=feature, data=results_df, ax=axes[row, col])
             axes[row, col].set_title(f'{i + 1}. {feature}')
             axes[row, col].set_xlabel('')
@@ -1416,8 +1713,9 @@ def analyze_errors(X_test, y_test_label, y_pred_threshold, y_pred_proba, feature
                 axes[row, col].set_ylabel('')
 
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, 'top_10_features_distribution_by_error.png'), dpi=300, bbox_inches='tight')
-        print("Graphique combiné sauvegardé sous 'top_10_features_distribution_by_error.png'")
+        plt.savefig(os.path.join(save_dir, 'top_40_features_distribution_by_error.png'),
+                    dpi=300, bbox_inches='tight')
+        print("Graphique combiné sauvegardé sous 'top_40_features_distribution_by_error.png'")
         plt.close()
 
     # Sauvegarder les DataFrames spécifiques demandés
@@ -1550,7 +1848,7 @@ def compare_errors_vs_correct(confident_errors, correct_predictions, X_test, imp
 # You already have CuPy imported as cp, so we will use it.
 def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min=0.90, prob_max=1.00,
                                  top_n_features=None,
-                                 output_dir=r'C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_02102024\proba_predictions_analysis'):
+                                 output_dir=None):
     # Créer le répertoire de sortie s'il n'existe pas
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1591,7 +1889,7 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
         shap_values_selected = shap_values_all[prob_mask]
 
     # 2. Examiner ces échantillons
-    with open(os.path.join(output_dir, 'selected_samples_details.txt'), 'w') as f:
+    with open(os.path.join(output_dir, 'selected_samples_details.txt'), 'w',encoding='utf-8') as f:
         f.write(f"Échantillons avec probabilités entre {prob_min:.2f} et {prob_max:.2f}:\n")
         for i, (idx, row) in enumerate(selected_samples.iterrows()):
             f.write(f"\nÉchantillon {i + 1} (Probabilité: {selected_proba[i]:.4f}):\n")
@@ -1645,31 +1943,26 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
     print(f"Analyse terminée. Les résultats ont été sauvegardés dans le dossier '{output_dir}'.")
 
 
-def init_dataSet(df=None,nanvalue_to_newval=None,selected_columns=None):
+def init_dataSet(df=None, nanvalue_to_newval=None, selected_columns=None):
     # Gestion des valeurs NaN
     if nanvalue_to_newval is not None:
-        # Remplacer les NaN par la valeur spécifiée
         df = df.fillna(nanvalue_to_newval)
         nan_value = nanvalue_to_newval
     else:
-        # Garder les NaN tels quels
         nan_value = np.nan
 
-    # Division en ensembles d'entraînement et de test
     print("Division des données en ensembles d'entraînement et de test...")
     try:
         train_df, nb_SessionTrain, test_df, nb_SessionTest = split_sessions(df, test_size=0.2, min_train_sessions=2,
                                                                             min_test_sessions=2)
-
     except ValueError as e:
         print(f"Erreur lors de la division des sessions : {e}")
         sys.exit(1)
 
-    # num_sessions_XTest = calculate_and_display_sessions(test_df)
-
     print(f"Nombre de session dans x_train  {nb_SessionTrain}  ")
     print(f"Nombre de session dans x_test  {nb_SessionTest}  ")
 
+    # Garder une copie de train_df avec son index original
     X_train_full = train_df.copy()
 
     # Préparation des features et de la cible
@@ -1677,27 +1970,111 @@ def init_dataSet(df=None,nanvalue_to_newval=None,selected_columns=None):
     y_train_label = train_df['class_binaire']
     X_test = test_df[selected_columns]
     y_test_label = test_df['class_binaire']
-    # Suppression des échantillons avec la classe 99
+
+    # Suppression des échantillons avec la classe 99 en préservant l'index
     mask_train = y_train_label != 99
-    X_train, y_train_label = X_train[mask_train], y_train_label[mask_train]
+    X_train = X_train[mask_train]
+    y_train_label = y_train_label[mask_train]
+
     mask_test = y_test_label != 99
-    X_test, y_test_label = X_test[mask_test], y_test_label[mask_test]
-    return X_train_full, X_train, y_train_label, X_test, y_test_label, nb_SessionTrain, nb_SessionTest, nan_value
+    X_test = X_test[mask_test]
+    y_test_label = y_test_label[mask_test]
+
+    # Sauvegarder les copies avec catégories avant suppression
+    X_train_withCat = X_train.copy()
+    y_train_label_withCat = y_train_label.copy()
+    X_test_withCat = X_test.copy()
+    y_test_label_withCat = y_test_label.copy()
+
+    # Colonnes à supprimer
+    columns_to_drop = ['class_binaire', 'date', 'trade_category', 'SessionStartEnd']
+
+    # Supprimer les colonnes en préservant l'index
+    X_train = X_train.drop(columns=columns_to_drop, errors='ignore')
+    X_test = X_test.drop(columns=columns_to_drop, errors='ignore')
+
+    return (X_train_full, X_train, y_train_label, X_test, y_test_label,
+            nb_SessionTrain, nb_SessionTest, nan_value)
+
+
+import csv
+import os
+
+
+def save_correlations_to_csv(high_corr_pairs, results_directory, threshold=0.7):
+    # Création du nom du fichier
+    csv_filename = f"correlations_above_{threshold}.csv"
+    csv_path = os.path.join(results_directory, csv_filename)
+
+    # Initialisation
+    seen_pairs = set()
+    csv_data = []
+
+    # Traitement des paires de corrélation
+    for feature_i, feature_j, corr_value in high_corr_pairs:
+        # Créer une paire triée pour éviter les doublons
+        pair = tuple(sorted([feature_i, feature_j]))
+
+        # Si la paire n'est pas encore vue et ce n'est pas une auto-corrélation
+        if pair not in seen_pairs and feature_i != feature_j:
+            # Affichage dans la console
+            print(f"{feature_i} <-> {feature_j}: {corr_value:.4f}")
+
+            # Préparation données CSV
+            interaction = f"{feature_i} <-> {feature_j}"
+            formatted_value = f"{corr_value:.4f}"
+            csv_data.append([interaction, formatted_value])
+
+            seen_pairs.add(pair)
+
+    # Sauvegarde du CSV
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=';')
+        writer.writerow(['Correlation_Pair', 'Correlation_Value'])
+        writer.writerows(csv_data)
+
+    print(f"\nFichier CSV sauvegardé: {csv_path}")
+    return csv_path
+
+
+# Utilisation
+"""
+# Si high_corr_pairs est une liste de tuples (feature_i, feature_j, corr_value)
+save_correlations_to_csv(
+    high_corr_pairs=high_corr_pairs,
+    results_directory=results_directory,
+    threshold=0.7  # Seuil de corrélation utilisé
+)
+"""
 
 def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=None,y_test_label=None,dtrain=None,dtest=None,
-                             nb_SessionTest=None,nan_value=None,feature_names=None,best_params=None,config=None,
+                             nb_SessionTest=None,nan_value=None,feature_names=None,best_params=None,config=None,weight_param=None,
                              user_input=None):
     results_directory = config.get('results_directory', None)
 
     if results_directory == None:
         exit(25)
 
+    # Réduire X_train à seulement les colonnes sélectionnées
+    X_train = X_train[feature_names]
+    X_test = X_test[feature_names]
+
+
+    # Créer les DMatrix pour l'entraînement
+    sample_weights_train = compute_sample_weight('balanced', y=y_train_label)
+    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights_train)
+
+    # Créer les DMatrix pour le test
+    sample_weights_test = compute_sample_weight('balanced', y=y_test_label)
+    dtest = xgb.DMatrix(X_test, label=y_test_label, weight=sample_weights_test)
+
     # best_params = study_xgb.best_params.copy()
     best_params['tree_method'] = 'hist'
     best_params['device'] = config.get('device_', 'cuda')
     early_stopping_rounds = config.get('early_stopping_rounds', 13)
-    if(early_stopping_rounds==23):
+    if(early_stopping_rounds==13):
         print("early_stopping_rounds n'a pas été position dans config")
+        exit(1)
 
 
     optimal_threshold = best_params['threshold']
@@ -1721,8 +2098,13 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
             'penalty_per_fn': best_params['penalty_per_fn'],
             'threshold': optimal_threshold
         }
-        custom_metric = lambda preds, dtrain: custom_metric_ProfitBased(preds, dtrain, metric_dict)
-        obj_function = create_weighted_logistic_obj(best_params['w_p'], best_params['w_n'])
+        if config['device_'] == 'cuda':
+            custom_metric = lambda preds, dtrain: custom_metric_ProfitBased_gpu(preds, dtrain, metric_dict)
+            obj_function = create_weighted_logistic_obj_gpu(best_params['w_p'], best_params['w_n'])
+        else:
+            custom_metric = lambda preds, dtrain: custom_metric_ProfitBased_cpu(preds, dtrain, metric_dict)
+            obj_function = create_weighted_logistic_obj_cpu(best_params['w_p'], best_params['w_n'])
+
         best_params['disable_default_eval_metric'] = 1
     else:
         custom_metric = None
@@ -1796,7 +2178,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
                 horizontalalignment='center', verticalalignment='top', fontsize=12, color='orange')
 
     def plot_custom_metric_evolution_with_trade_info(model, evals_result, metric_name='custom_metric_ProfitBased',
-                                                     n_train_trades=None, n_test_trades=None, results_directory=None):
+                                                     n_train_trades=None, n_test_trades=None, results_directory=None,user_input=None):
         if not evals_result or 'train' not in evals_result or 'test' not in evals_result:
             print("Résultats d'évaluation incomplets ou non disponibles.")
             return
@@ -1907,11 +2289,13 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
                     dpi=300,
                     bbox_inches='tight')
         plt.tight_layout()
-        plt.show()
+        if user_input.lower() == 'd':
+            plt.show()
+        plt.close()
 
     # Utilisation de la fonction
     plot_custom_metric_evolution_with_trade_info(final_model, evals_result, n_train_trades=len(X_train),
-                                                 n_test_trades=len(X_test), results_directory=results_directory)
+                                                 n_test_trades=len(X_test), results_directory=results_directory,user_input=user_input)
 
 
 
@@ -1978,8 +2362,16 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
                                   num_sessions=nb_SessionTest, results_directory=results_directory)
 
     # Pour le graphique des taux FP/TP par feature
-    plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection5index',
-                     optimal_threshold, user_input=user_input, index_size=5, results_directory=results_directory)
+
+    import warnings
+
+    if 'deltaTimestampOpeningSection1min' in X_test.columns:
+        plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection1min',
+                         optimal_threshold, user_input=user_input, index_size=5, results_directory=results_directory)
+    else:
+        warnings.warn(
+            "La colonne 'deltaTimestampOpeningSection1min' n'est pas présente dans le jeu de test - Graphique non généré",
+            UserWarning)
 
     print("\nDistribution des probabilités prédites sur XTest:")
     print(f"seuil: {optimal_threshold}")
@@ -2034,7 +2426,12 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     total_trades_cum = cum_tp + cum_fp
     Winrate = cum_tp / total_trades_cum * 100 if total_trades_cum > 0 else 0
-    print(f"Test final: X_test avec model final optimisé : TP: {cum_tp}, FP: {cum_fp}, Winrate: {Winrate:.2f}%")
+    print(f"=> Test final: X_test avec model final optimisé : TP: {cum_tp}, FP: {cum_fp}, Winrate: {Winrate:.2f}%")
+    # On prend la valeur 'max' pour chaque paramètre
+    profit_value = float(weight_param['profit_per_tp']['max'])
+    loss_value = float(weight_param['loss_per_fp']['max'])
+
+    print(f"  - PNL : {cum_tp * profit_value + cum_fp * loss_value:.2f}")
 
     print("Statistiques de y_pred_proba:")
     print(f"Nombre d'éléments: {len(y_test_predProba)}")
@@ -2212,11 +2609,11 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
         plt.savefig(os.path.join(save_dir, f'shap_importance_binary_trade{suffix}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
-        # Visualisation des 30 valeurs SHAP moyennes absolues les plus importantes
-        plt.figure(figsize=(12, 6))
-        plt.bar(feature_importance['feature'][:30], feature_importance['importance'][:30])
+        # Visualisation des 40 valeurs SHAP moyennes absolues les plus importantes
+        plt.figure(figsize=(24, 9))
+        plt.bar(feature_importance['feature'][:40], feature_importance['importance'][:40])
         plt.xticks(rotation=45, ha='right')
-        plt.title(f"Top 30 Features par Importance SHAP (valeurs moyennes absolues) - {ensembleType.capitalize()} Set")
+        plt.title(f"Top 40 Features par Importance SHAP (valeurs moyennes absolues) - {ensembleType.capitalize()} Set")
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, f'shap_importance_mean_abs{suffix}.png'))
         plt.close()
@@ -2226,7 +2623,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
             'importance'].sum()
 
         # Top 10 features
-        top_10_features = feature_importance['feature'].head(10).tolist()
+        top_10_features = feature_importance['feature'].head(40).tolist()
 
         # Nombre de features nécessaires pour expliquer 80% de l'importance
         features_for_80_percent = feature_importance[feature_importance['cumulative_importance'] <= 0.8].shape[0]
@@ -2273,7 +2670,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     # Exemple d'utilisation :
     analyze_predictions_by_range(X_test, y_test_predProba, shap_values_test, prob_min=0.5, prob_max=1.00,
-                                 top_n_features=20)
+                                 top_n_features=20,output_dir=results_directory)
 
     feature_importance = np.abs(shap_values_test).mean(axis=0)
     feature_importance_df = pd.DataFrame({
@@ -2310,6 +2707,71 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     print("\nAnalyse terminée. Les visualisations ont été sauvegardées.")
     print_notification('###### FIN: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########', color="blue")
     ###### FIN: ANALYSE DES ERREURS LES PLUS CONFIANTES ##########
+
+    ###### DEBUT: CALCUL DES CORRELACTION ##########
+
+
+    def analyze_and_save_feature_correlations(X_train, results_directory, threshold=0.8):
+        """
+        Analyzes feature correlations in a given DataFrame, visualizes the correlation matrix,
+        identifies pairs of highly correlated features, and saves the heatmap to a file.
+
+        Parameters:
+        - X_train (pd.DataFrame): The feature DataFrame.
+        - results_directory (str): The directory where the correlation heatmap will be saved.
+        - threshold (float): The correlation threshold for identifying highly correlated feature pairs.
+
+        Returns:
+        - high_corr_pairs (list of tuples): Sorted list of tuples with highly correlated feature pairs and their correlation values.
+        """
+        # Calculate the correlation matrix
+        corr_matrix = X_train.corr()
+
+        # Visualize the correlation matrix with smaller font size and two decimal precision
+        plt.figure(figsize=(20, 20))
+        sns.heatmap(corr_matrix, annot=True, fmt='.1f', cmap='coolwarm', annot_kws={"size": 4})
+        plt.title('Feature Correlation Matrix', fontsize=10)
+
+        # Ensure the results directory exists
+        os.makedirs(results_directory, exist_ok=True)
+
+        # Save the heatmap
+        heatmap_path = os.path.join(results_directory, 'feature_correlation_matrix.png')
+        plt.savefig(heatmap_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Identify pairs of highly correlated features
+        high_corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i):
+                if abs(corr_matrix.iloc[i, j]) > threshold:
+                    feature_i = corr_matrix.columns[i]
+                    feature_j = corr_matrix.columns[j]
+                    corr_value = corr_matrix.iloc[i, j]
+                    high_corr_pairs.append((feature_i, feature_j, corr_value))
+
+        # Sort the results by the absolute correlation value in descending order
+        high_corr_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+        # Display the sorted results in the console
+        print(f"Highly correlated pairs (threshold={threshold}):")
+        for feature_i, feature_j, corr_value in high_corr_pairs:
+            print(f"{feature_i} <-> {feature_j}: {corr_value:.2f}")
+
+        return high_corr_pairs
+
+    threshold = 0.75  # Set correlation threshold
+
+    # Call the function
+    high_corr_pairs = analyze_and_save_feature_correlations(X_train, results_directory, threshold)
+    # Si high_corr_pairs est une liste de tuples (feature_i, feature_j, corr_value)
+    save_correlations_to_csv(
+        high_corr_pairs=high_corr_pairs,
+        results_directory=results_directory,
+        threshold=0.75  # Seuil de corrélation utilisé
+    )
+    ###### FIN: CALCUL DES CORRELACTION ##########
+
 
     ###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########
     print_notification("###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########", color="blue")
@@ -2365,7 +2827,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     np.fill_diagonal(interaction_df.values, 0)
 
     # Sélection des top N interactions (par exemple, top 10)
-    N = 60
+    N = 80
     top_interactions = interaction_df.unstack().sort_values(ascending=False).head(N)
 
     # Visualisation des top interactions
@@ -2377,21 +2839,43 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(os.path.join(results_directory, 'top_feature_interactions.png'), dpi=300, bbox_inches='tight')
-
     plt.close()
-    seen_pairs = set()
-    print(f"Top {N // 2} Feature Interactions:")  # On divise N par 2 pour l'affichage
 
+    # Initialisation
+    seen_pairs = set()
+    csv_filename = f"Top_{N // 2}_interaction.csv"
+    csv_path = os.path.join(results_directory, csv_filename)
+
+    # Affichage du titre et préparation des données CSV
+    print(f"Top {N // 2} Feature Interactions:")
+    csv_data = []
+
+    # Première boucle pour l'affichage console et préparation CSV
     for (f1, f2), value in top_interactions.items():
         # Créer une paire triée pour garantir que (A,B) et (B,A) sont considérées comme identiques
         pair = tuple(sorted([f1, f2]))
 
         # Si la paire n'a pas encore été vue et ce n'est pas une interaction avec soi-même
         if pair not in seen_pairs and f1 != f2:
+            # Affichage dans la console
             print(f"{f1} <-> {f2}: {value:.4f}")
+
+            # Préparation données CSV
+            interaction = f"{f1} <-> {f2}"
+            formatted_value = f"{value:.4f}"
+            csv_data.append([interaction, formatted_value])
+
             seen_pairs.add(pair)
 
-    # Heatmap des interactions pour les top features
+    # Sauvegarde du CSV
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=';')
+        writer.writerow(['Interaction', 'Value'])
+        writer.writerows(csv_data)
+
+    print(f"\nCSV file saved at: {csv_path}")
+
+    # Création de la heatmap
     top_features = interaction_df.sum().sort_values(ascending=False).head(N).index
     plt.figure(figsize=(26, 20))  # Augmenter la taille de la figure
 
@@ -2409,9 +2893,13 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     plt.tight_layout()
     plt.xticks(rotation=90, ha='center')  # Rotation verticale des labels de l'axe x
     plt.yticks(rotation=0)  # S'assurer que les labels de l'axe y sont horizontaux
+
+    # Sauvegarde de la heatmap
     plt.savefig(
-        os.path.join(results_directory, 'feature_interaction_heatmap.png'), dpi=300,
-        bbox_inches='tight')
+        os.path.join(results_directory, 'feature_interaction_heatmap.png'),
+        dpi=300,
+        bbox_inches='tight'
+    )
     plt.close()
 
     print("Graphique d'interaction sauvegardé sous 'feature_interaction_heatmap.png'")
@@ -2419,3 +2907,731 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     ###### FIN: CALCUL DES VALEURS D'INTERACTION SHAP ##########
 
     return True
+
+
+from sklearn.metrics import make_scorer
+import numpy as np
+
+
+def custom_profit_scorer(y_true, y_pred_proba, metric_dict=None, normalize=False):
+    """
+    Adaptation de custom_metric_Profit pour sklearn
+
+    Args:
+        y_true: vraies valeurs
+        y_pred_proba: probabilités prédites
+        metric_dict: dictionnaire des paramètres
+        normalize: normalisation du profit
+    """
+    if metric_dict is None:
+        metric_dict = {}
+
+    CHECK_THRESHOLD = 0.55555555
+    threshold = metric_dict.get('threshold', CHECK_THRESHOLD)
+    if threshold == CHECK_THRESHOLD:
+        raise ValueError("Invalid threshold value detected")
+    # Suppression de l'application de la sigmoïde
+    # y_pred_proba = 1 / (1 + np.exp(-y_pred_proba))
+    # y_pred_proba = np.clip(y_pred_proba, 0.0, 1.0)
+
+    # Vérification des valeurs
+    min_val = np.min(y_pred_proba)
+    max_val = np.max(y_pred_proba)
+    if min_val < 0 or max_val > 1:
+        #return float('-inf')  # Retourne une valeur très basse en cas de problème
+        raise ValueError(f"Probabilities out of bounds: min={min_val}, max={max_val}")
+
+    # Conversion en prédictions binaires
+    y_pred = (y_pred_proba > threshold).astype(int)
+
+    # Calcul des métriques
+    tp = np.sum((y_true == 1) & (y_pred == 1))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    fn = np.sum((y_true == 1) & (y_pred == 0))
+
+    # Calcul du profit
+    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
+    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
+
+    total_profit = (tp * profit_per_tp +
+                    fp * loss_per_fp +
+                    fn * penalty_per_fn)
+
+    if normalize:
+        total_trades = tp + fp
+        if total_trades > 0:
+            return total_profit / total_trades
+        return 0.0
+
+    return total_profit
+
+
+import numpy as np
+from numba import jit
+
+
+@jit(nopython=True)
+def create_mask_numba(timestamps, periods_starts, periods_ends):
+    """
+    Crée un masque avec Numba pour les périodes sélectionnées
+    """
+    mask = np.zeros(len(timestamps), dtype=np.bool_)
+    for i in range(len(timestamps)):
+        for j in range(len(periods_starts)):
+            if periods_starts[j] <= timestamps[i] < periods_ends[j]:
+                mask[i] = True
+                break
+    return mask
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.gridspec import GridSpec
+
+"""
+ANALYSE DES DONNÉES DE TRADING
+Format timestamp spécifique : 0-1380
+0-239.999 : 22h-23h59.999
+240-1380 : 00h-20h59.999
+"""
+
+def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
+    """
+    Analyse améliorée de la distribution temporelle des trades
+    """
+    # Configuration du style
+    plt.style.use('default')
+
+    # Création de la figure
+    fig = plt.figure(figsize=(20, 12), facecolor='white')
+    gs = GridSpec(2, 1, height_ratios=[1, 1], hspace=0.3)
+
+    def prepare_data(data_df):
+        df_copy = data_df.copy()
+        # Regroupement par intervalles de 10 minutes
+        df_copy['time_bin'] = (df_copy['deltaTimestampOpeningSection1min'] // 10).astype(int) * 10
+        df_grouped = df_copy.groupby('time_bin')['class_binaire'].value_counts().unstack(fill_value=0)
+
+        # S'assurer que l'index est complet de 0 à 1380 par pas de 10
+        full_index = pd.Index(range(0, 1381, 10))
+        df_grouped = df_grouped.reindex(full_index, fill_value=0)
+
+        # Extraction des succès et échecs
+        successes = df_grouped.get(1, pd.Series(0, index=df_grouped.index))
+        failures = df_grouped.get(0, pd.Series(0, index=df_grouped.index))
+
+        return df_grouped, successes, failures
+
+    def format_time_label(minutes):
+        """Convertit les minutes depuis 22:00 en format heure:minute"""
+        total_minutes = (minutes + 22 * 60) % (24 * 60)
+        hour = total_minutes // 60
+        minute = total_minutes % 60
+        return f"{int(hour):02d}:{int(minute):02d}"
+
+    # Préparation des données pour les deux graphiques
+    df_trades_original = df_original[df_original['class_binaire'].isin([0, 1])].copy()
+    df_grouped_original, successes_original, failures_original = prepare_data(df_trades_original)
+
+    df_trades_filtered = df_filtered[df_filtered['class_binaire'].isin([0, 1])].copy()
+    df_grouped_filtered, successes_filtered, failures_filtered = prepare_data(df_trades_filtered)
+
+    # Positions x pour les barres
+    x_positions = range(len(df_grouped_original))
+    width = 0.8
+
+    # 1. Premier graphique - Tous les trades
+    ax1 = fig.add_subplot(gs[0])
+    ax1.bar(x_positions, successes_original, width, color='#2ecc71', alpha=0.7)  # Supprimé label='Succès'
+    ax1.bar(x_positions, failures_original, width, bottom=successes_original, color='#e74c3c',
+            alpha=0.7)  # Supprimé label='Échecs'
+    ax1.set_title('Distribution horaire des trades', fontsize=14, pad=15)
+    ax1.set_ylabel('Nombre de trades', fontsize=12)
+    # Supprimé : ax1.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='none', fontsize=12)
+
+    # 2. Deuxième graphique - Trades filtrés
+    ax2 = fig.add_subplot(gs[1])
+    ax2.bar(x_positions, successes_filtered, width, color='#2ecc71', alpha=0.7)  # Supprimé label='Succès'
+    ax2.bar(x_positions, failures_filtered, width, bottom=successes_filtered, color='#e74c3c',
+            alpha=0.7)  # Supprimé label='Échecs'
+    ax2.set_title('Distribution des trades - Périodes sélectionnées uniquement', fontsize=14, pad=15)
+    ax2.set_ylabel('Nombre de trades', fontsize=12)
+    # Supprimé : ax2.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='none', fontsize=12)
+
+    # Configuration commune des axes
+    for ax in [ax1, ax2]:
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+        # Labels d'axe toutes les 30 minutes (3 bins de 10 minutes)
+        xticks_pos = list(range(0, len(df_grouped_original), 3))
+        xticks_labels = [format_time_label(df_grouped_original.index[pos]) for pos in xticks_pos]
+        ax.set_xticks(xticks_pos)
+        ax.set_xticklabels(xticks_labels, rotation=90, fontsize=8)
+        ax.set_xlim(-0.5, len(df_grouped_original) - 0.5)
+
+        # Ligne de minuit
+        #midnight_idx = 120 // 10  # 120 minutes après 22h, divisé par la taille du bin (10 minutes)
+        #ax.axvline(x=midnight_idx, color='red', linestyle='--', alpha=0.7)
+
+        ymin, ymax = ax.get_ylim()
+
+        # Coloration des zones (toutes les périodes, qu'elles soient sélectionnées ou non)
+        for name, info in time_periods_dict.items():
+            # Les indices correspondent aux bins de 10 minutes
+            start_idx = info['start'] // 10
+            end_idx = info['end'] // 10
+
+            color = f"#{format(hash(name) % 0xffffff, '06x')}"
+            alpha = 0.45 if info['selected'] else 0.25  # Alpha différent selon 'selected'
+
+            # Coloration de la zone
+            ax.axvspan(start_idx, end_idx, alpha=alpha, color=color)
+
+            # Label centré sur la zone
+            center = start_idx + (end_idx - start_idx) / 2
+            ax.text(center, ymax * 0.9,
+                    f"{name}\n{format_time_label(info['start'])}-{format_time_label(info['end'])}",
+                    rotation=90, va='center', ha='center', fontsize=8, color='black')
+
+    # Calcul des statistiques
+    total_success = successes_filtered.sum()
+    total_failure = failures_filtered.sum()
+    total_all = total_success + total_failure
+
+    # Texte des statistiques
+    if total_all > 0:
+        stats = []
+        global_win_rate = (total_success / total_all * 100)
+
+        for name, info in time_periods_dict.items():
+            if info['selected']:
+                start_idx = info['start'] // 10
+                end_idx = info['end'] // 10
+
+                period_successes = successes_filtered.iloc[start_idx:end_idx].sum()
+                period_failures = failures_filtered.iloc[start_idx:end_idx].sum()
+                period_total = period_successes + period_failures
+
+                if period_total > 0:
+                    period_win_rate = (period_successes / period_total * 100)
+                    stats.append(
+                        f"{name} ({format_time_label(info['start'])}-{format_time_label(info['end'])}):\n"
+                        f"  Trades: {period_total} ({period_total / total_all * 100:.1f}%)\n"
+                        f"  Win Rate: {period_win_rate:.1f}%"
+                    )
+
+        stats_text = (
+                f"Statistiques Globales:\n"
+                f"Total Trades: {total_all}\n"
+                f"Succès: {total_success} ({total_success / total_all * 100:.1f}%)\n"
+                f"Échecs: {total_failure} ({total_failure / total_all * 100:.1f}%)\n"
+                f"Win Rate Global: {global_win_rate:.1f}%\n\n"
+                + "\n\n".join(stats)
+        )
+    else:
+        stats_text = "Aucun trade dans la période sélectionnée"
+
+    # Affichage des statistiques
+    plt.figtext(1.02, 0.6, stats_text, fontsize=12,
+                bbox=dict(facecolor='white', edgecolor='gray', alpha=0.9, pad=10))
+
+    plt.suptitle('Analyse de la Distribution des Trades sur 24H', fontsize=16, y=0.97)
+    plt.subplots_adjust(left=0.1, right=0.85, top=0.9, bottom=0.2, hspace=0.4)
+
+    return {
+        'total_trades': total_all,
+        'successes': total_success,
+        'failures': total_failure,
+        'win_rate': global_win_rate,
+        'hourly_stats': {
+            'timestamps': df_grouped_filtered.index.tolist(),
+            'volumes': (successes_filtered + failures_filtered).tolist()
+        }
+    }
+
+
+
+
+def sessions_selection(df, selected_sessions=None, custom_sections=None, time_periods_dict=None):
+    """
+    Met class_binaire à 99 pour les sessions NON sélectionnées et analyse la distribution.
+    """
+    df_filtered = df.copy()
+    timestamps = df['deltaTimestampOpening'].values
+
+    if time_periods_dict is not None:
+        # Sélection des périodes activées
+        selected_periods = [
+            (info['start'], info['end'])
+            for info in time_periods_dict.values()
+            if info['selected']
+        ]
+
+        periods_starts = np.array([start for start, end in selected_periods], dtype=np.float64)
+        periods_ends = np.array([end for start, end in selected_periods], dtype=np.float64)
+
+        # Logging et calcul des statistiques par période
+        cum_total_count = 0
+        print("\nUtilisation des périodes du dictionnaire:")
+
+        for name, info in time_periods_dict.items():
+            status = "activée" if info['selected'] else "désactivée"
+            start_time = format_time(info['start'])
+            end_time = format_time(info['end'])
+            print(f"- {name}: {info['start']} à {info['end']} ({start_time} - {end_time}) ({status})")
+
+            if info['selected']:
+                # Calcul des statistiques pour cette période
+                mask_period = (timestamps >= info['start']) & (timestamps < info['end'])
+                period_data = df[mask_period]
+
+                success_count = len(period_data[period_data['class_binaire'] == 1])
+                failure_count = len(period_data[period_data['class_binaire'] == 0])
+                total_count = success_count + failure_count
+                win_rate = (success_count / total_count * 100) if total_count > 0 else 0
+                cum_total_count += total_count
+
+                print(f"  Statistiques pour {name}:")
+                print(f"  - Minutes depuis 22h: {info['start']} - {info['end']}")
+                print(f"  - Heures: {start_time} - {end_time}")
+                print(f"  - Trades réussis: {success_count}")
+                print(f"  - Trades échoués: {failure_count}")
+                print(f"  - Total trades: {total_count}")
+                print(f"  - Win Rate: {win_rate:.2f}%\n")
+
+    elif custom_sections is not None:
+        valid_sections = [s for s in custom_sections if s['name'] in selected_sessions]
+        periods_starts = np.array([s['start'] for s in valid_sections], dtype=np.float64)
+        periods_ends = np.array([s['end'] for s in valid_sections], dtype=np.float64)
+
+        print("\nPériodes sélectionnées:")
+        for section in valid_sections:
+            start_time = format_time(section['start'])
+            end_time = format_time(section['end'])
+            print(f"- {section['name']}: {section['start']} à {section['end']} ({start_time} - {end_time})")
+    else:
+        return df_filtered
+
+    print(f"\ncum_total_count des sessions = {cum_total_count}")
+
+    # Créer le masque avec Numba et appliquer le filtrage
+    mask_selected = create_mask_numba(timestamps, periods_starts, periods_ends)
+    df_filtered.loc[~mask_selected, 'class_binaire'] = 99
+
+    # Comptage des trades dans df_filtered
+    success_filtered = len(df_filtered[df_filtered['class_binaire'] == 1])
+    failure_filtered = len(df_filtered[df_filtered['class_binaire'] == 0])
+    filtered_99 = len(df_filtered[df_filtered['class_binaire'] == 99])
+    total_filtered = success_filtered + failure_filtered
+
+    print("\nNombre de trades dans df_filtered:")
+    print(f"df_filtered-> Trades réussis (1): {success_filtered}")
+    print(f"df_filtered-> Trades échoués (0): {failure_filtered}")
+    print(f"df_filtered-> Trades filtrés (99): {filtered_99}")
+    print(f"df_filtered-> Total trades: {total_filtered}")
+
+    # Vérification de cohérence
+    if total_filtered != cum_total_count:
+        print("\nATTENTION: Incohérence détectée!")
+        print(f"Total des trades filtrés ({total_filtered}) != ")
+        print(f"Somme des trades par période ({cum_total_count})")
+
+    # Analyser et visualiser la distribution
+    stats = analyze_trade_distribution(df, df_filtered, time_periods_dict)
+
+    print("\nRésumé des statistiques:")
+    print(f"Total trades analysés: {stats['total_trades']}")
+    print(f"Win Rate global: {stats['win_rate']:.1f}%")
+
+    plt.show()
+    exit(0)
+    return df_filtered
+
+
+def format_time(minutes):
+    """Convertit les minutes depuis 22:00 en format heure:minute"""
+    total_minutes = (minutes + 22 * 60) % (24 * 60)
+    hour = total_minutes // 60
+    minute = total_minutes % 60
+    return f"{int(hour):02d}:{int(minute):02d}"
+
+
+def calculate_normalized_objectives(
+        tp_train_list, fp_train_list, tp_val_list, fp_val_list,
+        scores_train_list, scores_val_list, fold_stats,
+        scale_objectives=False,
+        use_imbalance_penalty=True
+):
+    # Vérification que toutes les listes ont la même longueur
+    lengths = [len(tp_train_list), len(fp_train_list),
+               len(tp_val_list), len(fp_val_list),
+               len(scores_train_list), len(scores_val_list)]
+
+    if not all(length == lengths[0] for length in lengths):
+        print("ERREUR: Les listes n'ont pas toutes la même longueur!")
+        return {
+            'pnl_norm_objective': float('-inf'),
+            'winrate_diff_norm_objective': float('inf')
+        }
+
+    if not lengths[0]:  # Si les listes sont vides
+        print("ERREUR: Les listes sont vides!")
+        return {
+            'pnl_norm_objective': float('-inf'),
+            'winrate_diff_norm_objective': float('inf')
+        }
+
+    fold_metrics = []
+
+    # Calcul des métriques pour chaque fold
+    for i in range(len(scores_train_list)):
+        train_trades = tp_train_list[i] + fp_train_list[i]
+        val_trades = tp_val_list[i] + fp_val_list[i]
+
+        # Protection contre division par zéro
+        train_trades = max(train_trades, 1e-8)
+        val_trades = max(val_trades, 1e-8)
+
+        # Winrate pour chaque fold
+        train_winrate = tp_train_list[i] / train_trades
+        val_winrate = tp_val_list[i] / val_trades
+
+        fold_metrics.append({
+            'winrate_diff': abs(train_winrate - val_winrate),
+            'n_trades': val_trades,
+            'val_pnl': scores_val_list[i]
+        })
+
+    # Calcul de la pénalité de déséquilibre
+    max_trades = max(m['n_trades'] for m in fold_metrics)
+    min_trades = max(min(m['n_trades'] for m in fold_metrics), 1e-8)
+    imbalance_penalty = 1 + math.log(max_trades / min_trades)
+
+    print(f"\nImbalance statistics:")
+    print(f"Max trades: {max_trades}")
+    print(f"Min trades: {min_trades}")
+    print(f"Imbalance penalty: {imbalance_penalty:.4f}")
+
+    # Calcul pondéré des objectifs
+    total_pnl = 0
+    total_winrate_diff = 0
+    total_weight = 0
+
+    for metrics in fold_metrics:
+        weight = 1  # Poids égal pour chaque fold
+        total_pnl += metrics['val_pnl'] * weight
+        total_winrate_diff += metrics['winrate_diff'] * weight
+        total_weight += weight
+
+    # Normalisation des objectifs
+    avg_pnl = total_pnl / total_weight if total_weight > 0 else float('-inf')
+    avg_winrate_diff = total_winrate_diff / total_weight if total_weight > 0 else float('inf')
+
+    # Application de la pénalité si activée
+    if use_imbalance_penalty:
+        pnl_norm_objective = avg_pnl * (1 / imbalance_penalty)
+        winrate_diff_norm_objective = avg_winrate_diff * imbalance_penalty
+    else:
+        pnl_norm_objective = avg_pnl
+        winrate_diff_norm_objective = avg_winrate_diff
+
+    # Scale objectives si demandé
+    if scale_objectives:
+        # Définir les plages de normalisation
+        pnl_range = (-100, 100)  # À ajuster selon vos besoins
+        winrate_diff_range = (0, 1)
+
+        pnl_norm_objective = normalize_to_range(
+            pnl_norm_objective,
+            old_min=pnl_range[0],
+            old_max=pnl_range[1]
+        )
+
+        winrate_diff_norm_objective = normalize_to_range(
+            winrate_diff_norm_objective,
+            old_min=winrate_diff_range[0],
+            old_max=winrate_diff_range[1]
+        )
+
+
+
+    return {
+        'pnl_norm_objective': pnl_norm_objective,
+        'winrate_diff_norm_objective': winrate_diff_norm_objective,
+        'raw_metrics': {
+            'avg_pnl': avg_pnl,
+            'avg_winrate_diff': avg_winrate_diff,
+            'imbalance_penalty': imbalance_penalty
+        }
+    }
+
+
+def normalize_to_range(value, old_min, old_max, new_min=0, new_max=1):
+    """
+    Normalise une valeur d'une plage à une autre
+    """
+    if old_max == old_min:
+        return new_min
+
+    value = max(min(value, old_max), old_min)
+    normalized = (value - old_min) / (old_max - old_min)
+    scaled = normalized * (new_max - new_min) + new_min
+
+    return scaled
+
+
+
+def process_RFE_filteringg(params=None, trial=None, weight_param=None, metric_dict=None,selected_columns=None, n_features_to_select=None, X_train=None,y_train_label=None):
+    # Configuration de RFECV
+    # Configuration de RFECV
+    params4RFECV = params.copy()
+    params4RFECV['device'] = 'cpu'
+    params4RFECV['tree_method'] = 'auto'
+    # Ajouter early_stopping_rounds dans les paramètres
+    params4RFECV['enable_categorical'] = False
+    # Configuration des paramètres (reste inchangé)
+    w_p = trial.suggest_float('w_p', weight_param['w_p']['min'], weight_param['w_p']['max'])
+    w_n = trial.suggest_float('w_n', weight_param['w_n']['min'], weight_param['w_n']['max'])
+
+    def custom_profit_scorer(y_true, y_pred_proba, metric_dict, normalize=False):
+        """
+        Calcule le profit en fonction des prédictions de probabilités.
+
+        Args:
+            y_true: Labels réels
+            y_pred_proba: Probabilités prédites (utilise la colonne 1 pour les prédictions positives)
+            metric_dict: Dictionnaire contenant threshold, profit_per_tp, etc.
+            normalize: Si True, normalise le profit par le nombre d'échantillons
+        """
+        # S'assurer que y_pred_proba est un tableau 2D
+        if len(y_pred_proba.shape) == 1:
+            y_pred_proba = y_pred_proba.reshape(-1, 1)
+            y_pred_proba = np.column_stack((1 - y_pred_proba, y_pred_proba))
+
+        # Prendre les probabilités de la classe positive
+        positive_probs = y_pred_proba[:, 1]
+
+        # Convertir en prédictions binaires selon le seuil
+        y_pred = (positive_probs >= metric_dict['threshold']).astype(int)
+
+        # Calculer les vrais positifs et faux positifs
+        tp = np.sum((y_true == 1) & (y_pred == 1))
+        fp = np.sum((y_true == 0) & (y_pred == 1))
+
+        # Calculer le profit
+        profit = (tp * metric_dict['profit_per_tp']) - (fp * metric_dict['loss_per_fp'])
+
+        if normalize:
+            profit = profit / len(y_true)
+
+        return profit
+        # Vérifier que metric_dict est défini
+
+    if metric_dict is None:
+        raise ValueError("metric_dict ne peut pas être None")
+
+    required_keys = ['profit_per_tp', 'loss_per_fp', 'threshold']
+    missing_keys = [key for key in required_keys if key not in metric_dict]
+    if missing_keys:
+        raise ValueError(f"metric_dict doit contenir les clés suivantes: {missing_keys}")
+
+    # Define the custom gradient and hessian functions
+    def weighted_logistic_gradient_cpu_4classifier(predt: np.ndarray, y: np.ndarray, w_p: float,
+                                                   w_n: float) -> np.ndarray:
+        """Calculate the gradient for weighted logistic loss (CPU)."""
+        predt = 1.0 / (1.0 + np.exp(-predt))  # Sigmoid function
+        weights = np.where(y == 1, w_p, w_n)
+        grad = weights * (predt - y)
+        return grad
+
+    def weighted_logistic_hessian_cpu_4classifier(predt: np.ndarray, y: np.ndarray, w_p: float,
+                                                  w_n: float) -> np.ndarray:
+        """Calculate the hessian for weighted logistic loss (CPU)."""
+        predt = 1.0 / (1.0 + np.exp(-predt))
+        weights = np.where(y == 1, w_p, w_n)
+        hess = weights * predt * (1.0 - predt)
+        return hess
+
+    def weighted_logistic_hessian_cpu_4classifier(predt: np.ndarray, y: np.ndarray, w_p: float,
+                                                  w_n: float) -> np.ndarray:
+        """Calculate the hessian for weighted logistic loss (CPU)."""
+        predt = 1.0 / (1.0 + np.exp(-predt))  # Sigmoid function
+        weights = np.where(y == 1, w_p, w_n)
+        hess = weights * predt * (1.0 - predt)
+        return hess
+
+    def weighted_logistic_obj_cpu_4classifier(y_true: np.ndarray, y_pred: np.ndarray, w_p: float, w_n: float) -> \
+            Tuple[
+                np.ndarray, np.ndarray]:
+        """Custom objective function for weighted logistic loss."""
+        predt = y_pred
+        y = y_true
+        grad = weighted_logistic_gradient_cpu_4classifier(predt, y, w_p, w_n)
+        hess = weighted_logistic_hessian_cpu_4classifier(predt, y, w_p, w_n)
+        return grad, hess
+
+    # Create a partial function with fixed weights
+    obj_function = partial(
+        weighted_logistic_obj_cpu_4classifier,
+        w_p=w_p,
+        w_n=w_n
+    )
+
+    params4RFECV['objective'] = obj_function
+    params4RFECV['disable_default_eval_metric'] = 1
+    # Création du scorer personnalisé
+    custom_scorer_partial = partial(
+        custom_profit_scorer,
+        metric_dict=metric_dict,
+        normalize=False
+    )
+
+    custom_scorer = make_scorer(
+        custom_scorer_partial,
+        response_method="predict_proba",
+        greater_is_better=True
+    )
+
+    # XGBoost wrapper class
+    class XGBWrapper(xgb.XGBClassifier):
+        """Wrapper for XGBoost with early stopping integrated into the constructor."""
+
+        def fit(self, X, y, **kwargs):
+            eval_set = kwargs.pop('eval_set', None)
+            return super().fit(
+                X, y,
+                eval_set=eval_set,
+                verbose=False,
+                **kwargs
+            )
+
+    # Configuration et exécution de RFECV
+    model4RFECV = XGBWrapper(**params4RFECV, n_jobs=1)
+    cv_inner = KFold(n_splits=5, shuffle=False)
+
+    rfecv = RFECV(
+        estimator=model4RFECV,
+        cv=cv_inner,
+        step=1,
+        scoring=custom_scorer,
+        n_jobs=-1,  # Utilisation de tous les cœurs pour accélérer le processus
+        min_features_to_select=5  # Nombre minimal de caractéristiques à sélectionner
+    )
+
+    def get_optimal_n_features(cv_results):
+        """Retourne le nombre optimal de caractéristiques basé sur les scores moyens et ajustés."""
+        mean_scores = cv_results['mean_test_score']
+        std_scores = cv_results['std_test_score']
+
+        # Calculer le score ajusté (mean - std)
+        adjusted_scores = mean_scores - 2 * std_scores
+
+        # Option 1 : Choisir le nombre de caractéristiques avec le score moyen maximal
+        optimal_n_features_mean = np.argmax(mean_scores) + 1
+        print(f"Nombre optimal de features basé sur le meilleur score moyen : {optimal_n_features_mean}")
+        print(f"Score moyen optimal : {mean_scores.max():.2f}")
+
+        # Option 2 : Choisir le nombre de caractéristiques avec le meilleur score ajusté (mean - std)
+        optimal_n_features_adjusted = np.argmax(adjusted_scores) + 1
+        print(f"Nombre optimal de features basé sur mean-std : {optimal_n_features_adjusted}")
+        print(f"Score ajusté optimal : {adjusted_scores.max():.2f}")
+
+        # Créer un DataFrame pour visualiser tous les scores
+        scores_df = pd.DataFrame({
+            'n_features': range(1, len(mean_scores) + 1),
+            'mean_score': mean_scores,
+            'std_score': std_scores,
+            'adjusted_score': adjusted_scores
+        })
+
+        # Afficher le tableau des scores
+        print("\nScores détaillés :")
+        print(scores_df)
+
+        # Retourner le nombre optimal basé sur le score ajusté
+        return optimal_n_features_adjusted
+
+    # Fit RFECV
+    rfecv.fit(X_train, y_train_label)
+
+    print('model4RF2CV done')
+
+    # Obtenir le nombre optimal de caractéristiques
+    optimal_n_features = get_optimal_n_features(rfecv.cv_results_)
+    if (optimal_n_features < n_features_to_select):
+        try:
+            def get_top_n_features(selected_columns, n_features_to_select, X_train):
+                if len(selected_columns) < n_features_to_select:
+                    raise ValueError(
+                        f"La liste selected_columns contient seulement {len(selected_columns)} features, "
+                        f"alors que {n_features_to_select} sont demandées.")
+
+                # Créer un masque pour les features sélectionnées
+                feature_mask = X_train.columns.isin(selected_columns[:n_features_to_select])
+
+                # Obtenir les indices triés
+                sorted_indices = np.where(feature_mask)[0]
+
+                # Obtenir les noms des caractéristiques correspondantes
+                selected_feature_names = X_train.columns[sorted_indices]
+
+                return selected_feature_names
+
+            selected_feature_names = get_top_n_features(selected_columns, n_features_to_select, X_train)
+        except ValueError as e:
+            print(f"Erreur: {str(e)}")
+    else:
+        # Obtenir les rangs des caractéristiques
+        feature_rankings = rfecv.ranking_
+
+        # Obtenir les indices des caractéristiques triés par rang
+        sorted_indices = np.argsort(feature_rankings)
+
+        # Sélectionner les indices des 'optimal_n_features' meilleures caractéristiques
+        optimal_indices = sorted_indices[:optimal_n_features]
+
+        # Obtenir les noms des caractéristiques correspondantes
+        selected_feature_names = X_train.columns[optimal_indices]
+
+    # Afficher les caractéristiques sélectionnées
+    print(f"Caractéristiques correspondant à optimal_n_features ({selected_feature_names}):")
+    print(selected_feature_names.tolist())
+
+    print(f"Nombre de features sélectionnées: {len(selected_feature_names)}")
+    print("\nFeatures sélectionnées:")
+    for i, feature in enumerate(selected_feature_names, 1):
+        print(f"{i}. {feature}")
+
+    # Affichage des scores de cross-validation
+    print("\nScores de cross-validation par nombre de features:")
+    """
+    cv_scores = pd.DataFrame({
+        'n_features': range(1, len(rfecv.cv_results_['mean_test_score']) + 1),
+        'mean_score': rfecv.cv_results_['mean_test_score'],
+        'std_score': rfecv.cv_results_['std_test_score']
+    })
+    print(cv_scores)
+    """
+    # Log des résultats
+    return selected_feature_names;
+
+
+def calculate_fold_stats(labels, set_name):
+    # Calcul des décisions (trades)
+    decisions = (labels != 99).sum()
+    success = (labels == 1).sum()
+    failures = (labels == 0).sum()
+    success_rate = success / decisions if decisions > 0 else 0
+
+    return {
+        f"{set_name}_n_trades": decisions,
+        f"{set_name}_n_class_1": success,
+        f"{set_name}_n_class_0": failures,
+        f"{set_name}_class_ratio": success_rate,
+        f"{set_name}_success_rate": success_rate
+    }
+
+
+
