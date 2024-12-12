@@ -6,6 +6,9 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix, roc_curve, \
     average_precision_score, matthews_corrcoef,precision_recall_curve, precision_score
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, MaxAbsScaler
+
 import pandas as pd
 from colorama import Fore, Style, init
 import time
@@ -17,43 +20,121 @@ import seaborn as sns
 import matplotlib.ticker as ticker
 from PIL import Image
 import sys
-import csv
 import logging
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.feature_selection import RFECV
-
+import csv
 import math
 from functools import partial
 from sklearn.model_selection import KFold, TimeSeriesSplit
+import json
+import shutil
+from parameters import (get_model_param_range)
+from definition import *
 
 
-# Définition des sections personnalisées
-CUSTOM_SECTIONS = [
-    {"name": "preAsian", "start": 0, "end": 240, "index": 0},
-    {"name": "asianAndPreEurop", "start": 240, "end": 540, "index": 1},
-    {"name": "europMorning", "start": 540, "end": 810, "index": 2},
-    {"name": "europLunch", "start": 810, "end": 870, "index": 3},
-    {"name": "preUS", "start": 870, "end": 930, "index": 4},
-    {"name": "usMoning", "start": 930, "end": 1065, "index": 5},
-    {"name": "usAfternoon", "start": 1065, "end": 1200, "index": 6},
-    {"name": "usEvening", "start": 1200, "end": 1290, "index": 7},
-    {"name": "usEnd", "start": 1290, "end": 1335, "index": 8},
-    {"name": "closing", "start": 1335, "end": 1380, "index": 9},
-]
+CUSTOM_SESSIONS = {
+        "Opening": {
+            "start": 0,
+            "end": 120,
+            "session_type_index": 0,
+            "selected": False,
+            "description": "22:00-23:05",
+        },
+        "Asie": {
+            "start": 120,
+            "end": 535,
+            "session_type_index": 1,
+            "selected": True,
+            "description": "23:05-6:55",
+        },
+        "OpenUk": {
+            "start": 535,
+            "end": 545,
+            "session_type_index": 2,
+            "selected": False,
+            "description": "6:55-07:05",
+        },
+        "preOpenEurope": {
+            "start": 545,
+            "end": 595,
+            "session_type_index": 2,
+            "selected": True,
+            "description": "07:05-07:55",
+        },
+        "OpenEurope": {  # 8h = 480 minutes -> 475-485
+            "start": 595,
+            "end": 605,
+            "session_type_index": 2,
+            "selected": False,
+            "description": "07:55-08:05",
+        },
+        "MorningEurope": {
+            "start": 605,
+            "end": 865,
+            "session_type_index": 2,
+            "selected": True,
+            "description": "08:05-12:25",
+        },
+        "OpenpreOpenUS": {  # 12h30 = 750 minutes -> 745-755
+            "start": 865,
+            "end": 875,
+            "session_type_index": 3,
+            "selected": False,
+            "description": "12:25-12:35",
+        },
+        "preOpenUS": {
+            "start": 875,
+            "end": 925,
+            "session_type_index": 3,
+            "selected": False,
+            "description": "12:35-13:25",
+        },
+        "OpenMoringUS": {  # 13h30 = 810 minutes -> 805-815
+            "start": 925,
+            "end": 935,
+            "session_type_index": 3,
+            "selected": False,
+            "description": "13:25-13:35",
+        },
+        "MoringUS": {
+            "start": 935,
+            "end": 1065,
+            "session_type_index": 3,
+            "selected": False,
+            "description": "13:35-15:45",
+        },
+        "AfternonUS": {
+            "start": 1065,
+            "end": 1195,
+            "session_type_index": 4,
+            "selected": False,
+            "description": "15:45-17:55",
+        },
+        "Evening": {
+            "start": 1195,
+            "end": 1280,
+            "session_type_index": 5,
+            "selected": False,
+            "description": "17:55-19:20",
+        },
+        "Close": {
+            "start": 1280,
+            "end": 1380,
+            "session_type_index": 6,
+            "selected": False,
+            "description": "19:20-21:00",
+        }
+    }
 
-class optuna_options(Enum):
-    USE_OPTIMA_ROCAUC = 1
-    USE_OPTIMA_AUCPR = 2
-    USE_OPTIMA_F1 = 4
-    USE_OPTIMA_PRECISION = 5
-    USE_OPTIMA_RECALL = 6
-    USE_OPTIMA_MCC = 7
-    USE_OPTIMA_YOUDEN_J = 8
-    USE_OPTIMA_SHARPE_RATIO = 9
-    USE_OPTIMA_CUSTOM_METRIC_PROFITBASED = 10
-    USE_OPTIMA_CUSTOM_METRIC_TP_FP = 11
+from functools import reduce
+from numba import njit, prange
+from dateutil.relativedelta import relativedelta
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 
+# Variable globale pour suivre si la fonction a déjà été appelée
+_first_call_save_r_trialesults = True
 
 
 
@@ -85,6 +166,70 @@ def convert_from_unix_timestamp(unix_timestamp):
     date_format = "%Y-%m-%d %H:%M:%S"  # Modifier le format de date
     dt = datetime.fromtimestamp(unix_timestamp)
     return dt.strftime(date_format)
+
+
+def get_val_cv_time_range(X_full, X, index_val=None):
+    """
+    Obtient la plage temporelle en utilisant les index originaux.
+
+    Args:
+        X_full (pd.DataFrame): DataFrame complet avec toutes les colonnes incluant 'timeStampOpening'
+        X (pd.DataFrame): DataFrame potentiellement réduit mais avec les mêmes indices que X_full
+        index_val (array-like, optional): Indices de validation. Si None, utilise tout le DataFrame
+
+    Returns:
+        tuple: (start_time, end_time, num_sessions)
+            - start_time (int): Timestamp du début de la période
+            - end_time (int): Timestamp de la fin de la période
+            - num_sessions (int): Nombre de sessions dans cette période
+
+    Raises:
+        ValueError: Si les DataFrames sont vides ou si 'timeStampOpening' n'existe pas
+        KeyError: Si les index ne correspondent pas entre X_full et X
+    """
+    # Vérifications préliminaires
+    if X_full.empty or X.empty:
+        raise ValueError("Les DataFrames ne peuvent pas être vides")
+
+    if 'timeStampOpening' not in X_full.columns:
+        raise ValueError("La colonne 'timeStampOpening' doit être présente dans X_full")
+
+    try:
+        # Si index_val est None, utiliser tous les indices de X
+        if index_val is None:
+            original_indices = X.index
+        else:
+            # Vérifier que index_val est valide
+            if len(index_val) == 0:
+                raise ValueError("index_val ne peut pas être vide")
+            # Récupérer les index originaux correspondant aux indices de validation
+            original_indices = X.index[index_val]
+
+        # Vérifier que les indices existent dans X_full
+        if not all(idx in X_full.index for idx in [original_indices[0], original_indices[-1]]):
+            raise KeyError("Certains indices ne sont pas présents dans X_full")
+
+        # Utiliser ces index originaux pour accéder à X_full
+        start_time = X_full.loc[original_indices[0], 'timeStampOpening']
+        end_time = X_full.loc[original_indices[-1], 'timeStampOpening']
+
+        # Vérifier l'ordre chronologique
+        if end_time < start_time:
+            start_time, end_time = end_time, start_time
+
+        # Extraire les données en utilisant les index originaux
+        df_extracted = X_full.loc[original_indices[0]:original_indices[-1]]
+
+        # Vérifier que df_extracted n'est pas vide
+        if df_extracted.empty:
+            raise ValueError("Aucune donnée n'a été extraite pour la période spécifiée")
+
+        num_sessions = calculate_and_display_sessions(df_extracted)[0]
+
+        return start_time, end_time, num_sessions
+
+    except Exception as e:
+        raise ValueError(f"Erreur lors du traitement des données temporelles: {str(e)}")
 
 def plot_feature_histograms_by_class(data,className, column_settings, figsize=(32, 24)):
     columns = list(column_settings.keys())
@@ -236,17 +381,7 @@ def split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
     print("\n")
     return train_df,len(train_sessions), test_df,{len(test_sessions)}
 
-"""
-# Utilisation de la fonction
-train_df, test_df = split_sessions(data, test_size=0.2)
 
-# Séparer les features et la target pour le modèle
-X_train = train_df.drop(columns=['target'])
-y_train = train_df['target']
-
-X_test = test_df.drop(columns=['target'])
-y_test = test_df['target']
-"""
 
 
 def print_notification(message, color=None):
@@ -426,89 +561,117 @@ def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='un
 from datetime import datetime, timedelta
 
 
-def plot_fp_tp_rates(X_test, y_true, y_pred_proba, feature_deltaTime_name, optimal_threshold, user_input=None, index_size=5,results_directory=None):
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(35, 20))
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+import cupy as cp  # Assurez-vous que cupy est installé si vous utilisez des arrays CuPy
 
-    def index_to_time(index):
-        start_time = datetime.strptime("22:00", "%H:%M")
-        minutes = index * index_size
-        time = start_time + timedelta(minutes=minutes)
-        if time.hour < 22:
-            time += timedelta(days=1)
-        return time.strftime("%H:%M")
+def to_numpy(array):
+    return cp.asnumpy(array) if isinstance(array, cp.ndarray) else array
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+# import cupy as cp  # Décommentez si vous utilisez des tableaux CuPy
 
+def to_numpy(array):
+    """Convertit les tableaux CuPy en tableaux NumPy, si applicable."""
+    try:
+        import cupy as cp
+        if isinstance(array, cp.ndarray):
+            return cp.asnumpy(array)
+    except ImportError:
+        pass
+    return np.asarray(array)
 
-    def plot_rates(ax, n_bins_feature):
-        # Convertir les tableaux CuPy en NumPy si nécessaire
-        feature_values_np = feature_values.get() if isinstance(feature_values, cp.ndarray) else feature_values
-        y_true_np = y_true.get() if isinstance(y_true, cp.ndarray) else y_true
-        y_pred_proba_np = y_pred_proba.get() if isinstance(y_pred_proba, cp.ndarray) else y_pred_proba
+def plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, feature_deltaTime_name,
+                     optimal_threshold, dataset_name, user_input=None, results_directory=None):
+    """
+    Trace les taux de FP et TP empilés en fonction du temps sur une période de 22h à 21h.
+    """
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 12), facecolor='white')
 
-        bins = pd.cut(feature_values_np, bins=n_bins_feature)
-        rates = pd.DataFrame({
+    def format_time_label(minutes):
+        total_minutes = minutes + (22 * 60)  # Ajouter 22h en minutes
+        total_minutes = total_minutes % (24 * 60)  # Modulo pour revenir à 0 après 24h
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        return f"{int(hours):02d}:{int(minutes):02d}"
+
+    def plot_rates(ax, n_bins):
+        bins = np.linspace(0, 1380, n_bins + 1)
+
+        # Convertir explicitement les tableaux en NumPy
+        feature_values_np = to_numpy(X_test[feature_deltaTime_name].values)
+        y_test_label_np = to_numpy(y_test_label)
+        y_test_predProba_np = to_numpy(y_test_predProba)
+
+        df = pd.DataFrame({
             'feature': feature_values_np,
-            'y_true': y_true_np,
-            'y_pred': y_pred_proba_np >= optimal_threshold
-        }).groupby(bins, observed=True).apply(lambda x: pd.Series({
+            'y_true': y_test_label_np,
+            'y_pred': y_test_predProba_np >= optimal_threshold
+        })
+
+        # Création des bins et calcul des taux
+        df['bin'] = pd.cut(df['feature'], bins=bins, include_lowest=True)
+        grouped = df.groupby('bin')
+
+        rates = grouped.apply(lambda x: pd.Series({
             'FP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 0)).sum() / len(x) if len(x) > 0 else 0,
             'TP_rate': ((x['y_pred'] == 1) & (x['y_true'] == 1)).sum() / len(x) if len(x) > 0 else 0
         }))
 
-        x = np.arange(len(rates))
-        width = 0.35
+        # Récupérer les bords gauches des bins pour positionner les barres
+        bin_edges = rates.index.categories.left
+        bin_widths = rates.index.categories.right - rates.index.categories.left
 
-        ax.bar(x - width / 2, rates['FP_rate'], width, label='Taux de Faux Positifs', color='red', alpha=0.7)
-        ax.bar(x + width / 2, rates['TP_rate'], width, label='Taux de Vrais Positifs', color='green', alpha=0.7)
+        # Ajuster la largeur des barres pour un léger espacement
+        bar_widths = bin_widths * 0.98
 
-        ax.set_ylabel('Taux', fontsize=14)
-        ax.set_xlabel(feature_deltaTime_name, fontsize=14)
-        ax.set_title(f'Taux de FP et TP par {feature_deltaTime_name} (bins={n_bins_feature})', fontsize=14)
-        ax.set_xticks(x)
+        # Tracer les barres empilées
+        ax.bar(bin_edges, rates['TP_rate'], width=bar_widths, align='edge',
+               color='green', label='Taux de Vrais Positifs', alpha=0.7)
+        ax.bar(bin_edges, rates['FP_rate'], width=bar_widths, align='edge',
+               bottom=rates['TP_rate'], color='red', label='Taux de Faux Positifs', alpha=0.7)
 
-        # Conversion des index en format heure
-        time_labels = [index_to_time(int(b.left)) for b in rates.index]
-        ax.set_xticklabels(time_labels, rotation=45, ha='right')
+        ax.set_xlim(bins[0], bins[-1])
+        ax.set_ylim(0, 0.30)  # Limite de l'axe Y à 30%
 
-        ax.legend(fontsize=12)
-        ax.grid(True)
+        # Configuration des labels de l'axe X
+        hour_marks = np.arange(0, 1381, 60)
+        hour_labels = [format_time_label(m) for m in hour_marks]
 
-    feature_values = X_test[feature_deltaTime_name].values
+        ax.set_xticks(hour_marks)
+        ax.set_xticklabels(hour_labels, rotation=45, ha='right', fontsize=10)
 
-    # Graphique avec 25 bins
+        ax.set_ylabel('Taux', fontsize=12)
+        ax.set_title(f'Taux de FP et TP par {feature_deltaTime_name} (bins={n_bins})', fontsize=14)
+        ax.legend(loc='upper right', fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+    # Tracer les deux graphiques avec les différents nombres de bins
     plot_rates(ax1, 25)
+    plot_rates(ax2, 75)
 
-    # Graphique avec 100 bins
-    plot_rates(ax2, 100)
-
+    # Ajustement de la mise en page
     plt.tight_layout()
 
-    # Enregistrer le graphique
-    plt.savefig(os.path.join(results_directory, 'fp_tp_rates_by_feature_dual_time.png'), dpi=300, bbox_inches='tight')
+    if results_directory:
+        file_path = os.path.join(results_directory, f'fp_tp_rates_{dataset_name}_by_{feature_deltaTime_name}.png')
+        plt.savefig(file_path, dpi=300, bbox_inches='tight')
+        print(f"Graphique sauvegardé sous : {file_path}")
 
-
-    # Afficher le graphique
     if user_input and user_input.lower() == 'd':
-        plt.show()
+        plt.show(block=False)
+        plt.pause(2)
 
-    # Fermer la figure après l'affichage
     plt.close()
 
-    feature_values = X_test[feature_deltaTime_name].values
 
-    # Graphique avec 25 bins
-    plot_rates(ax1, 25)
 
-    # Graphique avec 100 bins
-    plot_rates(ax2, 100)
 
-    plt.tight_layout()
 
-    # Afficher le graphique
-    if user_input and user_input.lower() == 'd':
-        plt.show()
-
-    # Fermer la figure après l'affichage
-    plt.close()
 
 
 import numba as nb
@@ -588,7 +751,8 @@ def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
     fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
     tn = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 0))
     fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
-    return tn.item(), fp.item(), fn.item(), tp.item()
+    return tn, fp, fn, tp
+
 
 def weighted_logistic_gradient_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: float, w_n: float) -> np.ndarray:
     """Calcule le gradient pour la perte logistique pondérée (CPU)."""
@@ -605,6 +769,8 @@ def weighted_logistic_hessian_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, w_p: f
     weights = np.where(y == 1, w_p, w_n)
     hess = weights * predt * (1.0 - predt)
     return hess
+
+
 
 def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weight, std_penalty_factor=1.0):
     """
@@ -641,223 +807,6 @@ def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weig
 
 
 
-
-# Fonctions GPU mises à jour
-
-def weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n):
-    predt_gpu = cp.asarray(predt)
-    y_gpu = cp.asarray(dtrain.get_label())
-
-    predt_sigmoid = sigmoidCustom(predt_gpu)
-    grad = predt_sigmoid - y_gpu
-    # Appliquer les poids après le calcul initial du gradient
-    weights = cp.where(y_gpu == 1, w_p, w_n)
-    grad *= weights
-
-    return grad  # Retourner directement le tableau CuPy
-
-def weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n):
-    predt_gpu = cp.asarray(predt)
-    y_gpu = cp.asarray(dtrain.get_label())
-
-    predt_sigmoid = sigmoidCustom(predt_gpu)
-    hess = predt_sigmoid * (1 - predt_sigmoid)
-    # Appliquer les poids après le calcul initial de la hessienne
-    weights = cp.where(y_gpu == 1, w_p, w_n)
-    hess *= weights
-
-    return hess  # Retourner directement le tableau CuPy
-
-def create_weighted_logistic_obj_gpu(w_p: float, w_n: float):
-    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
-        grad = weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n)
-        hess = weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n)
-        return grad, hess
-    return weighted_logistic_obj
-
-# Fonction pour vérifier la disponibilité du GPU
-
-def calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict):
-    y_true_gpu = cp.array(y_true)
-    y_pred_gpu = cp.array(y_pred_threshold)
-    tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
-    fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
-    fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
-    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
-    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
-    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)  # Include FN penalty
-    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
-    total_trades_val = tp + fp  # Typically, total executed trades
-
-    # Utiliser une condition pour éviter la division par zéro
-    """"
-    if total_trades_val > 0:
-        normalized_profit = total_profit / total_trades_val
-    else:
-        normalized_profit = total_profit  # Reflect penalties from FNs when no trades are made
-
-
-
-    return float(normalized_profit)  # Assurez-vous que c'est un float Python
-    """
-    return float(total_profit), int(tp), int(fp)
-
-def custom_metric_Profit(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[
-    str, float]:
-    """
-    Fonction commune pour calculer les métriques de profit (normalisée ou non)
-
-    Args:
-        predt: prédictions brutes
-        dtrain: données d'entraînement
-        metric_dict: dictionnaire des paramètres de métrique
-        normalize: si True, normalise le profit par le nombre de trades
-    """
-    y_true = dtrain.get_label()
-    CHECK_THRESHOLD = 0.55555555
-
-    threshold = metric_dict.get('threshold', CHECK_THRESHOLD)
-
-    if 'threshold' not in metric_dict:
-        logging.warning("Aucun seuil personnalisé n'a été défini. Utilisation du seuil par défaut de 0.55555555.")
-
-    predt = cp.asarray(predt)
-    predt = sigmoidCustom(predt)
-    predt = cp.clip(predt, 0.0, 1.0)
-
-    mean_pred = cp.mean(predt).item()
-    std_pred = cp.std(predt).item()
-    min_val = cp.min(predt).item()
-    max_val = cp.max(predt).item()
-
-    if min_val < 0 or max_val > 1:
-        logging.warning(f"Les prédictions sont hors de l'intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
-        exit(12)
-
-    y_pred_threshold = (predt > threshold).astype(int)
-
-    # Calcul du profit et des TP/FP
-    total_profit, tp, fp = calculate_profitBased_gpu(y_true, y_pred_threshold, metric_dict)
-
-    if normalize:
-        # Version normalisée
-        total_trades_val = tp + fp
-        if total_trades_val > 0:
-            final_profit = total_profit / total_trades_val
-        else:
-            final_profit = 0.0
-        metric_name = 'custom_metric_ProfitBased_norm'
-    else:
-        # Version non normalisée
-        final_profit = total_profit
-        metric_name = 'custom_metric_ProfitBased'
-
-    return metric_name, float(final_profit)
-
-# Création des deux fonctions spécifiques à partir de la fonction commune
-def custom_metric_ProfitBased_gpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
-    return custom_metric_Profit(predt, dtrain, metric_dict, normalize=False)
-
-
-
-def calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred_threshold)
-    tp = np.sum((y_true == 1) & (y_pred == 1))
-    fp = np.sum((y_true == 0) & (y_pred == 1))
-    fn = np.sum((y_true == 1) & (y_pred == 0))
-    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
-    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
-    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
-    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
-    return float(total_profit), int(tp), int(fp)
-
-def custom_metric_Profit_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[str, float]:
-    y_true = dtrain.get_label()
-    CHECK_THRESHOLD = 0.55555555
-    threshold = metric_dict.get('threshold', CHECK_THRESHOLD)
-
-    predt = np.array(predt)
-    predt = sigmoidCustom_cpu(predt)
-    predt = np.clip(predt, 0.0, 1.0)
-
-    mean_pred = np.mean(predt)
-    std_pred = np.std(predt)
-    min_val = np.min(predt)
-    max_val = np.max(predt)
-
-    if min_val < 0 or max_val > 1:
-        logging.warning(f"Les prédictions sont hors de l'intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
-        exit(12)
-
-    y_pred_threshold = (predt > threshold).astype(int)
-
-    total_profit, tp, fp = calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict)
-
-    if normalize:
-        total_trades_val = tp + fp
-        if total_trades_val > 0:
-            final_profit = total_profit / total_trades_val
-        else:
-            final_profit = 0.0
-        metric_name = 'custom_metric_ProfitBased_norm'
-    else:
-        final_profit = total_profit
-        metric_name = 'custom_metric_ProfitBased'
-
-    return metric_name, float(final_profit)
-
-def custom_metric_ProfitBased_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
-    return custom_metric_Profit_cpu(predt, dtrain, metric_dict, normalize=False)
-
-def create_weighted_logistic_obj_cpu(w_p: float, w_n: float):
-    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
-        grad = weighted_logistic_gradient_cpu(predt, dtrain, w_p, w_n)
-        hess = weighted_logistic_hessian_cpu(predt, dtrain, w_p, w_n)
-        return grad, hess
-    return weighted_logistic_obj
-
-import traceback
-
-
-def create_custom_importance_plot(shap_df, dataset_name, save_dir):
-    """
-    Crée un graphique personnalisé basé sur les valeurs SHAP du CSV
-    avec code couleur rouge/bleu selon le signe
-    """
-    plt.figure(figsize=(12, 8))
-
-    # Prendre les 20 premières features pour la lisibilité
-    top_n = 20
-    df_plot = shap_df.head(top_n).iloc[::-1]  # Inverse l'ordre pour l'affichage de bas en haut
-
-    # Création des barres
-    y_pos = np.arange(len(df_plot))
-    bars = plt.barh(y_pos, df_plot['importance'].abs(),
-                    color=[('red' if x < 0 else 'blue') for x in df_plot['importance']])
-
-    # Personnalisation du graphique
-    plt.yticks(y_pos, df_plot['feature'])
-    plt.xlabel('mean(|SHAP value|) (average impact on model output magnitude)')
-    plt.title(f'SHAP Feature Importance - {dataset_name}')
-
-    # Ajout des valeurs sur les barres
-    for i, bar in enumerate(bars):
-        width = bar.get_width()
-        value = df_plot['importance'].iloc[i]
-        plt.text(width, bar.get_y() + bar.get_height() / 2,
-                 f'{value:.2e}',
-                 ha='left', va='center', fontsize=8)
-
-    # Ajustements de la mise en page
-    plt.tight_layout()
-
-    # Sauvegarde
-    plt.savefig(os.path.join(save_dir, f'shap_importance_{dataset_name}.png'),
-                dpi=300, bbox_inches='tight')
-    plt.close()
-
-
 def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False, max_dependence_plots=3,
                         save_dir='./shap_dependencies_results/'):
     """
@@ -883,11 +832,17 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
 
     Returns:
     --------
-    Tuple[numpy.ndarray, shap.Explanation]
-        Les valeurs SHAP calculées et l'objet d'explication SHAP.
+    Tuple[numpy.ndarray, shap.Explanation, dict]
+        - Les valeurs SHAP calculées
+        - L'objet d'explication SHAP
+        - Un dictionnaire contenant les résultats clés de l'analyse
     """
-    # Création du répertoire de sauvegarde
+    # Création du répertoire principal de sauvegarde
     os.makedirs(save_dir, exist_ok=True)
+
+    # Création du sous-répertoire pour les graphiques de dépendance
+    dependence_dir = os.path.join(save_dir, 'dependence_plot')
+    os.makedirs(dependence_dir, exist_ok=True)
 
     print(f"\n=== Analyse SHAP pour {dataset_name} ===")
     print(f"Dimensions des données: {X.shape}")
@@ -941,13 +896,19 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
 
     # Calcul des importances SHAP
     try:
-        # Calcul des valeurs SHAP moyennes pour chaque feature
-        feature_importance_signed = np.mean(shap_values, axis=0)
+        # Calcul de la moyenne des valeurs absolues des valeurs SHAP (importance globale)
+        feature_importance = np.abs(shap_values).mean(axis=0)
+
+        # Calcul de la moyenne des valeurs SHAP (effet moyen signé)
+        feature_effect = np.mean(shap_values, axis=0)
+
+        # Appliquer le signe de l'effet moyen à l'importance
+        signed_feature_importance = feature_importance * np.sign(feature_effect)
 
         # Création du DataFrame avec les importances
         shap_df = pd.DataFrame({
             'feature': X.columns,
-            'importance': feature_importance_signed,
+            'importance': signed_feature_importance,
         })
 
         # Ajout de la colonne des valeurs absolues pour le tri
@@ -965,30 +926,44 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
         create_custom_importance_plot(shap_df, dataset_name, save_dir)
 
         # Nettoyage avant sauvegarde
-        shap_df = shap_df.drop('abs_importance', axis=1)
+        shap_df_save = shap_df.drop('abs_importance', axis=1)
 
         # Sauvegarde du CSV
         csv_path = os.path.join(save_dir, f'shap_values_{dataset_name}.csv')
-        shap_df.to_csv(csv_path, index=False, sep=';')
+        shap_df_save.to_csv(csv_path, index=False, sep=';')
         print(f"\nValeurs SHAP sauvegardées dans: {csv_path}")
+
+        # Création du dictionnaire results avant la création des graphiques de dépendance
+        results = {
+            'feature_importance': shap_df_save,
+            'top_10_features': shap_df['feature'].head(40).tolist(),
+            'features_for_80_percent': shap_df[shap_df['cumulative_importance_percentage'] <= 80].shape[0]
+        }
+
+        print(f"\nTop 10 features basées sur l'analyse SHAP:")
+        print(results['top_10_features'][:10])  # N'affiche que les 10 premiers
+        print(
+            f"\nNombre de features nécessaires pour expliquer 80% de l'importance : {results['features_for_80_percent']}")
 
     except Exception as e:
         print(f"Erreur lors du calcul des importances: {str(e)}")
         traceback.print_exc()
         raise
 
-    # Création des graphiques de dépendance si demandé
+        # Création des graphiques de dépendance si demandé
     if create_dependence_plots:
         print("\nCréation des graphiques de dépendance...")
         most_important_features = shap_df['feature'].head(max_dependence_plots)
 
-        for feature in most_important_features:
+        for idx, feature in enumerate(most_important_features):
             try:
                 plt.figure(figsize=(10, 6))
                 shap.dependence_plot(feature, shap_values, X, show=False)
                 plt.title(f"SHAP Dependence Plot - {feature} - {dataset_name}")
                 plt.tight_layout()
-                dep_plot_path = os.path.join(save_dir, f'shap_dependence_{feature}_{dataset_name}.png')
+
+                # Ajout du préfixe numérique au nom du fichier
+                dep_plot_path = os.path.join(dependence_dir, f'{idx}_shap_dependence_{feature}_{dataset_name}.png')
                 plt.savefig(dep_plot_path, dpi=300, bbox_inches='tight')
                 plt.close()
                 print(f"Graphique de dépendance créé pour {feature}")
@@ -998,7 +973,7 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
 
     print(f"\nAnalyse SHAP terminée - Tous les résultats sont sauvegardés dans: {save_dir}")
 
-    return shap_values, shap_values_explanation
+    return shap_values, shap_values_explanation, results
 
 
 
@@ -1103,8 +1078,12 @@ def compare_shap_distributions(shap_values_train=None, shap_explanation_train=No
     None
         Sauvegarde les graphiques dans le répertoire spécifié
     """
-    # Créer le répertoire de sauvegarde s'il n'existe pas
+    # Créer le répertoire principal de sauvegarde s'il n'existe pas
     os.makedirs(save_dir, exist_ok=True)
+
+    # Créer le sous-répertoire pour les analyses combinées
+    combined_dir = os.path.join(save_dir, 'shap_combined')
+    os.makedirs(combined_dir, exist_ok=True)
 
     # Vérifier que les colonnes sont identiques dans X_train et X_test
     if not all(X_train.columns == X_test.columns):
@@ -1115,7 +1094,7 @@ def compare_shap_distributions(shap_values_train=None, shap_explanation_train=No
     top_features = X_train.columns[np.argsort(feature_importance)[-top_n:]]
 
     # Pour chaque feature importante
-    for feature in top_features:
+    for idx, feature in enumerate(reversed(top_features)):
         # Créer une figure avec 3 sous-graphiques côte à côte
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
 
@@ -1129,17 +1108,14 @@ def compare_shap_distributions(shap_values_train=None, shap_explanation_train=No
         ax1.set_ylabel("Density")
         ax1.legend()
 
-        # 2. Distribution par classe
+        # 2. Distribution par classe sur train
         feature_idx = X_train.columns.get_loc(feature)
 
-        # Stats pour debug
-        print(f"\nAnalyse pour {feature}:")
-        print(
-            f"Moyenne des valeurs SHAP pour classe 0: {shap_values_train[y_train_label == 0, feature_idx].mean():.6f}")
-        print(
-            f"Moyenne des valeurs SHAP pour classe 1: {shap_values_train[y_train_label == 1, feature_idx].mean():.6f}")
-        print(f"Nombre d'exemples classe 0: {sum(y_train_label == 0)}")
-        print(f"Nombre d'exemples classe 1: {sum(y_train_label == 1)}")
+        # Calcul des statistiques
+        mean_class_0 = shap_values_train[y_train_label == 0, feature_idx].mean()
+        mean_class_1 = shap_values_train[y_train_label == 1, feature_idx].mean()
+        count_class_0 = sum(y_train_label == 0)
+        count_class_1 = sum(y_train_label == 1)
 
         # Histogramme à la place du KDE
         ax2.hist(shap_values_train[y_train_label == 0, feature_idx],
@@ -1147,7 +1123,21 @@ def compare_shap_distributions(shap_values_train=None, shap_explanation_train=No
         ax2.hist(shap_values_train[y_train_label == 1, feature_idx],
                  bins=50, alpha=0.5, color='red', label='Classe 1', density=True)
 
-        ax2.set_title("Distribution par Classe")
+        # Ajout des statistiques sur le graphique
+        stats_text = f"Classe 0 (n={count_class_0}):\nMoyenne SHAP = {mean_class_0:.6f}\n\n" \
+                     f"Classe 1 (n={count_class_1}):\nMoyenne SHAP = {mean_class_1:.6f}"
+
+        # Positionnement du texte dans le coin supérieur droit
+        ax2.text(0.95, 0.95, stats_text,
+                 transform=ax2.transAxes,
+                 verticalalignment='top',
+                 horizontalalignment='right',
+                 bbox=dict(boxstyle='round,pad=0.5',
+                           facecolor='white',
+                           alpha=0.8,
+                           edgecolor='gray'))
+
+        ax2.set_title("Distribution par Classe suur x_train")
         ax2.set_xlabel("SHAP Value")
         ax2.set_ylabel("Density")
         ax2.legend()
@@ -1155,18 +1145,20 @@ def compare_shap_distributions(shap_values_train=None, shap_explanation_train=No
         # 3. Scatter plot SHAP
         feature_idx = list(X_train.columns).index(feature)
         shap.plots.scatter(shap_explanation_train[:, feature_idx], ax=ax3, show=False)
-        ax3.set_title("SHAP Scatter Plot")
+        ax3.set_title("SHAP Scatter Plot sur x_train")
 
         # Ajout du titre global
         plt.suptitle(f"SHAP Analysis - {feature}", fontsize=16, y=1.05)
         plt.tight_layout()
 
-        # Sauvegarde de la figure
-        plt.savefig(os.path.join(save_dir, f'shap_combined_analysis_{feature}.png'),
-                    bbox_inches='tight', dpi=300)
+        # Sauvegarde de la figure dans le sous-répertoire shap_combined
+        save_path = os.path.join(combined_dir, f'{idx}_shap_combined_analysis_{feature}.png')
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
         plt.close()
 
-    print(f"Les graphiques de distribution SHAP ont été sauvegardés dans {save_dir}")
+        print(f"Analyse combinée créée pour la feature: {feature} (rang {idx})")
+
+    print(f"Les graphiques de distribution SHAP ont été sauvegardés dans {combined_dir}")
 
     # Afficher un récapitulatif des features analysées
     print("Features analysées : " + " | ".join(f"{i}. {feature}" for i, feature in enumerate(top_features, 1)))
@@ -1323,11 +1315,11 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
     """Fonction principale pour l'analyse SHAP."""
 
     # Analyse SHAP sur l'ensemble d'entraînement et de test
-    shap_values_train,shap_explanation_train = analyze_shap_values(final_model, X_train, y_train_label, "Training_Set",
+    shap_values_train,shap_explanation_train,resulat_train_shap_feature_importance = analyze_shap_values(final_model, X_train, y_train_label, "Training_Set",
                                             create_dependence_plots=True,
-                                            max_dependence_plots=3, save_dir=save_dir)
-    shap_values_test,shap_explanation_test = analyze_shap_values(final_model, X_test, y_test_label, "Test_Set", create_dependence_plots=True,
-                                           max_dependence_plots=3, save_dir=save_dir)
+                                            max_dependence_plots=40, save_dir=save_dir)
+    shap_values_test,shap_explanation_test, resulat_test_shap_feature_importance= analyze_shap_values(final_model, X_test, y_test_label, "Test_Set", create_dependence_plots=True,
+                                           max_dependence_plots=40, save_dir=save_dir)
 
     # Comparaison des importances de features et des distributions SHAP
     importance_df = compare_feature_importance(shap_values_train, shap_values_test, X_train, X_test, save_dir=save_dir)
@@ -1340,7 +1332,7 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
     shap_comparison = compare_mean_shap_values(
         shap_values_train=shap_values_train, shap_values_test=shap_values_test, X_train=X_train, save_dir=save_dir)
 
-    return importance_df, shap_comparison, shap_values_train, shap_values_test
+    return importance_df, shap_comparison, shap_values_train, shap_values_test,resulat_test_shap_feature_importance
 
 
 def analyze_xgboost_trees(model, feature_names, nan_value, max_trees=None):
@@ -1916,13 +1908,20 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
     comparison.to_csv(os.path.join(output_dir, 'global_vs_selected_comparison.csv'), index=False, sep=';')
 
     # 5. Visualiser les distributions
+    # Créer le sous-dossier 'distribution_features' dans output_dir
+    distribution_dir = os.path.join(output_dir, 'distribution_features')
+    os.makedirs(distribution_dir, exist_ok=True)
+
+    # Générer et sauvegarder les graphiques dans le sous-dossier
     for feature in top_features:
         plt.figure(figsize=(10, 6))
         sns.histplot(X_test_top[feature], kde=True, label='Global')
         sns.histplot(selected_samples[feature], kde=True, label=f'Selected ({prob_min:.2f} - {prob_max:.2f})')
         plt.title(f"Distribution de {feature}")
         plt.legend()
-        plt.savefig(os.path.join(output_dir, f'distribution_{feature}.png'))
+
+        # Enregistrer dans le sous-dossier
+        plt.savefig(os.path.join(distribution_dir, f'distribution_{feature}.png'))
         plt.close()
 
     # 6. Analyse des corrélations entre les features pour ces échantillons
@@ -1943,18 +1942,24 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
     print(f"Analyse terminée. Les résultats ont été sauvegardés dans le dossier '{output_dir}'.")
 
 
-def init_dataSet(df=None, nanvalue_to_newval=None, selected_columns=None):
+def init_dataSet(df_init=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None, results_directory=None):
     # Gestion des valeurs NaN
+    selected_columns = config.get('selected_columns', None)
+
+    df_filtered = sessions_selection(df_init, CUSTOM_SESSIONS_=CUSTOM_SESSIONS_,
+                                   results_directory=results_directory)
+
     if nanvalue_to_newval is not None:
-        df = df.fillna(nanvalue_to_newval)
+        df_filtered = df_filtered.fillna(nanvalue_to_newval).infer_objects(copy=False)
         nan_value = nanvalue_to_newval
     else:
         nan_value = np.nan
 
     print("Division des données en ensembles d'entraînement et de test...")
     try:
-        train_df, nb_SessionTrain, test_df, nb_SessionTest = split_sessions(df, test_size=0.2, min_train_sessions=2,
-                                                                            min_test_sessions=2)
+        test_size_ratio = config.get('test_size_ratio', 0.8)
+        train_df, nb_SessionTrain, test_df, nb_SessionTest = split_sessions(df_filtered, test_size=test_size_ratio, min_train_sessions=2,
+                                                                          min_test_sessions=2)
     except ValueError as e:
         print(f"Erreur lors de la division des sessions : {e}")
         sys.exit(1)
@@ -1962,111 +1967,433 @@ def init_dataSet(df=None, nanvalue_to_newval=None, selected_columns=None):
     print(f"Nombre de session dans x_train  {nb_SessionTrain}  ")
     print(f"Nombre de session dans x_test  {nb_SessionTest}  ")
 
-    # Garder une copie de train_df avec son index original
-    X_train_full = train_df.copy()
+    # On crée une copie de selected_columns pour ne pas modifier la liste originale
+    columns_to_use = selected_columns.copy()
 
-    # Préparation des features et de la cible
-    X_train = train_df[selected_columns]
-    y_train_label = train_df['class_binaire']
-    X_test = test_df[selected_columns]
-    y_test_label = test_df['class_binaire']
+    # Création des versions "full" avec les colonnes sélectionnées
+    X_train_full = train_df[:]
+    y_train_full_label = train_df['class_binaire']
+    X_test_full = test_df[:]
+    y_test_full_label = test_df['class_binaire']
 
-    # Suppression des échantillons avec la classe 99 en préservant l'index
-    mask_train = y_train_label != 99
-    X_train = X_train[mask_train]
-    y_train_label = y_train_label[mask_train]
+    # Création des versions filtrées (sans classe 99)
+    mask_train = y_train_full_label != 99
+    X_train = X_train_full[mask_train]
+    X_train =X_train[columns_to_use]
+    y_train_label = y_train_full_label[mask_train]
 
-    mask_test = y_test_label != 99
-    X_test = X_test[mask_test]
-    y_test_label = y_test_label[mask_test]
+    mask_test = y_test_full_label != 99
+    X_test = X_test_full[mask_test]
+    X_test = X_test[columns_to_use]
+    y_test_label = y_test_full_label[mask_test]
 
-    # Sauvegarder les copies avec catégories avant suppression
-    X_train_withCat = X_train.copy()
-    y_train_label_withCat = y_train_label.copy()
-    X_test_withCat = X_test.copy()
-    y_test_label_withCat = y_test_label.copy()
+    # ===== Gestion des colonnes temporelles pour le logging et la validation croisée =====
+    # Ces colonnes sont nécessaires pour certains modes de validation croisée
+    # et pour le logging temporel des prédictions, mais peuvent être absentes de X_train_full
+    # si elles ne sont pas utilisées comme features
 
-    # Colonnes à supprimer
-    columns_to_drop = ['class_binaire', 'date', 'trade_category', 'SessionStartEnd']
+    # Liste des colonnes temporelles nécessaires
+    temporal_columns = ['timeStampOpening', 'SessionStartEnd', 'deltaTimestampOpening']
 
-    # Supprimer les colonnes en préservant l'index
-    X_train = X_train.drop(columns=columns_to_drop, errors='ignore')
-    X_test = X_test.drop(columns=columns_to_drop, errors='ignore')
+    for col in temporal_columns:
+        if col not in X_train_full.columns:
+            # Vérification de la présence de la colonne dans le DataFrame initial
+            # df_init contient toutes les colonnes d'origine avant la sélection des features
+            if col not in df_init.columns:
+                raise ValueError(
+                    f"La colonne '{col}' n'est pas présente dans df_init. Cette colonne est nécessaire pour les logs temporels et la validation croisée.")
 
-    return (X_train_full, X_train, y_train_label, X_test, y_test_label,
+            # Création d'une copie de X_train_full lors de la première modification
+            # pour éviter les modifications involontaires sur le DataFrame d'origine
+            if isinstance(X_train_full, pd.DataFrame) and not X_train_full.columns.empty:
+                X_train_full = X_train_full.copy()
+
+            # Ajout de la colonne en respectant l'indexation de X_train_full
+            # On utilise .loc pour garantir un alignement correct des indices
+            # entre df_init et X_train_full
+            X_train_full[col] = df_init.loc[X_train_full.index, col]
+            print(f"Colonne '{col}' ajoutée à X_train_full pour les logs temporels et la validation croisée")
+
+    # ===== Vérification de la cohérence des distributions de classes =====
+    # Compare les proportions de classes entre les différents ensembles de données
+    # pour s'assurer qu'il n'y a pas d'incohérence dans la séparation des données
+
+    def get_class_counts(y):
+        """Retourne un tuple (count_0, count_1) pour un array/series donné"""
+        if isinstance(y, pd.Series):
+            return (y == 0).sum(), (y == 1).sum()
+        return (y == 0).sum(), (y == 1).sum()
+
+    # Vérification des ensembles complets
+    counts_train_full = get_class_counts(y_train_full_label)
+    counts_test_full = get_class_counts(y_test_full_label)
+
+    # Vérification des ensembles réduits
+    counts_train = get_class_counts(y_train_label)
+    counts_test = get_class_counts(y_test_label)
+
+    # Vérification de la cohérence des proportions
+    if counts_train_full != counts_train or counts_test_full != counts_test:
+        error_msg = f"""
+    Incohérence détectée dans la distribution des classes:
+    Train full    : {counts_train_full[0]} classe 0, {counts_train_full[1]} classe 1
+    Train réduit  : {counts_train[0]} classe 0, {counts_train[1]} classe 1
+    Test full     : {counts_test_full[0]} classe 0, {counts_test_full[1]} classe 1
+    Test réduit   : {counts_test[0]} classe 0, {counts_test[1]} classe 1
+    """
+        raise ValueError(error_msg)
+
+    return (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
+            X_train, y_train_label, X_test, y_test_label,
             nb_SessionTrain, nb_SessionTest, nan_value)
 
+def add_early_stopping_zone(ax, best_iteration, color='orange', alpha=0.2):
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    ax.axvspan(best_iteration, xmax, facecolor=color, alpha=alpha)
+    ax.text(best_iteration + (xmax - best_iteration) / 2, ymax, 'Zone post early stopping',
+            horizontalalignment='center', verticalalignment='top', fontsize=12, color='orange')
 
-import csv
-import os
+def plot_custom_metric_evolution_with_trade_info(model, evals_result, metric_name='custom_metric_ProfitBased',
+                                                 n_train_trades=None, n_test_trades=None, results_directory=None,user_input=None):
+    if not evals_result or 'train' not in evals_result or 'test' not in evals_result:
+        print("Résultats d'évaluation incomplets ou non disponibles.")
+        return
 
+    train_metric = evals_result['train'][metric_name]
+    test_metric = evals_result['test'][metric_name]
 
-def save_correlations_to_csv(high_corr_pairs, results_directory, threshold=0.7):
-    # Création du nom du fichier
-    csv_filename = f"correlations_above_{threshold}.csv"
+    iterations = list(range(1, len(train_metric) + 1))
+    best_test_iteration = np.argmax(test_metric)
+
+    fig, ((ax1, ax2, ax5), (ax3, ax4, ax6)) = plt.subplots(2, 3, figsize=(24, 14))
+    fig.suptitle(f'Entraînement du modèle final avec les paramètres optimaux (Optuna) :\n'
+                 f'Évaluation du score {metric_name} sur l\'ensemble d\'entraînement (X_train) '
+                 f'et un nouvel ensemble de test indépendant (X_test)', fontsize=12)
+
+    def add_vertical_line_and_annotations(ax, is_train, is_normalized=False):
+        ax.axvline(x=best_test_iteration, color='green', linestyle='--')
+        y_pos = ax.get_ylim()[1] if is_train else ax.get_ylim()[0]
+        score = train_metric[best_test_iteration] if is_train else test_metric[best_test_iteration]
+        if is_normalized:
+            score = (score - min(train_metric if is_train else test_metric)) / (
+                    max(train_metric if is_train else test_metric) - min(
+                train_metric if is_train else test_metric))
+        ax.annotate(f'{"Train" if is_train else "Test"} Score: {score:.2f}',
+                    (best_test_iteration, y_pos), xytext=(5, 5 if is_train else -5),
+                    textcoords='offset points', ha='left', va='bottom' if is_train else 'top',
+                    fontsize=8, bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5))
+
+    # X_train (Non Normalisé)
+    ax1.plot(iterations, train_metric, label='Train', color='blue')
+    ax1.set_title(f'X_train (Non Normalized)', fontsize=14)
+    ax1.set_xlabel('Number of Iterations', fontsize=12)
+    ax1.set_ylabel(f'{metric_name} Score', fontsize=12)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    ax1.text(0.5, 0.1, f'Profit cumulés réalisé sur {n_train_trades} trades',
+             horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes, fontsize=12,
+             color='blue')
+    add_vertical_line_and_annotations(ax1, is_train=True)
+    add_early_stopping_zone(ax1, best_test_iteration)
+
+    # X_test (Non Normalisé)
+    ax2.plot(iterations, test_metric, label='Test', color='red')
+    ax2.set_title(f'X_test (Non Normalized)', fontsize=14)
+    ax2.set_xlabel('Number of Iterations', fontsize=12)
+    ax2.set_ylabel(f'{metric_name} Score', fontsize=12)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, linestyle='--', alpha=0.7)
+    ax2.text(0.5, 0.1, f'Profit cumulés réalisé sur {n_test_trades} trades',
+             horizontalalignment='center', verticalalignment='center', transform=ax2.transAxes, fontsize=12,
+             color='red')
+    add_vertical_line_and_annotations(ax2, is_train=False)
+    add_early_stopping_zone(ax2, best_test_iteration)
+
+    # Normalisation
+    train_min, train_max = min(train_metric), max(train_metric)
+    test_min, test_max = min(test_metric), max(test_metric)
+    train_normalized = [(val - train_min) / (train_max - train_min) for val in train_metric]
+    test_normalized = [(val - test_min) / (test_max - test_min) for val in test_metric]
+
+    # X_train (Normalisé)
+    ax3.plot(iterations, train_normalized, label='Train (Normalized)', color='blue')
+    ax3.set_title(f'X_train (Normalized)', fontsize=14)
+    ax3.set_xlabel('Number of Iterations', fontsize=12)
+    ax3.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
+    ax3.legend(fontsize=10)
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    ax3.text(0.5, 0.1,
+             f'Profit cumulés réalisé sur {n_train_trades} trades\nNorm Ratio: [{train_min:.4f}, {train_max:.4f}]',
+             horizontalalignment='center', verticalalignment='center', transform=ax3.transAxes, fontsize=12,
+             color='blue')
+    add_vertical_line_and_annotations(ax3, is_train=True, is_normalized=True)
+    add_early_stopping_zone(ax3, best_test_iteration)
+
+    # X_test (Normalisé)
+    ax4.plot(iterations, test_normalized, label='Test (Normalized)', color='red')
+    ax4.set_title(f'X_test (Normalized)', fontsize=14)
+    ax4.set_xlabel('Number of Iterations', fontsize=12)
+    ax4.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
+    ax4.legend(fontsize=10)
+    ax4.grid(True, linestyle='--', alpha=0.7)
+    ax4.text(0.5, 0.1,
+             f'Profit cumulés réalisé sur {n_test_trades} trades\nNorm Ratio: [{test_min:.4f}, {test_max:.4f}]',
+             horizontalalignment='center', verticalalignment='center', transform=ax4.transAxes, fontsize=12,
+             color='red')
+    add_vertical_line_and_annotations(ax4, is_train=False, is_normalized=True)
+    add_early_stopping_zone(ax4, best_test_iteration)
+
+    # X_test (Non Normalisé) jusqu'à best_test_iteration
+    ax5.plot(iterations[:best_test_iteration + 1], test_metric[:best_test_iteration + 1], label='Test', color='red')
+    ax5.set_title(f'X_test (Non Normalized) until best Test Score', fontsize=14)
+    ax5.set_xlabel('Number of Iterations', fontsize=12)
+    ax5.set_ylabel(f'{metric_name} Score', fontsize=12)
+    ax5.legend(fontsize=10)
+    ax5.grid(True, linestyle='--', alpha=0.7)
+    add_vertical_line_and_annotations(ax5, is_train=False)
+
+    # X_test (Normalisé) jusqu'à best_test_iteration
+    ax6.plot(iterations[:best_test_iteration + 1], test_normalized[:best_test_iteration + 1],
+             label='Test (Normalized)', color='red')
+    ax6.set_title(f'X_test (Normalized) until best Test Score', fontsize=14)
+    ax6.set_xlabel('Number of Iterations', fontsize=12)
+    ax6.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
+    ax6.legend(fontsize=10)
+    ax6.grid(True, linestyle='--', alpha=0.7)
+    add_vertical_line_and_annotations(ax6, is_train=False, is_normalized=True)
+    plt.savefig(os.path.join(results_directory, f'Evolution of {metric_name} Score with Trade Information'),
+                dpi=300,
+                bbox_inches='tight')
+    plt.tight_layout()
+    if user_input.lower() == 'd':
+        plt.show()
+    plt.close()
+
+def save_correlations_to_csv(corr_matrix, results_directory):
+    csv_filename = "all_correlations.csv"
     csv_path = os.path.join(results_directory, csv_filename)
 
     # Initialisation
     seen_pairs = set()
     csv_data = []
 
-    # Traitement des paires de corrélation
-    for feature_i, feature_j, corr_value in high_corr_pairs:
-        # Créer une paire triée pour éviter les doublons
-        pair = tuple(sorted([feature_i, feature_j]))
+    # Traitement de toutes les corrélations
+    for i in range(len(corr_matrix.columns)):
+        for j in range(len(corr_matrix.columns)):
+            feature_i = corr_matrix.columns[i]
+            feature_j = corr_matrix.columns[j]
+            corr_value = corr_matrix.iloc[i, j]
 
-        # Si la paire n'est pas encore vue et ce n'est pas une auto-corrélation
-        if pair not in seen_pairs and feature_i != feature_j:
-            # Affichage dans la console
-            print(f"{feature_i} <-> {feature_j}: {corr_value:.4f}")
+            # Créer une paire triée pour éviter les doublons
+            pair = tuple(sorted([feature_i, feature_j]))
 
-            # Préparation données CSV
-            interaction = f"{feature_i} <-> {feature_j}"
-            formatted_value = f"{corr_value:.4f}"
-            csv_data.append([interaction, formatted_value])
+            # Si la paire n'est pas encore vue et ce n'est pas une auto-corrélation
+            if pair not in seen_pairs and feature_i != feature_j:
+                # Préparation données CSV
+                interaction = f"{feature_i} <-> {feature_j}"
+                absolute_corr = abs(corr_value)
+                csv_data.append([
+                    interaction,
+                    f"{corr_value:.4f}",
+                    f"{absolute_corr:.4f}"
+                ])
+                seen_pairs.add(pair)
 
-            seen_pairs.add(pair)
+    # Tri par corrélation absolue décroissante
+    csv_data.sort(key=lambda x: float(x[2]), reverse=True)
 
     # Sauvegarde du CSV
-    with open(csv_path, 'w', newline='') as csvfile:
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile, delimiter=';')
-        writer.writerow(['Correlation_Pair', 'Correlation_Value'])
+        writer.writerow(['Correlation_Pair', 'Correlation_Value', 'Absolute_Correlation'])
         writer.writerows(csv_data)
 
     print(f"\nFichier CSV sauvegardé: {csv_path}")
     return csv_path
+def analyze_and_save_feature_correlations(X_train, results_directory, threshold=0.8):
+    """
+    Analyzes feature correlations in a given DataFrame, visualizes the correlation matrix,
+    identifies pairs of highly correlated features, and saves the heatmap to a file.
+
+    Parameters:
+    - X_train (pd.DataFrame): The feature DataFrame.
+    - results_directory (str): The directory where the correlation heatmap will be saved.
+    - threshold (float): The correlation threshold for identifying highly correlated feature pairs.
+
+    Returns:
+    - high_corr_pairs (list of tuples): Sorted list of tuples with highly correlated feature pairs and their correlation values.
+    """
+    # Calculate the correlation matrix
+    corr_matrix = X_train.corr()
+
+    # Visualize the correlation matrix with smaller font size and two decimal precision
+    plt.figure(figsize=(20, 20))
+    sns.heatmap(corr_matrix, annot=True, fmt='.1f', cmap='coolwarm', annot_kws={"size": 4})
+    plt.title('Feature Correlation Matrix', fontsize=10)
+
+    # Ensure the results directory exists
+    os.makedirs(results_directory, exist_ok=True)
+
+    # Save the heatmap
+    heatmap_path = os.path.join(results_directory, 'feature_correlation_matrix.png')
+    plt.savefig(heatmap_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Identify pairs of highly correlated features
+    high_corr_pairs = []
+    for i in range(len(corr_matrix.columns)):
+        for j in range(i):
+            if abs(corr_matrix.iloc[i, j]) > threshold:
+                feature_i = corr_matrix.columns[i]
+                feature_j = corr_matrix.columns[j]
+                corr_value = corr_matrix.iloc[i, j]
+                high_corr_pairs.append((feature_i, feature_j, corr_value))
+
+    # Sort the results by the absolute correlation value in descending order
+    high_corr_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+    # Display the sorted results in the console
+    print(f"Highly correlated pairs (threshold={threshold}):")
+    for feature_i, feature_j, corr_value in high_corr_pairs:
+        print(f"{feature_i} <-> {feature_j}: {corr_value:.2f}")
+
+    csv_path = save_correlations_to_csv(corr_matrix, results_directory)
+
+    return high_corr_pairs
 
 
-# Utilisation
-"""
-# Si high_corr_pairs est une liste de tuples (feature_i, feature_j, corr_value)
-save_correlations_to_csv(
-    high_corr_pairs=high_corr_pairs,
-    results_directory=results_directory,
-    threshold=0.7  # Seuil de corrélation utilisé
-)
-"""
 
-def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=None,y_test_label=None,dtrain=None,dtest=None,
+
+def analyze_shap_interactions(final_model, X_test, results_directory, dataset_name="test"):
+    """
+    Analyse les interactions SHAP et génère des graphiques ainsi qu'un CSV.
+
+    Parameters:
+    -----------
+    final_model : xgboost.Booster
+        Modèle XGBoost entraîné.
+    X_test : pandas.DataFrame
+        Données pour lesquelles les interactions SHAP doivent être calculées.
+    results_directory : str
+        Répertoire où sauvegarder les résultats.
+    dataset_name : str, optional (default="test")
+        Nom du dataset (par exemple, "train" ou "test") pour personnaliser les fichiers générés.
+
+    Returns:
+    --------
+    None
+    """
+
+    # Calcul des valeurs d'interaction SHAP
+    shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
+    # Exclure le biais en supprimant la dernière ligne et la dernière colonne
+    shap_interaction_values = shap_interaction_values[:, :-1, :-1]
+
+    # Vérification de la compatibilité des dimensions
+    print(f"Shape of shap_interaction_values ({dataset_name}):", shap_interaction_values.shape)
+    print(f"Number of features in X_test ({dataset_name}):", len(X_test.columns))
+
+    if shap_interaction_values.shape[1:] != (len(X_test.columns), len(X_test.columns)):
+        print(
+            "Erreur : Incompatibilité entre les dimensions des valeurs d'interaction SHAP et le nombre de features."
+        )
+        print(f"Dimensions des valeurs d'interaction SHAP : {shap_interaction_values.shape}")
+        print(f"Nombre de features dans X_test ({dataset_name}): {len(X_test.columns)}")
+        return
+
+    # Calcul de la matrice d'interactions
+    interaction_matrix = np.abs(shap_interaction_values).sum(axis=0)
+    feature_names = X_test.columns
+    interaction_df = pd.DataFrame(interaction_matrix, index=feature_names, columns=feature_names)
+
+    # Masquer la diagonale (interactions d'une feature avec elle-même)
+    np.fill_diagonal(interaction_df.values, 0)
+
+    # Récupérer toutes les interactions non nulles
+    all_interactions = interaction_df.unstack().sort_values(ascending=False)
+
+    # Pour le graphique, on garde les top N
+    N = 80
+    top_interactions = all_interactions.head(N)
+
+    # Visualisation des top interactions
+    plt.figure(figsize=(24, 16))
+    top_interactions.plot(kind='bar')
+    plt.title(f"Top {N} Feature Interactions ({dataset_name})", fontsize=16)
+    plt.xlabel("Feature Pairs", fontsize=12)
+    plt.ylabel("Total Interaction Strength", fontsize=10)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(results_directory, f'top_feature_interactions_{dataset_name}.png'),
+        dpi=300, bbox_inches='tight'
+    )
+    plt.close()
+
+    # Calculer la somme totale des interactions pour la normalisation
+    total_interaction_value = sum(value for (f1, f2), value in all_interactions.items() if f1 != f2)
+
+    # Initialisation
+    seen_pairs = set()
+    csv_filename = f"all_interactions_{dataset_name}.csv"
+    csv_path = os.path.join(results_directory, csv_filename)
+
+    # Préparation des données CSV avec normalisation
+    csv_data = []
+
+    for (f1, f2), value in all_interactions.items():
+        pair = tuple(sorted([f1, f2]))
+        if f1 != f2 and pair not in seen_pairs:
+            percentage = 2 * (value / total_interaction_value) * 100
+            if len(seen_pairs) < 40:
+                print(f"{f1} <-> {f2}: {value:.4f} ({percentage:.2f}%)")
+            interaction = f"{f1} <-> {f2}"
+            csv_data.append([interaction, f"{value:.4f}", f"{percentage:.4f}"])
+            seen_pairs.add(pair)
+
+    csv_data.sort(key=lambda x: float(x[1]), reverse=True)
+
+    # Sauvegarde du CSV
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile, delimiter=';')
+        writer.writerow(['Interaction', 'Value', 'Percentage_Contribution'])
+        writer.writerows(csv_data)
+
+    print(f"\nLes interactions ({dataset_name}) ont été sauvegardées dans : {csv_path}")
+    print(f"Nombre total d'interactions sauvegardées ({dataset_name}) : {len(csv_data)}")
+
+    # Création de la heatmap
+    top_features = interaction_df.sum().sort_values(ascending=False).head(N).index
+    plt.figure(figsize=(26, 20))
+    sns.heatmap(
+        interaction_df.loc[top_features, top_features].round(0).astype(int),
+        annot=True, cmap='coolwarm', fmt='d',
+        annot_kws={'size': 7}, square=True, linewidths=0.5,
+        cbar_kws={'shrink': .8}
+    )
+    plt.title(f"SHAP Interaction Values Heatmap ({dataset_name})", fontsize=16)
+    plt.tight_layout()
+    plt.xticks(rotation=90, ha='center')
+    plt.yticks(rotation=0)
+    plt.savefig(
+        os.path.join(results_directory, f'feature_interaction_heatmap_{dataset_name}.png'),
+        dpi=300, bbox_inches='tight'
+    )
+    plt.close()
+
+    print(f"Heatmap des interactions sauvegardée sous 'feature_interaction_heatmap_{dataset_name}.png'")
+
+
+def train_finalModel_analyse(xgb=None,
+                             X_train=None, X_train_full=None,  X_test=None, X_test_full=None,
+                             y_train_label=None,y_test_label=None,dtrain=None,dtest=None,
                              nb_SessionTest=None,nan_value=None,feature_names=None,best_params=None,config=None,weight_param=None,
                              user_input=None):
     results_directory = config.get('results_directory', None)
 
     if results_directory == None:
         exit(25)
-
-    # Réduire X_train à seulement les colonnes sélectionnées
-    X_train = X_train[feature_names]
-    X_test = X_test[feature_names]
-
-
-    # Créer les DMatrix pour l'entraînement
-    sample_weights_train = compute_sample_weight('balanced', y=y_train_label)
-    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights_train)
-
-    # Créer les DMatrix pour le test
-    sample_weights_test = compute_sample_weight('balanced', y=y_test_label)
-    dtest = xgb.DMatrix(X_test, label=y_test_label, weight=sample_weights_test)
 
     # best_params = study_xgb.best_params.copy()
     best_params['tree_method'] = 'hist'
@@ -2085,13 +2412,13 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
 
 
-    optuna_options_method=config.get('optuna_options_method', None)
-    print(optuna_options_method)
-    if (optuna_options_method==None):
+    xgb_metric_method=config.get('xgb_metric_method', None)
+    print(xgb_metric_method)
+    if (xgb_metric_method==None):
         exit(13)
 
     # Configurer custom_metric et obj_function si nécessaire
-    if optuna_options_method == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
+    if xgb_metric_method == xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
         metric_dict = {
             'profit_per_tp': best_params['profit_per_tp'],
             'loss_per_fp': best_params['loss_per_fp'],
@@ -2111,7 +2438,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
         obj_function = None
         best_params['objective'] = 'binary:logistic'
         best_params['eval_metric'] = ['aucpr', 'logloss']
-        print("not USE_OPTIMA_CUSTOM_METRIC_PROFITBASED")
+        print("not XGB_METRIC_CUSTOM_METRIC_PROFITBASED")
         exit(66)
 
     print(f"Seuil optimal: {optimal_threshold}")
@@ -2123,7 +2450,13 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     print(f"best_params dans les parametres d'optimisations  filtrés dans parametre non compatibles xgboost: \n{best_params}")
 
+    start_time_train, end_time_train, num_sessions_train = get_val_cv_time_range(X_train_full, X_train)
+    print(f"\nPériode d'entraînement : du {timestamp_to_date_utc(start_time_train)} au {timestamp_to_date_utc(end_time_train)}")
+    print(f"Nombre de sessions entraînement : {num_sessions_train}")
 
+    start_time_test, end_time_test, num_sessions_test = get_val_cv_time_range(X_test_full, X_test)
+    print(f"Période de test : du {timestamp_to_date_utc(start_time_test)} au {timestamp_to_date_utc(end_time_test)}")
+    print(f"Nombre de sessions test : {num_sessions_test}\n")
 
     # Entraîner le modèle final
     evals_result = {}  # Créez un dictionnaire vide pour stocker les résultats
@@ -2170,140 +2503,16 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     final_model.save_model(model_file)
     print(f"\nModèle sauvegardé: {model_file}")
 
-    def add_early_stopping_zone(ax, best_iteration, color='orange', alpha=0.2):
-        xmin, xmax = ax.get_xlim()
-        ymin, ymax = ax.get_ylim()
-        ax.axvspan(best_iteration, xmax, facecolor=color, alpha=alpha)
-        ax.text(best_iteration + (xmax - best_iteration) / 2, ymax, 'Zone post early stopping',
-                horizontalalignment='center', verticalalignment='top', fontsize=12, color='orange')
-
-    def plot_custom_metric_evolution_with_trade_info(model, evals_result, metric_name='custom_metric_ProfitBased',
-                                                     n_train_trades=None, n_test_trades=None, results_directory=None,user_input=None):
-        if not evals_result or 'train' not in evals_result or 'test' not in evals_result:
-            print("Résultats d'évaluation incomplets ou non disponibles.")
-            return
-
-        train_metric = evals_result['train'][metric_name]
-        test_metric = evals_result['test'][metric_name]
-
-        iterations = list(range(1, len(train_metric) + 1))
-        best_test_iteration = np.argmax(test_metric)
-
-        fig, ((ax1, ax2, ax5), (ax3, ax4, ax6)) = plt.subplots(2, 3, figsize=(24, 14))
-        fig.suptitle(f'Entraînement du modèle final avec les paramètres optimaux (Optuna) :\n'
-                     f'Évaluation du score {metric_name} sur l\'ensemble d\'entraînement (X_train) '
-                     f'et un nouvel ensemble de test indépendant (X_test)', fontsize=12)
-
-        def add_vertical_line_and_annotations(ax, is_train, is_normalized=False):
-            ax.axvline(x=best_test_iteration, color='green', linestyle='--')
-            y_pos = ax.get_ylim()[1] if is_train else ax.get_ylim()[0]
-            score = train_metric[best_test_iteration] if is_train else test_metric[best_test_iteration]
-            if is_normalized:
-                score = (score - min(train_metric if is_train else test_metric)) / (
-                        max(train_metric if is_train else test_metric) - min(
-                    train_metric if is_train else test_metric))
-            ax.annotate(f'{"Train" if is_train else "Test"} Score: {score:.2f}',
-                        (best_test_iteration, y_pos), xytext=(5, 5 if is_train else -5),
-                        textcoords='offset points', ha='left', va='bottom' if is_train else 'top',
-                        fontsize=8, bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5))
-
-        # X_train (Non Normalisé)
-        ax1.plot(iterations, train_metric, label='Train', color='blue')
-        ax1.set_title(f'X_train (Non Normalized)', fontsize=14)
-        ax1.set_xlabel('Number of Iterations', fontsize=12)
-        ax1.set_ylabel(f'{metric_name} Score', fontsize=12)
-        ax1.legend(fontsize=10)
-        ax1.grid(True, linestyle='--', alpha=0.7)
-        ax1.text(0.5, 0.1, f'Profit cumulés réalisé sur {n_train_trades} trades',
-                 horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes, fontsize=12,
-                 color='blue')
-        add_vertical_line_and_annotations(ax1, is_train=True)
-        add_early_stopping_zone(ax1, best_test_iteration)
-
-        # X_test (Non Normalisé)
-        ax2.plot(iterations, test_metric, label='Test', color='red')
-        ax2.set_title(f'X_test (Non Normalized)', fontsize=14)
-        ax2.set_xlabel('Number of Iterations', fontsize=12)
-        ax2.set_ylabel(f'{metric_name} Score', fontsize=12)
-        ax2.legend(fontsize=10)
-        ax2.grid(True, linestyle='--', alpha=0.7)
-        ax2.text(0.5, 0.1, f'Profit cumulés réalisé sur {n_test_trades} trades',
-                 horizontalalignment='center', verticalalignment='center', transform=ax2.transAxes, fontsize=12,
-                 color='red')
-        add_vertical_line_and_annotations(ax2, is_train=False)
-        add_early_stopping_zone(ax2, best_test_iteration)
-
-        # Normalisation
-        train_min, train_max = min(train_metric), max(train_metric)
-        test_min, test_max = min(test_metric), max(test_metric)
-        train_normalized = [(val - train_min) / (train_max - train_min) for val in train_metric]
-        test_normalized = [(val - test_min) / (test_max - test_min) for val in test_metric]
-
-        # X_train (Normalisé)
-        ax3.plot(iterations, train_normalized, label='Train (Normalized)', color='blue')
-        ax3.set_title(f'X_train (Normalized)', fontsize=14)
-        ax3.set_xlabel('Number of Iterations', fontsize=12)
-        ax3.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
-        ax3.legend(fontsize=10)
-        ax3.grid(True, linestyle='--', alpha=0.7)
-        ax3.text(0.5, 0.1,
-                 f'Profit cumulés réalisé sur {n_train_trades} trades\nNorm Ratio: [{train_min:.4f}, {train_max:.4f}]',
-                 horizontalalignment='center', verticalalignment='center', transform=ax3.transAxes, fontsize=12,
-                 color='blue')
-        add_vertical_line_and_annotations(ax3, is_train=True, is_normalized=True)
-        add_early_stopping_zone(ax3, best_test_iteration)
-
-        # X_test (Normalisé)
-        ax4.plot(iterations, test_normalized, label='Test (Normalized)', color='red')
-        ax4.set_title(f'X_test (Normalized)', fontsize=14)
-        ax4.set_xlabel('Number of Iterations', fontsize=12)
-        ax4.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
-        ax4.legend(fontsize=10)
-        ax4.grid(True, linestyle='--', alpha=0.7)
-        ax4.text(0.5, 0.1,
-                 f'Profit cumulés réalisé sur {n_test_trades} trades\nNorm Ratio: [{test_min:.4f}, {test_max:.4f}]',
-                 horizontalalignment='center', verticalalignment='center', transform=ax4.transAxes, fontsize=12,
-                 color='red')
-        add_vertical_line_and_annotations(ax4, is_train=False, is_normalized=True)
-        add_early_stopping_zone(ax4, best_test_iteration)
-
-        # X_test (Non Normalisé) jusqu'à best_test_iteration
-        ax5.plot(iterations[:best_test_iteration + 1], test_metric[:best_test_iteration + 1], label='Test', color='red')
-        ax5.set_title(f'X_test (Non Normalized) until best Test Score', fontsize=14)
-        ax5.set_xlabel('Number of Iterations', fontsize=12)
-        ax5.set_ylabel(f'{metric_name} Score', fontsize=12)
-        ax5.legend(fontsize=10)
-        ax5.grid(True, linestyle='--', alpha=0.7)
-        add_vertical_line_and_annotations(ax5, is_train=False)
-
-        # X_test (Normalisé) jusqu'à best_test_iteration
-        ax6.plot(iterations[:best_test_iteration + 1], test_normalized[:best_test_iteration + 1],
-                 label='Test (Normalized)', color='red')
-        ax6.set_title(f'X_test (Normalized) until best Test Score', fontsize=14)
-        ax6.set_xlabel('Number of Iterations', fontsize=12)
-        ax6.set_ylabel(f'Normalized {metric_name} Score', fontsize=12)
-        ax6.legend(fontsize=10)
-        ax6.grid(True, linestyle='--', alpha=0.7)
-        add_vertical_line_and_annotations(ax6, is_train=False, is_normalized=True)
-        plt.savefig(os.path.join(results_directory, f'Evolution of {metric_name} Score with Trade Information'),
-                    dpi=300,
-                    bbox_inches='tight')
-        plt.tight_layout()
-        if user_input.lower() == 'd':
-            plt.show()
-        plt.close()
 
     # Utilisation de la fonction
     plot_custom_metric_evolution_with_trade_info(final_model, evals_result, n_train_trades=len(X_train),
                                                  n_test_trades=len(X_test), results_directory=results_directory,user_input=user_input)
 
-
-
     print_notification('###### FIN: ENTRAINEMENT MODELE FINAL ##########', color="blue")
 
     print_notification('###### DEBUT: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
-    importance_df, shap_comparison, shap_values_train, shap_values_test = main_shap_analysis(
+    importance_df, shap_comparison, shap_values_train, shap_values_test,resulat_test_shap_feature_importance = main_shap_analysis(
         final_model, X_train, y_train_label, X_test, y_test_label,
         save_dir=os.path.join(results_directory, 'shap_dependencies_results'))
     print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
@@ -2325,10 +2534,17 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     # Obtenir les probabilités prédites pour la classe positive
     y_test_predProba = final_model.predict(dtest)
+    y_train_predProba = final_model.predict(dtrain)
+
 
     # Convertir les prédictions en CuPy avant transformation
+
+    y_train_predProba = cp.asarray(y_train_predProba)
+    y_train_predProba = sigmoidCustom(y_train_predProba)
+
     y_test_predProba = cp.asarray(y_test_predProba)
-    y_test_predProba = sigmoidCustom(y_test_predProba)  # Appliquer la transformation sigmoïde sur CuPy
+    y_test_predProba = sigmoidCustom(y_test_predProba)
+
 
     # Vérification des prédictions après transformation
     min_val = cp.min(y_test_predProba).item()
@@ -2348,6 +2564,8 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     # Appliquer un seuil optimal pour convertir les probabilités en classes
     y_test_pred_threshold = (y_test_predProba > optimal_threshold).astype(int)
+    y_train_pred_threshold = (y_train_predProba > optimal_threshold).astype(int)
+
 
     print_notification('###### FIN: GENERATION PREDICTION AVEC MOBEL FINAL (TEST) ##########', color="blue")
 
@@ -2365,12 +2583,18 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     import warnings
 
-    if 'deltaTimestampOpeningSection1min' in X_test.columns:
-        plot_fp_tp_rates(X_test, y_test_label, y_test_predProba, 'deltaTimestampOpeningSection1min',
-                         optimal_threshold, user_input=user_input, index_size=5, results_directory=results_directory)
+    if 'deltaTimestampOpeningSession1min' in X_test.columns:
+        plot_fp_tp_rates(X_test=X_train, y_test_label=y_train_label, y_test_predProba=y_train_predProba,
+                         feature_deltaTime_name='deltaTimestampOpeningSession1min', optimal_threshold=optimal_threshold,
+                         dataset_name="train", user_input=user_input,  results_directory=results_directory)
+        plot_fp_tp_rates(X_test=X_test, y_test_label=y_test_label, y_test_predProba=y_test_predProba,
+                         feature_deltaTime_name='deltaTimestampOpeningSession1min',optimal_threshold=optimal_threshold,
+                         dataset_name="test", user_input=user_input, results_directory=results_directory)
+
+
     else:
         warnings.warn(
-            "La colonne 'deltaTimestampOpeningSection1min' n'est pas présente dans le jeu de test - Graphique non généré",
+            "La colonne 'deltaTimestampOpeningSession1min' n'est pas présente dans le jeu de test - Graphique non généré",
             UserWarning)
 
     print("\nDistribution des probabilités prédites sur XTest:")
@@ -2550,109 +2774,6 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     print_notification('###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########',
                        color="blue")
 
-    ###### DEBUT: ANALYSE SHAP ##########
-    print_notification('###### DEBUT: ANALYSE SHAP ##########', color="blue")
-
-    def analyze_shap_feature_importance(shap_values, X, ensembleType='train', save_dir='./shap_feature_importance/'):
-        """
-        Analyse l'importance des features basée sur les valeurs SHAP et génère des visualisations.
-
-        Parameters:
-        -----------
-        shap_values : np.array
-            Les valeurs SHAP calculées pour l'ensemble de données.
-        X : pd.DataFrame
-            Les features de l'ensemble de données.
-        ensembleType : str, optional
-            Type d'ensemble de données ('train' ou 'test'). Détermine le suffixe des fichiers sauvegardés.
-        save_dir : str, optional
-            Le répertoire où sauvegarder les graphiques générés (par défaut './shap_feature_importance/').
-
-        Returns:
-        --------
-        dict
-            Un dictionnaire contenant les résultats clés de l'analyse.
-        """
-        if ensembleType not in ['train', 'test']:
-            raise ValueError("ensembleType doit être 'train' ou 'test'")
-
-        os.makedirs(save_dir, exist_ok=True)
-        suffix = f"_{ensembleType}"
-
-        # Calcul des valeurs SHAP moyennes pour chaque feature
-        shap_mean = np.abs(shap_values).mean(0)
-        feature_importance = pd.DataFrame({
-            'feature': X.columns,
-            'importance': shap_mean,
-            'effect': np.mean(shap_values, axis=0)  # Effet moyen (positif ou négatif)
-        })
-        feature_importance = feature_importance.sort_values('importance', ascending=False)
-
-        # Graphique des 20 features les plus importantes
-        top_20_features = feature_importance.head(20)
-        plt.figure(figsize=(12, 10))
-        colors = ['#FF9999', '#66B2FF']  # Rouge clair pour négatif, bleu clair pour positif
-        bars = plt.barh(top_20_features['feature'], top_20_features['importance'],
-                        color=[colors[1] if x > 0 else colors[0] for x in top_20_features['effect']])
-
-        plt.title(f"Feature Importance Determined By SHAP Values ({ensembleType.capitalize()} Set)", fontsize=16)
-        plt.xlabel('Mean |SHAP Value| (Average Impact on Model Output Magnitude)', fontsize=12)
-        plt.ylabel('Features', fontsize=12)
-        plt.legend([plt.Rectangle((0, 0), 1, 1, fc=colors[0]), plt.Rectangle((0, 0), 1, 1, fc=colors[1])],
-                   ['Diminue la probabilité de succès', 'Augmente la probabilité de succès'],
-                   loc='lower right', fontsize=10)
-        plt.text(0.5, 1.05, "La longueur de la barre indique l'importance globale de la feature.\n"
-                            "La couleur indique si la feature tend à augmenter (bleu) ou diminuer (rouge) la probabilité de succès du trade.",
-                 horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes, fontsize=10,
-                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray', boxstyle='round,pad=0.5'))
-        plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f'shap_importance_binary_trade{suffix}.png'), dpi=300, bbox_inches='tight')
-        plt.close()
-
-        # Visualisation des 40 valeurs SHAP moyennes absolues les plus importantes
-        plt.figure(figsize=(24, 9))
-        plt.bar(feature_importance['feature'][:40], feature_importance['importance'][:40])
-        plt.xticks(rotation=45, ha='right')
-        plt.title(f"Top 40 Features par Importance SHAP (valeurs moyennes absolues) - {ensembleType.capitalize()} Set")
-        plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, f'shap_importance_mean_abs{suffix}.png'))
-        plt.close()
-
-        # Analyse supplémentaire : pourcentage cumulatif de l'importance
-        feature_importance['cumulative_importance'] = feature_importance['importance'].cumsum() / feature_importance[
-            'importance'].sum()
-
-        # Top 10 features
-        top_10_features = feature_importance['feature'].head(40).tolist()
-
-        # Nombre de features nécessaires pour expliquer 80% de l'importance
-        features_for_80_percent = feature_importance[feature_importance['cumulative_importance'] <= 0.8].shape[0]
-
-        results = {
-            'feature_importance': feature_importance,
-            'top_10_features': top_10_features,
-            'features_for_80_percent': features_for_80_percent
-        }
-
-        print(f"Graphiques SHAP pour l'ensemble {ensembleType} sauvegardés sous:")
-        print(f"- {os.path.join(save_dir, f'shap_importance_binary_trade{suffix}.png')}")
-        print(f"- {os.path.join(save_dir, f'shap_importance_mean_abs{suffix}.png')}")
-        print(f"\nTop 10 features basées sur l'analyse SHAP ({ensembleType}):")
-        print(top_10_features)
-        print(
-            f"\nNombre de features nécessaires pour expliquer 80% de l'importance ({ensembleType}) : {features_for_80_percent}")
-
-        return results
-
-    resulat_train_shap_feature_importance = analyze_shap_feature_importance(shap_values_train, X_train,
-                                                                            ensembleType='train',
-                                                                            save_dir=os.path.join(results_directory,
-                                                                                                  'shap_feature_importance'))
-    resulat_test_shap_feature_importance = analyze_shap_feature_importance(shap_values_test, X_test,
-                                                                           ensembleType='test',
-                                                                           save_dir=os.path.join(results_directory,
-                                                                                                 'shap_feature_importance'))
-    ###### FIN: ANALYSE SHAP ##########
 
     ###### DEBUT: ANALYSE DES ERREURS ##########
     print_notification('###### DEBUT: ANALYSE DES ERREURS ##########', color="blue")
@@ -2683,7 +2804,7 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
     confident_errors = errors.sort_values('prediction_probability', ascending=False)
 
     # 2. Récupérer les features importantes à partir de l'analyse SHAP
-    important_features = feature_importance_df['feature'].head(10).tolist()
+    important_features = feature_importance_df['feature'].head(20).tolist()
 
     print("Visualisation des erreurs confiantes:")
     plot_confident_errors(
@@ -2710,199 +2831,17 @@ def train_finalModel_analyse(xgb=None,X_train=None,X_test=None,y_train_label=Non
 
     ###### DEBUT: CALCUL DES CORRELACTION ##########
 
-
-    def analyze_and_save_feature_correlations(X_train, results_directory, threshold=0.8):
-        """
-        Analyzes feature correlations in a given DataFrame, visualizes the correlation matrix,
-        identifies pairs of highly correlated features, and saves the heatmap to a file.
-
-        Parameters:
-        - X_train (pd.DataFrame): The feature DataFrame.
-        - results_directory (str): The directory where the correlation heatmap will be saved.
-        - threshold (float): The correlation threshold for identifying highly correlated feature pairs.
-
-        Returns:
-        - high_corr_pairs (list of tuples): Sorted list of tuples with highly correlated feature pairs and their correlation values.
-        """
-        # Calculate the correlation matrix
-        corr_matrix = X_train.corr()
-
-        # Visualize the correlation matrix with smaller font size and two decimal precision
-        plt.figure(figsize=(20, 20))
-        sns.heatmap(corr_matrix, annot=True, fmt='.1f', cmap='coolwarm', annot_kws={"size": 4})
-        plt.title('Feature Correlation Matrix', fontsize=10)
-
-        # Ensure the results directory exists
-        os.makedirs(results_directory, exist_ok=True)
-
-        # Save the heatmap
-        heatmap_path = os.path.join(results_directory, 'feature_correlation_matrix.png')
-        plt.savefig(heatmap_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        # Identify pairs of highly correlated features
-        high_corr_pairs = []
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i):
-                if abs(corr_matrix.iloc[i, j]) > threshold:
-                    feature_i = corr_matrix.columns[i]
-                    feature_j = corr_matrix.columns[j]
-                    corr_value = corr_matrix.iloc[i, j]
-                    high_corr_pairs.append((feature_i, feature_j, corr_value))
-
-        # Sort the results by the absolute correlation value in descending order
-        high_corr_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
-
-        # Display the sorted results in the console
-        print(f"Highly correlated pairs (threshold={threshold}):")
-        for feature_i, feature_j, corr_value in high_corr_pairs:
-            print(f"{feature_i} <-> {feature_j}: {corr_value:.2f}")
-
-        return high_corr_pairs
-
-    threshold = 0.75  # Set correlation threshold
-
     # Call the function
-    high_corr_pairs = analyze_and_save_feature_correlations(X_train, results_directory, threshold)
+    high_corr_pairs = analyze_and_save_feature_correlations(X_train, results_directory, threshold=0.75)
     # Si high_corr_pairs est une liste de tuples (feature_i, feature_j, corr_value)
-    save_correlations_to_csv(
-        high_corr_pairs=high_corr_pairs,
-        results_directory=results_directory,
-        threshold=0.75  # Seuil de corrélation utilisé
-    )
     ###### FIN: CALCUL DES CORRELACTION ##########
 
 
     ###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########
     print_notification("###### DEBUT: CALCUL DES VALEURS D'INTERACTION SHAP ##########", color="blue")
-    # Calcul des valeurs d'interaction SHAP
-    shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
-    # Exclure le biais en supprimant la dernière ligne et la dernière colonne
-    shap_interaction_values = shap_interaction_values[:, :-1, :-1]
+    analyze_shap_interactions(final_model, X_train, results_directory,dataset_name='X_train') ## utile pour filtrer les données
+    analyze_shap_interactions(final_model, X_test, results_directory,dataset_name='X_test') ## utile pour verfiier la pertinance, stabilité et donc l'overfitting (variable qui bouge etc)
 
-    # Vérification de la compatibilité des dimensions
-    print("Shape of shap_interaction_values:", shap_interaction_values.shape)
-    print("Number of features in X_test:", len(X_test.columns))
-
-    if shap_interaction_values.shape[1:] != (len(X_test.columns), len(X_test.columns)):
-        print("Erreur : Incompatibilité entre les dimensions des valeurs d'interaction SHAP et le nombre de features.")
-        print(f"Dimensions des valeurs d'interaction SHAP : {shap_interaction_values.shape}")
-        print(f"Nombre de features dans X_test : {len(X_test.columns)}")
-
-        # Afficher les features de X_test
-        print("Features de X_test:")
-        print(list(X_test.columns))
-
-        # Tenter d'accéder aux features du modèle
-        try:
-            model_features = final_model.feature_names
-            print("Features du modèle:")
-            print(model_features)
-
-            # Comparer les features
-            x_test_features = set(X_test.columns)
-            model_features_set = set(model_features)
-
-            missing_features = x_test_features - model_features_set
-            extra_features = model_features_set - x_test_features
-
-            if missing_features:
-                print("Features manquantes dans le modèle:", missing_features)
-            if extra_features:
-                print("Features supplémentaires dans le modèle:", extra_features)
-        except AttributeError:
-            print("Impossible d'accéder aux noms des features du modèle.")
-            print("Type du modèle:", type(final_model))
-            print("Attributs disponibles:", dir(final_model))
-
-        print("Le calcul des interactions SHAP est abandonné.")
-        return  # ou sys.exit(1) si vous voulez quitter le programme entièrement
-
-    # Si les dimensions sont compatibles, continuez avec le reste du code
-    interaction_matrix = np.abs(shap_interaction_values).sum(axis=0)
-    feature_names = X_test.columns
-    interaction_df = pd.DataFrame(interaction_matrix, index=feature_names, columns=feature_names)
-
-    # Masquer la diagonale (interactions d'une feature avec elle-même)
-    np.fill_diagonal(interaction_df.values, 0)
-
-    # Sélection des top N interactions (par exemple, top 10)
-    N = 80
-    top_interactions = interaction_df.unstack().sort_values(ascending=False).head(N)
-
-    # Visualisation des top interactions
-    plt.figure(figsize=(24, 16))
-    top_interactions.plot(kind='bar')
-    plt.title(f"Top {N} Feature Interactions (SHAP Interaction Values)", fontsize=16)
-    plt.xlabel("Feature Pairs", fontsize=12)
-    plt.ylabel("Total Interaction Strength", fontsize=10)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_directory, 'top_feature_interactions.png'), dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Initialisation
-    seen_pairs = set()
-    csv_filename = f"Top_{N // 2}_interaction.csv"
-    csv_path = os.path.join(results_directory, csv_filename)
-
-    # Affichage du titre et préparation des données CSV
-    print(f"Top {N // 2} Feature Interactions:")
-    csv_data = []
-
-    # Première boucle pour l'affichage console et préparation CSV
-    for (f1, f2), value in top_interactions.items():
-        # Créer une paire triée pour garantir que (A,B) et (B,A) sont considérées comme identiques
-        pair = tuple(sorted([f1, f2]))
-
-        # Si la paire n'a pas encore été vue et ce n'est pas une interaction avec soi-même
-        if pair not in seen_pairs and f1 != f2:
-            # Affichage dans la console
-            print(f"{f1} <-> {f2}: {value:.4f}")
-
-            # Préparation données CSV
-            interaction = f"{f1} <-> {f2}"
-            formatted_value = f"{value:.4f}"
-            csv_data.append([interaction, formatted_value])
-
-            seen_pairs.add(pair)
-
-    # Sauvegarde du CSV
-    with open(csv_path, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile, delimiter=';')
-        writer.writerow(['Interaction', 'Value'])
-        writer.writerows(csv_data)
-
-    print(f"\nCSV file saved at: {csv_path}")
-
-    # Création de la heatmap
-    top_features = interaction_df.sum().sort_values(ascending=False).head(N).index
-    plt.figure(figsize=(26, 20))  # Augmenter la taille de la figure
-
-    # Créer la heatmap avec des paramètres ajustés
-    sns.heatmap(interaction_df.loc[top_features, top_features].round(0).astype(int),
-                annot=True,
-                cmap='coolwarm',
-                fmt='d',  # Afficher les valeurs comme des entiers
-                annot_kws={'size': 7},  # Réduire la taille de la police des annotations
-                square=True,  # Assurer que les cellules sont carrées
-                linewidths=0.5,  # Ajouter des lignes entre les cellules
-                cbar_kws={'shrink': .8})  # Ajuster la taille de la barre de couleur
-
-    plt.title(f"SHAP Interaction Values for Top {N} Features", fontsize=16)
-    plt.tight_layout()
-    plt.xticks(rotation=90, ha='center')  # Rotation verticale des labels de l'axe x
-    plt.yticks(rotation=0)  # S'assurer que les labels de l'axe y sont horizontaux
-
-    # Sauvegarde de la heatmap
-    plt.savefig(
-        os.path.join(results_directory, 'feature_interaction_heatmap.png'),
-        dpi=300,
-        bbox_inches='tight'
-    )
-    plt.close()
-
-    print("Graphique d'interaction sauvegardé sous 'feature_interaction_heatmap.png'")
     print_notification("###### FIN: CALCUL DES VALEURS D'INTERACTION SHAP ##########", color="blue")
     ###### FIN: CALCUL DES VALEURS D'INTERACTION SHAP ##########
 
@@ -2952,7 +2891,7 @@ def custom_profit_scorer(y_true, y_pred_proba, metric_dict=None, normalize=False
     # Calcul du profit
     profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
     loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
-    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', 0)
 
     total_profit = (tp * profit_per_tp +
                     fp * loss_per_fp +
@@ -3011,7 +2950,7 @@ def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
     def prepare_data(data_df):
         df_copy = data_df.copy()
         # Regroupement par intervalles de 10 minutes
-        df_copy['time_bin'] = (df_copy['deltaTimestampOpeningSection1min'] // 10).astype(int) * 10
+        df_copy['time_bin'] = (df_copy['deltaTimestampOpeningSession1min'] // 10).astype(int) * 10
         df_grouped = df_copy.groupby('time_bin')['class_binaire'].value_counts().unstack(fill_value=0)
 
         # S'assurer que l'index est complet de 0 à 1380 par pas de 10
@@ -3099,6 +3038,11 @@ def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
     total_success = successes_filtered.sum()
     total_failure = failures_filtered.sum()
     total_all = total_success + total_failure
+    # Calcul des statistiques globales (avant sélection)
+    total_success_original = successes_original.sum()
+    total_failure_original = failures_original.sum()
+    total_all_original = total_success_original + total_failure_original
+    global_win_rate_original = (total_success_original / total_all_original * 100) if total_all_original > 0 else 0
 
     # Texte des statistiques
     if total_all > 0:
@@ -3123,11 +3067,16 @@ def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
                     )
 
         stats_text = (
-                f"Statistiques Globales:\n"
-                f"Total Trades: {total_all}\n"
-                f"Succès: {total_success} ({total_success / total_all * 100:.1f}%)\n"
-                f"Échecs: {total_failure} ({total_failure / total_all * 100:.1f}%)\n"
-                f"Win Rate Global: {global_win_rate:.1f}%\n\n"
+                f"Statistiques Globales avant sélection:\n"
+                f" Total Trades: {total_all_original}\n"
+                f" Succès: {total_success_original} ({total_success_original / total_all_original * 100:.1f}%)\n"
+                f" Échecs: {total_failure_original} ({total_failure_original / total_all_original * 100:.1f}%)\n"
+                f" Win Rate Global: {global_win_rate_original:.1f}%\n\n"
+                f"Selection : statistiques Globales:\n"
+                f" Total Trades: {total_all}\n"
+                f" Succès: {total_success} ({total_success / total_all * 100:.1f}%)\n"
+                f" Échecs: {total_failure} ({total_failure / total_all * 100:.1f}%)\n"
+                f" Win Rate Global: {global_win_rate:.1f}%\n\n"
                 + "\n\n".join(stats)
         )
     else:
@@ -3140,7 +3089,8 @@ def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
     plt.suptitle('Analyse de la Distribution des Trades sur 24H', fontsize=16, y=0.97)
     plt.subplots_adjust(left=0.1, right=0.85, top=0.9, bottom=0.2, hspace=0.4)
 
-    return {
+    # Retourner à la fois la figure et les statistiques
+    stats = {
         'total_trades': total_all,
         'successes': total_success,
         'failures': total_failure,
@@ -3151,21 +3101,31 @@ def analyze_trade_distribution(df_original, df_filtered, time_periods_dict):
         }
     }
 
+    return fig, stats
 
 
 
-def sessions_selection(df, selected_sessions=None, custom_sections=None, time_periods_dict=None):
+import warnings
+def print_warning(message):
+    print(f"\033[91m/!\ Warning: {message}\033[0m")
+def sessions_selection(df, selected_sessions=None, CUSTOM_SESSIONS_=None
+                       ,results_directory=None):
     """
     Met class_binaire à 99 pour les sessions NON sélectionnées et analyse la distribution.
     """
+
+    if results_directory is None:
+        print_warning("Le répertoire 'results_directory' est None")
+
+
     df_filtered = df.copy()
     timestamps = df['deltaTimestampOpening'].values
-
-    if time_periods_dict is not None:
+    print(df_filtered.shape)
+    if CUSTOM_SESSIONS_ is not None:
         # Sélection des périodes activées
         selected_periods = [
             (info['start'], info['end'])
-            for info in time_periods_dict.values()
+            for info in CUSTOM_SESSIONS_.values()
             if info['selected']
         ]
 
@@ -3176,7 +3136,7 @@ def sessions_selection(df, selected_sessions=None, custom_sections=None, time_pe
         cum_total_count = 0
         print("\nUtilisation des périodes du dictionnaire:")
 
-        for name, info in time_periods_dict.items():
+        for name, info in CUSTOM_SESSIONS_.items():
             status = "activée" if info['selected'] else "désactivée"
             start_time = format_time(info['start'])
             end_time = format_time(info['end'])
@@ -3201,8 +3161,8 @@ def sessions_selection(df, selected_sessions=None, custom_sections=None, time_pe
                 print(f"  - Total trades: {total_count}")
                 print(f"  - Win Rate: {win_rate:.2f}%\n")
 
-    elif custom_sections is not None:
-        valid_sections = [s for s in custom_sections if s['name'] in selected_sessions]
+    elif CUSTOM_SESSIONS_ is not None:
+        valid_sections = [s for s in CUSTOM_SESSIONS_ if s['name'] in selected_sessions]
         periods_starts = np.array([s['start'] for s in valid_sections], dtype=np.float64)
         periods_ends = np.array([s['end'] for s in valid_sections], dtype=np.float64)
 
@@ -3239,14 +3199,17 @@ def sessions_selection(df, selected_sessions=None, custom_sections=None, time_pe
         print(f"Somme des trades par période ({cum_total_count})")
 
     # Analyser et visualiser la distribution
-    stats = analyze_trade_distribution(df, df_filtered, time_periods_dict)
+    fig, stats = analyze_trade_distribution(df, df_filtered, CUSTOM_SESSIONS_)
 
     print("\nRésumé des statistiques:")
     print(f"Total trades analysés: {stats['total_trades']}")
     print(f"Win Rate global: {stats['win_rate']:.1f}%")
+    if results_directory is not None:
+        plt.savefig(os.path.join(results_directory, 'initial_dataset_and_select_sessions.png'), dpi=300, bbox_inches='tight')
 
-    plt.show()
-    exit(0)
+    plt.show(block=False)
+    plt.pause(2)  # Pause de 2 secondes
+    print(df_filtered.shape)
     return df_filtered
 
 
@@ -3258,11 +3221,73 @@ def format_time(minutes):
     return f"{int(hour):02d}:{int(minute):02d}"
 
 
+def calculate_global_ecart(
+        tp_train_list, fp_train_list,
+        tp_val_list, fp_val_list,
+        use_trade_weighting=False
+):
+    """
+    Calcule l'écart global entre les ratios de winrate (validation / train) sur plusieurs folds.
+
+    Args:
+        tp_train_list (list): Liste des true positives (TP) pour les données d'entraînement sur chaque fold.
+        fp_train_list (list): Liste des false positives (FP) pour les données d'entraînement sur chaque fold.
+        tp_val_list (list): Liste des true positives (TP) pour les données de validation sur chaque fold.
+        fp_val_list (list): Liste des false positives (FP) pour les données de validation sur chaque fold.
+        use_trade_weighting (bool): Si True, pondère l'écart global par le nombre de trades dans chaque fold.
+
+    Returns:
+        float: L'écart global entre les ratios validation/train, pondéré ou non.
+    """
+    ecarts = []  # Liste des écarts par fold
+    poids = []  # Liste des poids associés à chaque fold (nombre de trades)
+
+    # Calcul des écarts et des poids pour chaque fold
+    for i in range(len(tp_train_list)):
+        # Calcul du nombre total de trades (train et validation)
+        train_trades = tp_train_list[i] + fp_train_list[i]
+        val_trades = tp_val_list[i] + fp_val_list[i]
+
+        # Éviter la division par zéro en remplaçant par une très petite valeur
+        train_trades = max(train_trades, 1e-8)
+        val_trades = max(val_trades, 1e-8)
+
+        # Calcul des winrates
+        train_winrate = tp_train_list[i] / train_trades
+        val_winrate = tp_val_list[i] / val_trades
+
+        # Calcul du ratio validation/train et de l'écart par rapport à 1
+        ratio = val_winrate / max(train_winrate, 1e-8)
+        ecart = abs(ratio - 1.0)
+
+        # Ajouter l'écart et le poids (nombre de trades en validation) aux listes
+        ecarts.append(ecart)
+        poids.append(val_trades)  # On peut utiliser une autre définition de poids si nécessaire
+
+    # Si aucun fold n'est présent, retourner un écart infini
+    if len(ecarts) == 0:
+        return float('inf')
+
+    if use_trade_weighting:
+        # Moyenne pondérée par le nombre de trades
+        poids_total = sum(poids)
+        if poids_total > 0:
+            ecart_global = sum(e * p for e, p in zip(ecarts, poids)) / poids_total
+        else:
+            # Si tous les poids sont nuls, retourner un écart infini
+            ecart_global = float('inf')
+    else:
+        # Moyenne simple des écarts
+        ecart_global = sum(ecarts) / len(ecarts)
+
+    return ecart_global
+
 def calculate_normalized_objectives(
         tp_train_list, fp_train_list, tp_val_list, fp_val_list,
         scores_train_list, scores_val_list, fold_stats,
         scale_objectives=False,
-        use_imbalance_penalty=True
+        use_imbalance_penalty=True,
+        use_trade_weighting_for_ecart=True  # Activer ou non la pondération
 ):
     # Vérification que toutes les listes ont la même longueur
     lengths = [len(tp_train_list), len(fp_train_list),
@@ -3273,28 +3298,25 @@ def calculate_normalized_objectives(
         print("ERREUR: Les listes n'ont pas toutes la même longueur!")
         return {
             'pnl_norm_objective': float('-inf'),
-            'winrate_diff_norm_objective': float('inf')
+            'ecart_train_val': float('inf')
         }
 
     if not lengths[0]:  # Si les listes sont vides
         print("ERREUR: Les listes sont vides!")
         return {
             'pnl_norm_objective': float('-inf'),
-            'winrate_diff_norm_objective': float('inf')
+            'ecart_train_val': float('inf')
         }
 
-    fold_metrics = []
-
     # Calcul des métriques pour chaque fold
+    fold_metrics = []
     for i in range(len(scores_train_list)):
         train_trades = tp_train_list[i] + fp_train_list[i]
         val_trades = tp_val_list[i] + fp_val_list[i]
 
-        # Protection contre division par zéro
-        train_trades = max(train_trades, 1e-8)
+        train_trades = max(train_trades, 1e-8)  # Éviter la division par zéro
         val_trades = max(val_trades, 1e-8)
 
-        # Winrate pour chaque fold
         train_winrate = tp_train_list[i] / train_trades
         val_winrate = tp_val_list[i] / val_trades
 
@@ -3304,43 +3326,30 @@ def calculate_normalized_objectives(
             'val_pnl': scores_val_list[i]
         })
 
-    # Calcul de la pénalité de déséquilibre
+    # Calcul du PnL et de l'écart global (en remplaçant la logique existante)
+    total_pnl = sum(m['val_pnl'] for m in fold_metrics)
+    avg_pnl = total_pnl / len(fold_metrics) if fold_metrics else float('-inf')
+
+    ecart_global = calculate_global_ecart(
+        tp_train_list, fp_train_list, tp_val_list, fp_val_list,
+        use_trade_weighting=use_trade_weighting_for_ecart
+    )
+
+    # Pénalité d'imbalance si activée
     max_trades = max(m['n_trades'] for m in fold_metrics)
     min_trades = max(min(m['n_trades'] for m in fold_metrics), 1e-8)
     imbalance_penalty = 1 + math.log(max_trades / min_trades)
 
-    print(f"\nImbalance statistics:")
-    print(f"Max trades: {max_trades}")
-    print(f"Min trades: {min_trades}")
-    print(f"Imbalance penalty: {imbalance_penalty:.4f}")
-
-    # Calcul pondéré des objectifs
-    total_pnl = 0
-    total_winrate_diff = 0
-    total_weight = 0
-
-    for metrics in fold_metrics:
-        weight = 1  # Poids égal pour chaque fold
-        total_pnl += metrics['val_pnl'] * weight
-        total_winrate_diff += metrics['winrate_diff'] * weight
-        total_weight += weight
-
-    # Normalisation des objectifs
-    avg_pnl = total_pnl / total_weight if total_weight > 0 else float('-inf')
-    avg_winrate_diff = total_winrate_diff / total_weight if total_weight > 0 else float('inf')
-
-    # Application de la pénalité si activée
     if use_imbalance_penalty:
         pnl_norm_objective = avg_pnl * (1 / imbalance_penalty)
-        winrate_diff_norm_objective = avg_winrate_diff * imbalance_penalty
+        ecart_train_val = ecart_global * imbalance_penalty
     else:
         pnl_norm_objective = avg_pnl
-        winrate_diff_norm_objective = avg_winrate_diff
+        ecart_train_val = ecart_global
 
-    # Scale objectives si demandé
+    # Normalisation des objectifs si activée
     if scale_objectives:
-        # Définir les plages de normalisation
-        pnl_range = (-100, 100)  # À ajuster selon vos besoins
+        pnl_range = (-100, 100)  # Plage ajustable pour le PnL
         winrate_diff_range = (0, 1)
 
         pnl_norm_objective = normalize_to_range(
@@ -3349,20 +3358,18 @@ def calculate_normalized_objectives(
             old_max=pnl_range[1]
         )
 
-        winrate_diff_norm_objective = normalize_to_range(
-            winrate_diff_norm_objective,
+        ecart_train_val = normalize_to_range(
+            ecart_train_val,
             old_min=winrate_diff_range[0],
             old_max=winrate_diff_range[1]
         )
 
-
-
     return {
         'pnl_norm_objective': pnl_norm_objective,
-        'winrate_diff_norm_objective': winrate_diff_norm_objective,
+        'ecart_train_val': ecart_train_val,
         'raw_metrics': {
             'avg_pnl': avg_pnl,
-            'avg_winrate_diff': avg_winrate_diff,
+            'ecart_global': ecart_global,
             'imbalance_penalty': imbalance_penalty
         }
     }
@@ -3618,6 +3625,214 @@ def process_RFE_filteringg(params=None, trial=None, weight_param=None, metric_di
     return selected_feature_names;
 
 
+# Fonctions GPU mises à jour
+
+def weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n):
+    predt_gpu = cp.asarray(predt)
+    y_gpu = cp.asarray(dtrain.get_label())
+
+    predt_sigmoid = sigmoidCustom(predt_gpu)
+    grad = predt_sigmoid - y_gpu
+    # Appliquer les poids après le calcul initial du gradient
+    weights = cp.where(y_gpu == 1, w_p, w_n)
+    grad *= weights
+
+    return grad  # Retourner directement le tableau CuPy
+
+def weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n):
+    predt_gpu = cp.asarray(predt)
+    y_gpu = cp.asarray(dtrain.get_label())
+
+    predt_sigmoid = sigmoidCustom(predt_gpu)
+    hess = predt_sigmoid * (1 - predt_sigmoid)
+    # Appliquer les poids après le calcul initial de la hessienne
+    weights = cp.where(y_gpu == 1, w_p, w_n)
+    hess *= weights
+
+    return hess  # Retourner directement le tableau CuPy
+
+def create_weighted_logistic_obj_gpu(w_p: float, w_n: float):
+    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        grad = weighted_logistic_gradient_Cupygpu(predt, dtrain, w_p, w_n)
+        hess = weighted_logistic_hessian_Cupygpu(predt, dtrain, w_p, w_n)
+        return grad, hess
+    return weighted_logistic_obj
+
+# Fonction pour vérifier la disponibilité du GPU
+
+def calculate_profitBased_gpu(y_true_gpu, y_pred_threshold_gpu, metric_dict):
+    """
+    Calcule les métriques de profit directement sur GPU sans conversions inutiles
+
+    Args:
+        y_true_gpu: cp.ndarray - Labels déjà sur GPU
+        y_pred_threshold_gpu: cp.ndarray - Prédictions déjà sur GPU
+        metric_dict: dict - Dictionnaire des paramètres de métrique
+    """
+    # Vérification que les entrées sont bien sur GPU
+    if not isinstance(y_true_gpu, cp.ndarray):
+        raise TypeError("y_true_gpu doit être un tableau CuPy")
+    if not isinstance(y_pred_threshold_gpu, cp.ndarray):
+        raise TypeError("y_pred_threshold_gpu doit être un tableau CuPy")
+
+    # Calcul des métriques de base
+    tp = cp.sum((y_true_gpu == 1) & (y_pred_threshold_gpu == 1))
+    fp = cp.sum((y_true_gpu == 0) & (y_pred_threshold_gpu == 1))
+    fn = cp.sum((y_true_gpu == 1) & (y_pred_threshold_gpu == 0))
+
+    # Récupération des paramètres de profit/perte
+    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
+    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
+
+    # Calcul du profit total incluant les pénalités FN
+    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
+
+    return float(total_profit), int(tp), int(fp)
+
+
+def custom_metric_Profit(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[
+    str, float]:
+    """Fonction commune pour calculer les métriques de profit"""
+    # Conversion des données en GPU une seule fois
+    y_true_gpu = cp.asarray(dtrain.get_label())
+    predt_gpu = cp.asarray(predt)
+
+    # Application de la sigmoid et normalisation
+    predt_gpu = sigmoidCustom(predt_gpu)
+    predt_gpu = cp.clip(predt_gpu, 0.0, 1.0)
+
+    # Vérification des prédictions
+    mean_pred = cp.mean(predt_gpu).item()
+    std_pred = cp.std(predt_gpu).item()
+    min_val = cp.min(predt_gpu).item()
+    max_val = cp.max(predt_gpu).item()
+
+    if min_val < 0 or max_val > 1:
+        logging.warning(f"Prédictions hors intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
+        return "custom_metric_ProfitBased", float('-inf')
+
+    # Application du seuil directement sur GPU
+    threshold = metric_dict.get('threshold', 0.55555555)
+    y_pred_threshold_gpu = (predt_gpu > threshold).astype(cp.int32)
+
+    # Calcul du profit et des métriques
+    total_profit, tp, fp = calculate_profitBased_gpu(y_true_gpu, y_pred_threshold_gpu, metric_dict)
+
+    # Normalisation si demandée
+    if normalize:
+        total_trades = tp + fp
+        final_profit = total_profit / total_trades if total_trades > 0 else total_profit
+        metric_name = 'custom_metric_ProfitBased_norm'
+    else:
+        final_profit = total_profit
+        metric_name = 'custom_metric_ProfitBased'
+
+    return metric_name, float(final_profit)
+
+# Création des deux fonctions spécifiques à partir de la fonction commune
+def custom_metric_ProfitBased_gpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
+    """Version GPU de la métrique de profit"""
+    return custom_metric_Profit(predt, dtrain, metric_dict, normalize=False)
+
+
+def calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred_threshold)
+    tp = np.sum((y_true == 1) & (y_pred == 1))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    fn = np.sum((y_true == 1) & (y_pred == 0))
+    profit_per_tp = metric_dict.get('profit_per_tp', 1.0)
+    loss_per_fp = metric_dict.get('loss_per_fp', -1.1)
+    penalty_per_fn = metric_dict.get('penalty_per_fn', -0.1)
+    total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
+    return float(total_profit), int(tp), int(fp)
+
+def custom_metric_Profit_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict, normalize: bool = False) -> Tuple[str, float]:
+    y_true = dtrain.get_label()
+    CHECK_THRESHOLD = 0.55555555
+    threshold = metric_dict.get('threshold', CHECK_THRESHOLD)
+
+    predt = np.array(predt)
+    predt = sigmoidCustom_cpu(predt)
+    predt = np.clip(predt, 0.0, 1.0)
+
+    mean_pred = np.mean(predt)
+    std_pred = np.std(predt)
+    min_val = np.min(predt)
+    max_val = np.max(predt)
+
+    if min_val < 0 or max_val > 1:
+        logging.warning(f"Les prédictions sont hors de l'intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
+        exit(12)
+
+    y_pred_threshold = (predt > threshold).astype(int)
+
+    total_profit, tp, fp = calculate_profitBased_cpu(y_true, y_pred_threshold, metric_dict)
+
+    if normalize:
+        total_trades_val = tp + fp
+        if total_trades_val > 0:
+            final_profit = total_profit / total_trades_val
+        else:
+            final_profit = 0.0
+        metric_name = 'custom_metric_ProfitBased_norm'
+    else:
+        final_profit = total_profit
+        metric_name = 'custom_metric_ProfitBased'
+
+    return metric_name, float(final_profit)
+
+def custom_metric_ProfitBased_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, metric_dict) -> Tuple[str, float]:
+    return custom_metric_Profit_cpu(predt, dtrain, metric_dict, normalize=False)
+
+def create_weighted_logistic_obj_cpu(w_p: float, w_n: float):
+    def weighted_logistic_obj(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        grad = weighted_logistic_gradient_cpu(predt, dtrain, w_p, w_n)
+        hess = weighted_logistic_hessian_cpu(predt, dtrain, w_p, w_n)
+        return grad, hess
+    return weighted_logistic_obj
+
+import traceback
+
+
+def create_custom_importance_plot(shap_df, dataset_name, save_dir):
+    """
+    Crée un graphique personnalisé basé sur les valeurs SHAP du CSV
+    avec code couleur rouge/bleu selon le signe
+    """
+    plt.figure(figsize=(12, 8))
+
+    # Prendre les 20 premières features pour la lisibilité
+    top_n = 20
+    df_plot = shap_df.head(top_n).iloc[::-1]  # Inverse l'ordre pour l'affichage de bas en haut
+
+    # Création des barres
+    y_pos = np.arange(len(df_plot))
+    bars = plt.barh(y_pos, df_plot['importance'].abs(),
+                    color=[('red' if x < 0 else 'blue') for x in df_plot['importance']])
+
+    # Personnalisation du graphique
+    plt.yticks(y_pos, df_plot['feature'])
+    plt.xlabel('mean(|SHAP value|) (average impact on model output magnitude)')
+    plt.title(f'SHAP Feature Importance - {dataset_name}')
+
+    # Ajout des valeurs sur les barres
+    for i, bar in enumerate(bars):
+        width = bar.get_width()
+        value = df_plot['importance'].iloc[i]
+        plt.text(width, bar.get_y() + bar.get_height() / 2,
+                 f'{value:.2e}',
+                 ha='left', va='center', fontsize=8)
+
+    # Ajustements de la mise en page
+    plt.tight_layout()
+
+    # Sauvegarde
+    plt.savefig(os.path.join(save_dir, f'shap_importance_{dataset_name}.png'),
+                dpi=300, bbox_inches='tight')
+    plt.close()
+
 def calculate_fold_stats(labels, set_name):
     # Calcul des décisions (trades)
     decisions = (labels != 99).sum()
@@ -3633,5 +3848,2186 @@ def calculate_fold_stats(labels, set_name):
         f"{set_name}_success_rate": success_rate
     }
 
+def add_session_id(df, time_periods_dict):
+    """
+    Ajoute une colonne session_ID basée sur deltaTimestampOpeningSession1min
+    """
+    # Créer une colonne session_ID avec valeur par défaut None
+    df['session_type_index'] = -1
+
+    # Pour chaque période dans le dictionnaire
+    for session_name, info in time_periods_dict.items():
+        # Créer un masque pour les timestamps dans cette période
+        mask = (df['deltaTimestampOpening'] >= info['start']) & \
+               (df['deltaTimestampOpening'] < info['end'])
+        # Assigner le session_type_index aux lignes correspondantes
+        df.loc[mask, 'session_type_index'] = info['session_type_index']
+
+    return df
 
 
+import cupy as cp
+import numpy as np
+import xgboost as xgb
+from typing import Dict, List, Any, Tuple
+
+
+def convert_metrics_to_numpy_safe(metrics):
+    """Convertit sûrement les métriques GPU en numpy"""
+    if isinstance(metrics, cp.ndarray):
+        return float(cp.asnumpy(metrics))
+    return float(metrics)
+
+def calculate_time_difference(start_date_str, end_date_str):
+    date_format = "%Y-%m-%d %H:%M:%S"
+    start_date = datetime.strptime(start_date_str, date_format)
+    end_date = datetime.strptime(end_date_str, date_format)
+    diff = relativedelta(end_date, start_date)
+    return diff
+def compute_balanced_weights_gpu(y):
+    """Version GPU de compute_sample_weight('balanced')"""
+    unique_classes, class_counts = cp.unique(y, return_counts=True)
+    n_samples = len(y)
+    n_classes = len(unique_classes)
+
+    # Calcul des poids comme sklearn
+    weights = n_samples / (n_classes * class_counts)
+    samples_weights = weights[y.astype(cp.int32)]
+
+    return samples_weights
+
+
+def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
+    """Calcule la matrice de confusion sur GPU"""
+    # Conversion en CuPy si nécessaire
+    if not isinstance(y_true_gpu, cp.ndarray):
+        y_true_gpu = cp.asarray(y_true_gpu, dtype=cp.int32)
+    if not isinstance(y_pred_gpu, cp.ndarray):
+        y_pred_gpu = cp.asarray(y_pred_gpu, dtype=cp.int32)
+
+    # Calculs sur GPU
+    tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
+    fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
+    tn = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 0))
+    fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
+
+    return tn, fp, fn, tp
+
+
+def predict_and_process(pred_proba, threshold):
+    # Supposons que pred_proba est déjà un tableau CuPy
+    pred_proba = sigmoidCustom(pred_proba)
+    pred_proba = cp.clip(pred_proba, 0.0, 1.0)
+    pred = (pred_proba > threshold).astype(cp.int32)
+    return pred_proba, pred
+
+
+def calculate_fold_stats_gpu(labels_gpu, set_name):
+    """Calcule les statistiques du fold en gardant tout sur GPU"""
+    if not isinstance(labels_gpu, cp.ndarray):
+        labels_gpu = cp.asarray(labels_gpu)
+
+    decisions = cp.sum(labels_gpu != 99)
+    success = cp.sum(labels_gpu == 1)
+    failures = cp.sum(labels_gpu == 0)
+    success_rate = cp.where(decisions > 0, success / decisions, cp.float32(0.0))
+
+    return {
+        f"{set_name}_n_trades": decisions,
+        f"{set_name}_n_class_1": success,
+        f"{set_name}_n_class_0": failures,
+        f"{set_name}_class_ratio": success_rate,
+        f"{set_name}_success_rate": success_rate
+    }
+
+def calculate_winrate_gpu(tp_val, fp_val):
+    """Calcule le winrate de manière sûre sur GPU"""
+    if not isinstance(tp_val, cp.ndarray):
+        tp_val = cp.asarray(tp_val, dtype=cp.float32)
+    if not isinstance(fp_val, cp.ndarray):
+        fp_val = cp.asarray(fp_val, dtype=cp.float32)
+
+    # Calcul sur GPU
+    tp_fp_sum = tp_val + fp_val
+    mask = tp_fp_sum != 0
+    winrate = cp.where(mask, tp_val / tp_fp_sum, cp.float32(0.0))
+
+    return winrate
+
+
+
+
+def setup_metric_dict(trial, weight_param, optima_score,metric_dict):
+    """Configure le dictionnaire des métriques en fonction des paramètres Optuna"""
+    # Configuration du seuil
+    threshold_value = trial.suggest_float('threshold',
+                                          weight_param['threshold']['min'],
+                                          weight_param['threshold']['max'])
+
+
+    # Initialisation du dictionnaire des métriques
+    if optima_score == xgb_metric.XGB_METRIC_CUSTOM_METRIC_TP_FP:
+        # Suggérer les poids pour la métrique combinée
+        profit_ratio_weight = trial.suggest_float('profit_ratio_weight',
+                                                  weight_param['profit_ratio_weight']['min'],
+                                                  weight_param['profit_ratio_weight']['max'])
+
+        win_rate_weight = trial.suggest_float('win_rate_weight',
+                                              weight_param['win_rate_weight']['min'],
+                                              weight_param['win_rate_weight']['max'])
+
+        selectivity_weight = trial.suggest_float('selectivity_weight',
+                                                 weight_param['selectivity_weight']['min'],
+                                                 weight_param['selectivity_weight']['max'])
+
+        # Normalisation des poids
+        total_weight = profit_ratio_weight + win_rate_weight + selectivity_weight
+        metric_dict = {
+            'profit_ratio_weight': profit_ratio_weight / total_weight,
+            'win_rate_weight': win_rate_weight / total_weight,
+            'selectivity_weight': selectivity_weight / total_weight,
+        }
+
+    elif optima_score == xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
+        metric_dict = {
+            'profit_per_tp': trial.suggest_float('profit_per_tp',
+                                                 weight_param['profit_per_tp']['min'],
+                                                 weight_param['profit_per_tp']['max']),
+            'loss_per_fp': trial.suggest_float('loss_per_fp',
+                                               weight_param['loss_per_fp']['min'],
+                                               weight_param['loss_per_fp']['max']),
+            'penalty_per_fn': trial.suggest_float('penalty_per_fn',
+                                                  weight_param['penalty_per_fn']['min'],
+                                                  weight_param['penalty_per_fn']['max'])
+        }
+    metric_dict['threshold'] = threshold_value
+
+    return metric_dict
+
+
+
+def get_model_param_range(model_type):
+    """Retourne la configuration des paramètres selon le type de modèle"""
+    if model_type == modeleType.XGB:
+        return {
+            'num_boost_round': {'min': 600, 'max': 1000},
+            'max_depth': {'min': 7, 'max': 9},
+            'learning_rate': {'min': 0.001, 'max': 0.009, 'log': True},
+            'min_child_weight': {'min': 1, 'max': 4},
+            'subsample': {'min': 0.45, 'max': 0.75},
+            'colsample_bytree': {'min': 0.6, 'max': 0.80},
+            'colsample_bylevel': {'min': 0.4, 'max': 0.6},
+            'colsample_bynode': {'min': 0.65, 'max': 0.95},
+            'gamma': {'min': 5, 'max': 13},
+            'reg_alpha': {'min': 1, 'max': 2, 'log': True},
+            'reg_lambda': {'min': 0.1, 'max': 0.9, 'log': True}
+        }
+    elif model_type == modeleType.CATBOOT:
+        return {
+            'iterations': {'min': 500, 'max': 1100},
+            'depth': {'min': 5, 'max': 10},
+            'learning_rate': {'min': 0.001, 'max': 0.05, 'log': True},
+            'min_child_samples': {'min': 5, 'max': 20},
+            'subsample': {'min': 0.55, 'max': 0.75},
+            'colsample_ratio': {'min': 0.50, 'max': 0.80},
+            'l2_leaf_reg': {'min': 1.0, 'max': 10.0, 'log': True},
+            'random_strength': {'min': 0.1, 'max': 1.0, 'log': True},
+            'bagging_temperature': {'min': 0.0, 'max': 1.0},
+            'fold_permutation_block': {'min': 1, 'max': 5},
+            'leaf_estimation_iterations': {'min': 1, 'max': 10},
+            'leaf_estimation_method': {'values': ['Newton']},
+            'grow_policy': {'values': ['Depthwise']},
+            'bootstrap_type': {'values': ['Bayesian', 'MVS']}
+        }
+    else:
+        raise ValueError(f"Type de modèle non supporté: {model_type}")
+
+
+def setup_model_params(trial, model_type, random_state_seed_, device):
+    """Configure les paramètres du modèle pour l'entraînement"""
+    # Initialisation des variables
+    params = None
+    num_boost_round = None
+
+    modele_param_optuna_range = get_model_param_range(model_type)
+
+    if model_type == modeleType.XGB:
+        params = {
+            'max_depth': trial.suggest_int('max_depth',
+                                           modele_param_optuna_range['max_depth']['min'],
+                                           modele_param_optuna_range['max_depth']['max']),
+            'learning_rate': trial.suggest_float('learning_rate',
+                                                 modele_param_optuna_range['learning_rate']['min'],
+                                                 modele_param_optuna_range['learning_rate']['max'],
+                                                 log=modele_param_optuna_range['learning_rate'].get('log', False)),
+            'min_child_weight': trial.suggest_int('min_child_weight',
+                                                  modele_param_optuna_range['min_child_weight']['min'],
+                                                  modele_param_optuna_range['min_child_weight']['max']),
+            'subsample': trial.suggest_float('subsample',
+                                             modele_param_optuna_range['subsample']['min'],
+                                             modele_param_optuna_range['subsample']['max']),
+            'colsample_bytree': trial.suggest_float('colsample_bytree',
+                                                    modele_param_optuna_range['colsample_bytree']['min'],
+                                                    modele_param_optuna_range['colsample_bytree']['max']),
+            'colsample_bylevel': trial.suggest_float('colsample_bylevel',
+                                                     modele_param_optuna_range['colsample_bylevel']['min'],
+                                                     modele_param_optuna_range['colsample_bylevel']['max']),
+            'colsample_bynode': trial.suggest_float('colsample_bynode',
+                                                    modele_param_optuna_range['colsample_bynode']['min'],
+                                                    modele_param_optuna_range['colsample_bynode']['max']),
+            'gamma': trial.suggest_float('gamma',
+                                         modele_param_optuna_range['gamma']['min'],
+                                         modele_param_optuna_range['gamma']['max']),
+            'reg_alpha': trial.suggest_float('reg_alpha',
+                                             modele_param_optuna_range['reg_alpha']['min'],
+                                             modele_param_optuna_range['reg_alpha']['max'],
+                                             log=modele_param_optuna_range['reg_alpha'].get('log', False)),
+            'reg_lambda': trial.suggest_float('reg_lambda',
+                                              modele_param_optuna_range['reg_lambda']['min'],
+                                              modele_param_optuna_range['reg_lambda']['max'],
+                                              log=modele_param_optuna_range['reg_lambda'].get('log', False)),
+            'random_state': random_state_seed_,
+            'tree_method': 'hist',
+            'device': device,
+        }
+        num_boost_round = trial.suggest_int('num_boost_round',
+                                            modele_param_optuna_range['num_boost_round']['min'],
+                                            modele_param_optuna_range['num_boost_round']['max'])
+
+    elif model_type == modeleType.CATBOOT:
+        params = {
+            'loss_function': 'Logloss',
+            'eval_metric': 'AUC',
+            'verbose': False,
+            'early_stopping_rounds': 50,
+            'task_type': 'GPU' if device == 'cuda' else 'CPU',
+            'boosting_type': 'Ordered',
+            'has_time': True,
+            'random_seed': random_state_seed_,
+            'thread_count': -1,
+            'fold_permutation_block_size': 10
+        }
+
+        # Ajout des paramètres optimisés
+        for param_name, param_range in modele_param_optuna_range.items():
+            if 'values' in param_range:
+                params[param_name] = trial.suggest_categorical(param_name, param_range['values'])
+            elif 'log' in param_range:
+                params[param_name] = trial.suggest_float(param_name, param_range['min'],
+                                                         param_range['max'], log=True)
+            else:
+                if isinstance(param_range['min'], int) and isinstance(param_range['max'], int):
+                    params[param_name] = trial.suggest_int(param_name, param_range['min'],
+                                                           param_range['max'])
+                else:
+                    params[param_name] = trial.suggest_float(param_name, param_range['min'],
+                                                             param_range['max'])
+
+        num_boost_round = params.pop('iterations', None)  # Pour CatBoost, iterations = num_boost_round
+
+    # Vérification finale
+    if params is None or num_boost_round is None:
+        raise ValueError(f"Type de modèle non supporté ou paramètres non initialisés: {model_type}")
+
+    return params, num_boost_round
+
+
+
+def compute_winrate_safe(tp, total_trades):
+    """Calcul sécurisé du winrate sur GPU"""
+    mask = total_trades != 0
+    return cp.where(mask, tp / total_trades, cp.float32(0.0))
+
+
+def validate_fold_indices(train_pos, val_pos):
+    """
+    Valide les indices des folds pour assurer leur intégrité.
+
+    Args:
+        train_pos (np.array): Indices d'entraînement
+        val_pos (np.array): Indices de validation
+
+    Raises:
+        ValueError: Si les indices ne sont pas valides
+    """
+    # Conversion en entiers
+    train_pos = train_pos.astype(int)
+    val_pos = val_pos.astype(int)
+
+    # Vérification des ensembles vides
+    if len(train_pos) == 0 or len(val_pos) == 0:
+        raise ValueError("⚠️ Ensemble vide détecté")
+
+    # Vérifier que les indices sont strictement croissants
+    if not all(train_pos[i] < train_pos[i + 1] for i in range(len(train_pos) - 1)):
+        raise ValueError("Les indices d'entraînement ne sont pas strictement croissants")
+
+    if not all(val_pos[i] < val_pos[i + 1] for i in range(len(val_pos) - 1)):
+        raise ValueError("Les indices de validation ne sont pas strictement croissants")
+
+    # Vérifier que validation vient après entraînement
+    if not max(train_pos) < min(val_pos):
+        raise ValueError("Les indices de validation doivent être postérieurs aux indices d'entraînement")
+
+
+def prepare_fold_data(X_train, y_train_label, train_pos, val_pos):
+    """
+    Prépare les données pour un fold spécifique.
+
+    Args:
+        X_train (pd.DataFrame): Données d'entraînement complètes
+        y_train_label (np.array/pd.Series): Labels
+        train_pos (np.array): Indices d'entraînement
+        val_pos (np.array): Indices de validation
+
+    Returns:
+        dict: Données préparées pour le fold
+    """
+    # Préparation des labels selon le type
+    y_train_fold = y_train_label.iloc[train_pos] if isinstance(y_train_label, pd.Series) \
+        else y_train_label[train_pos]
+    y_val_fold = y_train_label.iloc[val_pos] if isinstance(y_train_label, pd.Series) \
+        else y_train_label[val_pos]
+
+    fold_data = {
+        'train_indices': train_pos,
+        'val_indices': val_pos,
+        'y_train': y_train_fold,
+        'y_val': y_val_fold,
+        'X_train': X_train.iloc[train_pos] if isinstance(X_train, pd.DataFrame) else X_train[train_pos],
+        'X_val': X_train.iloc[val_pos] if isinstance(X_train, pd.DataFrame) else X_train[val_pos]
+    }
+
+    # Calculer les statistiques de distribution
+    train_dist = np.unique(y_train_fold, return_counts=True)
+    val_dist = np.unique(y_val_fold, return_counts=True)
+
+    fold_data['distributions'] = {
+        'train': dict(zip(train_dist[0], train_dist[1])),
+        'val': dict(zip(val_dist[0], val_dist[1]))
+    }
+
+    return fold_data
+
+
+def log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data):
+    """
+    Affiche les informations détaillées sur le fold courant.
+
+    Args:
+        fold_num (int): Numéro du fold actuel
+        nb_split_tscv (int): Nombre total de folds
+        X_train_full (pd.DataFrame): Données d'entraînement complètes
+        fold_data (dict): Données du fold préparées
+    """
+    print(f"\nFold {fold_num + 1}/{nb_split_tscv}")
+    print(f"X_train_full index : {X_train_full.index.min()}-{X_train_full.index.max()}")
+
+    # Affichage des ranges d'indices
+    train_pos = fold_data['train_indices']
+    val_pos = fold_data['val_indices']
+    print(f"Train pos range: {min(train_pos)}-{max(train_pos)}")
+    print(f"Val pos range: {min(val_pos)}-{max(val_pos)}")
+
+    # Affichage des distributions
+    print("\nDistribution des classes:")
+    print("Train:", {k: int(v) for k, v in fold_data['distributions']['train'].items()})
+    print("Val:", {k: int(v) for k, v in fold_data['distributions']['val'].items()})
+
+    # Calcul et affichage des ratios
+    train_dist = fold_data['distributions']['train']
+    val_dist = fold_data['distributions']['val']
+
+    if 1 in train_dist and 0 in train_dist:
+        train_ratio = train_dist[1] / (train_dist[0] + train_dist[1])
+        print(f"Ratio positif train: {train_ratio:.2%}")
+
+    if 1 in val_dist and 0 in val_dist:
+        val_ratio = val_dist[1] / (val_dist[0] + val_dist[1])
+        print(f"Ratio positif validation: {val_ratio:.2%}")
+
+
+def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv):
+    """
+    Calcule les résultats finaux de la validation croisée.
+
+    Args:
+        metrics_dict (dict): Métriques accumulées
+        arrays (dict): Arrays GPU des métriques par fold
+        all_fold_stats (dict): Statistiques par fold
+        nb_split_tscv (int): Nombre de folds
+    """
+    try:
+        # Conversion des métriques en numpy
+        final_metrics = {key: convert_metrics_to_numpy_safe(value)
+                         for key, value in metrics_dict.items()
+                         if key.startswith('total_')}
+
+        # Calcul des statistiques globales
+        mean_val_score = float(cp.mean(arrays['scores_val']).get())
+        std_val_score = float(cp.std(arrays['scores_val']).get())
+
+        results = {
+            'metrics': final_metrics,
+            'fold_stats': all_fold_stats,
+            'winrates_by_fold': arrays['winrates'],
+            'nb_trades_by_fold': arrays['nb_trades'],
+            'scores_train_by_fold': arrays['scores_train'],
+            'tp_train_by_fold': arrays['tp_train'],
+            'fp_train_by_fold': arrays['fp_train'],
+            'tp_val_by_fold': arrays['tp_val'],
+            'fp_val_by_fold': arrays['fp_val'],
+            'scores_val_by_fold': arrays['scores_val'],
+            'mean_val_score': mean_val_score,
+            'std_val_score': std_val_score
+        }
+
+        return results
+
+    except Exception as e:
+        print(f"Erreur dans calculate_final_results: {str(e)}")
+        raise
+
+
+def handle_exception(e):
+    """
+    Gère les exceptions de manière uniforme.
+
+    Args:
+        e (Exception): L'exception à traiter
+    """
+    print(f"\nErreur détaillée dans la validation croisée:")
+    print(f"Type d'erreur: {type(e).__name__}")
+    print(f"Message: {str(e)}")
+
+    import traceback
+    traceback.print_exc()
+
+
+def cleanup_gpu_memory(data_gpu):
+    """
+    Nettoie la mémoire GPU.
+
+    Args:
+        data_gpu (dict): Dictionnaire contenant les données GPU à nettoyer
+    """
+    print("\nNettoyage de la mémoire GPU")
+
+    # Nettoyage des données GPU
+    if isinstance(data_gpu, dict):
+        for key in data_gpu:
+            if isinstance(data_gpu[key], cp.ndarray):
+                data_gpu[key] = None
+
+    # Libération des blocs de mémoire
+    cp.get_default_memory_pool().free_all_blocks()
+
+
+def convert_metrics_to_numpy_safe(value):
+    """
+    Convertit en toute sécurité les métriques GPU en numpy.
+
+    Args:
+        value: Valeur à convertir (peut être CuPy array ou autre)
+    Returns:
+        La valeur convertie en format numpy
+    """
+    try:
+        if isinstance(value, cp.ndarray):
+            return value.get()
+        if isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], cp.ndarray):
+            return [v.get() if isinstance(v, cp.ndarray) else v for v in value]
+        return value
+    except Exception as e:
+        print(f"Erreur lors de la conversion: {str(e)}")
+        return value
+
+
+def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats):
+    """
+    Met à jour les métriques et les arrays GPU avec les résultats du fold courant.
+
+    Args:
+        metrics_dict (dict): Dictionnaire des métriques à mettre à jour
+        arrays (dict): Dictionnaire des arrays GPU
+        fold_results (dict): Résultats du fold courant
+        fold_num (int): Numéro du fold
+        all_fold_stats (dict): Statistiques de tous les folds
+    """
+    try:
+        # Mise à jour des métriques du dictionnaire
+        metrics_dict = update_fold_metrics(
+            metrics_dict,
+            fold_results['val_metrics'],
+            fold_results['train_metrics'],
+            fold_num
+        )
+
+        # Stockage des statistiques du fold
+        all_fold_stats[fold_num] = fold_results['fold_stats']
+
+        # Mise à jour des arrays GPU
+        arrays['winrates'][fold_num] = fold_results['fold_stats']['val_winrate']
+        arrays['nb_trades'][fold_num] = fold_results['fold_stats']['val_trades']
+        arrays['tp_train'][fold_num] = fold_results['train_metrics']['tp']
+        arrays['fp_train'][fold_num] = fold_results['train_metrics']['fp']
+        arrays['tp_val'][fold_num] = fold_results['val_metrics']['tp']
+        arrays['fp_val'][fold_num] = fold_results['val_metrics']['fp']
+        arrays['scores_val'][fold_num] = fold_results['val_metrics']['score']
+        arrays['scores_train'][fold_num] = fold_results['train_metrics']['score']
+
+        # Vérification optionnelle des mises à jour
+        verify_updates = False  # Mettre à True pour le débogage
+        if verify_updates:
+            arrays_to_check = {
+                'winrates': arrays['winrates'],
+                'nb_trades': arrays['nb_trades'],
+                'tp_val': arrays['tp_val'],
+                'scores_val': arrays['scores_val']
+            }
+            for name, arr in arrays_to_check.items():
+                print(f"{name}: sum={cp.sum(arr)}, mean={cp.mean(arr)}")
+
+        return metrics_dict
+
+    except Exception as e:
+        print(f"Erreur dans update_metrics_and_arrays: {str(e)}")
+        raise
+
+
+def update_fold_metrics(metrics_dict, val_metrics, train_metrics, fold_num):
+    """
+    Met à jour les métriques du dictionnaire avec les résultats d'un nouveau fold.
+
+    Args:
+        metrics_dict (dict): Dictionnaire des métriques à mettre à jour
+        val_metrics (dict): Métriques de validation
+        train_metrics (dict): Métriques d'entraînement
+        fold_num (int): Numéro du fold
+
+    Returns:
+        dict: Dictionnaire des métriques mis à jour
+    """
+    try:
+        # Mise à jour des totaux de validation
+        metrics_dict['total_tp_val'] = metrics_dict.get('total_tp_val', 0) + val_metrics['tp']
+        metrics_dict['total_fp_val'] = metrics_dict.get('total_fp_val', 0) + val_metrics['fp']
+        metrics_dict['total_tn_val'] = metrics_dict.get('total_tn_val', 0) + val_metrics.get('tn', 0)
+        metrics_dict['total_fn_val'] = metrics_dict.get('total_fn_val', 0) + val_metrics.get('fn', 0)
+
+        # Mise à jour des totaux d'entraînement
+        metrics_dict['total_tp_train'] = metrics_dict.get('total_tp_train', 0) + train_metrics['tp']
+        metrics_dict['total_fp_train'] = metrics_dict.get('total_fp_train', 0) + train_metrics['fp']
+        metrics_dict['total_tn_train'] = metrics_dict.get('total_tn_train', 0) + train_metrics.get('tn', 0)
+        metrics_dict['total_fn_train'] = metrics_dict.get('total_fn_train', 0) + train_metrics.get('fn', 0)
+
+        return metrics_dict
+
+    except Exception as e:
+        print(f"Erreur dans update_fold_metrics: {str(e)}")
+        raise
+def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
+                         metric_dict, cv, nb_split_tscv, weight_param,
+                         framework='xgboost', is_log_enabled=False, **kwargs):
+    """
+    Validation croisée unifiée pour XGBoost et CatBoost.
+
+    Args:
+        framework (str): 'xgboost' ou 'catboost'
+        kwargs: Paramètres spécifiques au framework (num_boost_round pour XGBoost, etc.)
+    """
+    try:
+        print_notification(f"\n=== Début nouvelle validation croisée {framework.upper()} ===")
+        print(f"Nombre de features: {len(X_train.columns)}\n:: {list(X_train.columns)}")
+
+        # Vérifications communes
+        validate_inputs(X_train, y_train_label)
+
+        # Initialisation des métriques et arrays
+        metrics_dict = initialize_metrics_dict(nb_split_tscv)
+        arrays = initialize_gpu_arrays(nb_split_tscv)
+        all_fold_stats = {}
+
+        # Préparation données GPU - Interface commune
+        data_gpu = prepare_gpu_data(X_train, y_train_label)
+
+        # Sélection du processor de fold selon le framework
+        fold_processor = select_fold_processor(framework)
+
+        # Boucle CV
+        for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
+            # Validation des indices
+            validate_fold_indices(train_pos, val_pos)
+
+            # Préparation des données du fold
+            fold_data = prepare_fold_data(X_train, y_train_label, train_pos, val_pos)
+
+            # Log des informations du fold
+            if is_log_enabled:
+                log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
+
+            # Traitement du fold avec le processor approprié
+            fold_results = fold_processor(
+                X_train=X_train,
+                X_train_full=X_train_full,
+                train_pos=train_pos,  # Ajouté
+                val_pos=val_pos,  # Ajouté
+                params=params,
+                data_gpu=data_gpu,
+                metric_dict=metric_dict,
+                trial=trial,
+                weight_param=weight_param,
+                is_log_enabled=is_log_enabled,
+                **kwargs
+            )
+
+            # Mise à jour des métriques et statistiques
+            update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats)
+
+        # Calcul des résultats finaux
+        results = calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv)
+
+        print(f"\nMémoire GPU finale: {cp.get_default_memory_pool().used_bytes() / 1024 ** 2:.2f} MB")
+        return results
+
+    except Exception as e:
+        handle_exception(e)
+        raise
+    finally:
+        cleanup_gpu_memory(data_gpu)
+
+
+def prepare_gpu_data(X_train, y_train_label):
+    """Interface commune pour la préparation des données GPU"""
+    return {
+        'X_train_gpu_full': cp.asarray(X_train.values, dtype=cp.float32),
+        'y_train_gpu_full': cp.asarray(y_train_label.values if isinstance(y_train_label, pd.Series)
+                        else y_train_label, dtype=cp.int32)
+    }
+
+
+def select_fold_processor(framework):
+    """Sélectionne le processor approprié selon le framework"""
+    processors = {
+        'xgboost': process_cv_fold_xgboost,
+        'catboost': process_cv_fold_catboost
+    }
+    if framework not in processors:
+        raise ValueError(f"Framework non supporté: {framework}")
+    return processors[framework]
+
+
+
+def process_cv_fold_xgboost(X_train=None, X_train_full=None, fold_num=None, train_pos=None, val_pos=None, params=None, num_boost_round=None,
+                    data_gpu=None, metric_dict=None, trial=None, weight_param=None, optima_score=None, xgb_metric=xgb_metric, is_log_enabled = False):
+    try:
+        # Debug initial
+        # print(f"\n=== Debug Fold {fold_num} ===")
+
+        # Extraction et vérification des données
+        X_train_gpu = data_gpu['X_train_gpu_full'][train_pos].reshape(len(train_pos), -1)
+        y_train_gpu = data_gpu['y_train_gpu_full'][train_pos].reshape(-1)
+        X_val_gpu = data_gpu['X_train_gpu_full'][val_pos].reshape(len(val_pos), -1)
+        y_val_gpu = data_gpu['y_train_gpu_full'][val_pos].reshape(-1)
+
+        # Calcul des statistiques du fold
+        fold_stats_current = {
+            **calculate_fold_stats_gpu(y_train_gpu, "train"),
+            **calculate_fold_stats_gpu(y_val_gpu, "val")
+        }
+
+        # Calcul et vérification des poids
+        sample_weights_gpu = compute_balanced_weights_gpu(y_train_gpu)
+
+        # Création des DMatrix avec vérification
+        dtrain = xgb.DMatrix(X_train_gpu, label=y_train_gpu, weight=sample_weights_gpu)
+        dval = xgb.DMatrix(X_val_gpu, label=y_val_gpu)
+        evals_result = {}
+        train_result = {}
+
+
+        if optima_score == xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
+            w_p = trial.suggest_float('w_p', weight_param['w_p']['min'], weight_param['w_p']['max'])
+            w_n = trial.suggest_float('w_n', weight_param['w_n']['min'], weight_param['w_n']['max'])
+            custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased_gpu(predtTrain, dtrain, metric_dict)
+            obj_function = create_weighted_logistic_obj_gpu(w_p, w_n)
+            params['disable_default_eval_metric'] = 1
+
+        else:
+            custom_metric = None
+            obj_function = None
+            params.update({
+                'objective': 'binary:logistic',
+                'eval_metric': ['aucpr', 'logloss'],
+                'disable_default_eval_metric': 0,
+                'nthread': -1
+            })
+
+        # Entraînement avec monitoring
+        model = xgb.train(
+            params,
+            dtrain,
+            num_boost_round=num_boost_round,
+            evals=[(dtrain, 'train'), (dval, 'eval')],
+            obj=obj_function,
+            custom_metric=custom_metric,
+            early_stopping_rounds=params.get('early_stopping_rounds', 100),
+            verbose_eval=False,
+            evals_result=evals_result,
+            maximize=True
+        )
+
+        if optima_score == xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
+            eval_scores = evals_result['eval']['custom_metric_ProfitBased']
+            train_scores = evals_result['train']['custom_metric_ProfitBased']
+
+        else:
+            eval_scores = evals_result['eval']['aucpr']
+            train_scores = evals_result['train']['aucpr']
+
+        # Vérification des scores
+        val_score_best = max(eval_scores)
+        val_score_bestIdx = eval_scores.index(val_score_best)
+        best_iteration = val_score_bestIdx + 1
+
+        # Prédictions et vérifications validation
+        val_pred_proba = model.predict(dval, iteration_range=(0, best_iteration))
+        val_pred_proba = cp.asarray(val_pred_proba, dtype=cp.float32)
+        val_pred_proba, val_pred = predict_and_process(val_pred_proba, metric_dict['threshold'])
+
+        # Métriques validation
+        tn_val, fp_val, fn_val, tp_val = compute_confusion_matrix_cupy(y_val_gpu, val_pred)
+
+        val_metrics = {
+            'tp': tp_val,
+            'fp': fp_val,
+            'tn': tn_val,
+            'fn': fn_val,
+            'total_samples': len(y_val_gpu),
+            'score': val_score_best,
+            'best_iteration': best_iteration
+        }
+
+        # Même processus pour l'entraînement
+        train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
+        train_pred_proba = cp.asarray(train_pred_proba, dtype=cp.float32)
+        train_pred_proba, train_pred = predict_and_process(train_pred_proba, metric_dict['threshold'])
+
+        tn_train, fp_train, fn_train, tp_train = compute_confusion_matrix_cupy(y_train_gpu, train_pred)
+
+        train_metrics = {
+            'tp': tp_train,
+            'fp': fp_train,
+            'tn': tn_train,
+            'fn': fn_train,
+            'total_samples': len(y_train_gpu),
+            'score': train_scores[val_score_bestIdx]
+        }
+
+        # Calculs finaux et statistiques
+        tp_fp_sum_val = tp_val + fp_val
+        tp_fp_sum_train = tp_train + fp_train
+
+        if is_log_enabled:
+            try:
+                def timestamp_to_date_utc_(timestamp):
+                    date_format = "%Y-%m-%d %H:%M:%S"
+                    if isinstance(timestamp, pd.Series):
+                        return timestamp.apply(lambda x: time.strftime(date_format, time.gmtime(x)))
+                    else:
+                        return time.strftime(date_format, time.gmtime(timestamp))
+                # Traitement des informations temporelles
+                start_time, end_time, val_sessions = get_val_cv_time_range(X_train_full, X_train, val_pos)
+                time_diff = calculate_time_difference(timestamp_to_date_utc_(start_time),
+                                                      timestamp_to_date_utc_(end_time))
+
+                # S'assurer que les données sont en format CuPy
+                n_train = y_train_gpu.size if isinstance(y_train_gpu, cp.ndarray) else cp.asarray(y_train_gpu).size
+                n_val = y_val_gpu.size if isinstance(y_val_gpu, cp.ndarray) else cp.asarray(y_val_gpu).size
+
+                # Calcul des trades réussis et échoués
+                trades_reussis = cp.sum(y_val_gpu == 1).item()  # Nombre de 1 dans y_val_gpu
+                trades_echoues = cp.sum(y_val_gpu == 0).item()  # Nombre de 0 dans y_val_gpu
+                total_trades = trades_reussis + trades_echoues
+
+                # Calcul du winrate
+                winrate = (trades_reussis / total_trades * 100) if total_trades > 0 else 0
+
+                # Calcul du ratio échoués/réussis
+                ratio_reussite_echec = trades_reussis/trades_echoues if trades_echoues > 0 else float('inf')
+
+                # Mise à jour du print
+                print(
+                    f"Période de validation - Du {timestamp_to_date_utc_(start_time)} ({start_time}) au {timestamp_to_date_utc_(end_time)} ({end_time}) "
+                    f"(Durée: {time_diff.days} jours, {time_diff.months} mois, {time_diff.years} ans)\n"
+                    f"Avant optimisation - nombre de trades réussis {trades_reussis} | échoués {trades_echoues} | total {total_trades} | winrate {winrate:.2f}% | réussis/ratio échoués {ratio_reussite_echec:.2f}\n"
+                    f"Trades - Train: {n_train:,d}, Val: {n_val:,d}\n"
+                    f"Train Metrics - TP: {tp_train:4d} | FP: {fp_train:4d} | TN: {tn_train:4d} | FN: {fn_train:4d}\n"
+                    f"Val Metrics   - TP: {tp_val:4d} | FP: {fp_val:4d} | TN: {tn_val:4d} | FN: {fn_val:4d}")
+
+            except Exception as e:
+                print(f"Erreur 'process_cv_fold'->erreur lors de l'affichage des métriques: {str(e)}")
+
+        fold_stats = {
+            'val_winrate': compute_winrate_safe(tp_val, tp_fp_sum_val),
+            'train_winrate': compute_winrate_safe(tp_train, tp_fp_sum_train),
+            'val_trades': tp_fp_sum_val,
+            'train_trades': tp_fp_sum_train,
+            'fold_num': fold_num,
+            'best_iteration': best_iteration,
+            'val_score': val_score_best,
+            'train_score': train_metrics['score'],
+            'train_size': len(train_pos),
+            'val_size': len(val_pos),
+            **fold_stats_current  # Merge fold stats
+        }
+
+        return {
+            'val_metrics': val_metrics,
+            'train_metrics': train_metrics,
+            'fold_stats': fold_stats,
+            'evals_result': evals_result,
+            'best_iteration': best_iteration,
+            'val_score_best': val_score_best,
+            'val_score_bestIdx': val_score_bestIdx,
+            'debug_info': {
+                'threshold_used': metric_dict['threshold'],
+                'pred_proba_ranges': {
+                    'val': {'min': float(cp.min(val_pred_proba)), 'max': float(cp.max(val_pred_proba))},
+                    'train': {'min': float(cp.min(train_pred_proba)), 'max': float(cp.max(train_pred_proba))}
+                }
+            }
+        }
+
+    except Exception as e:
+        print(f"\nErreur dans process_cv_fold:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Message: {str(e)}")
+        raise
+
+
+""
+def process_cv_fold_catboost(fold_data, params, data_gpu, metric_dict, **kwargs):
+    """Processor spécifique à CatBoost"""
+    # Code CatBoost adapté
+    fold_results=0
+    return fold_results
+
+
+def validate_inputs(X_train, y_train_label):
+    """Validation commune des entrées"""
+    print(f"Shape X_train: {X_train.shape}")
+    print(f"Shape y_train_label: {y_train_label.shape}")
+    print(f"Index y_train_label: {y_train_label.index.min()} à {y_train_label.index.max()}")
+
+
+def initialize_gpu_arrays(nb_split_tscv):
+    """Initialisation commune des arrays GPU"""
+    return {
+        'winrates': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'nb_trades': cp.zeros(nb_split_tscv, dtype=cp.int32),
+        'scores_train': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'tp_train': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'fp_train': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'tp_val': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'fp_val': cp.zeros(nb_split_tscv, dtype=cp.float32),
+        'scores_val': cp.zeros(nb_split_tscv, dtype=cp.float32)
+    }
+
+
+def initialize_metrics_dict(nb_folds):
+    """Initialise toutes les métriques nécessaires sur GPU"""
+    return {
+        # Métriques par fold - Validation
+        'tp_val_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+        'fp_val_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+        'winrates_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+        'nb_trades_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+
+        # Métriques par fold - Entraînement
+        'tp_train_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+        'fp_train_by_fold': cp.zeros(nb_folds, dtype=cp.float32),
+
+        # Totaux validation sur GPU
+        'total_tp_val': cp.array(0, dtype=cp.float32),
+        'total_fp_val': cp.array(0, dtype=cp.float32),
+        'total_tn_val': cp.array(0, dtype=cp.float32),
+        'total_fn_val': cp.array(0, dtype=cp.float32),
+
+        # Totaux entraînement sur GPU
+        'total_tp_train': cp.array(0, dtype=cp.float32),
+        'total_fp_train': cp.array(0, dtype=cp.float32),
+        'total_tn_train': cp.array(0, dtype=cp.float32),
+        'total_fn_train': cp.array(0, dtype=cp.float32)
+    }
+
+
+def update_fold_metrics(metrics_dict, val_metrics, train_metrics, fold_idx):
+    """Met à jour toutes les métriques pour un fold"""
+    # S'assurer que les métriques sont sur GPU
+    val_tp = cp.asarray(val_metrics['tp'], dtype=cp.float32)
+    val_fp = cp.asarray(val_metrics['fp'], dtype=cp.float32)
+
+    # Mise à jour des métriques par fold
+    metrics_dict['tp_val_by_fold'][fold_idx] = val_tp
+    metrics_dict['fp_val_by_fold'][fold_idx] = val_fp
+
+    # Calcul du winrate sur GPU
+    total_trades = val_tp + val_fp
+    winrate = cp.where(total_trades > 0, val_tp / total_trades, cp.float32(0.0))
+
+    # Mise à jour des winrates et trades
+    metrics_dict['winrates_by_fold'][fold_idx] = winrate
+    metrics_dict['nb_trades_by_fold'][fold_idx] = total_trades
+
+    # Mise à jour des totaux
+    metrics_dict['total_tp_val'] += val_tp
+    metrics_dict['total_fp_val'] += val_fp
+    metrics_dict['total_tn_val'] += val_metrics['tn']
+    metrics_dict['total_fn_val'] += val_metrics['fn']
+
+    # Même chose pour l'entraînement
+    train_tp = cp.asarray(train_metrics['tp'], dtype=cp.float32)
+    train_fp = cp.asarray(train_metrics['fp'], dtype=cp.float32)
+
+    metrics_dict['tp_train_by_fold'][fold_idx] = train_tp
+    metrics_dict['fp_train_by_fold'][fold_idx] = train_fp
+
+    metrics_dict['total_tp_train'] += train_tp
+    metrics_dict['total_fp_train'] += train_fp
+    metrics_dict['total_tn_train'] += train_metrics['tn']
+    metrics_dict['total_fn_train'] += train_metrics['fn']
+
+    return metrics_dict
+
+
+def report_trial_optuna(trial, best_trial_with_2_obj,rfe_param,xgb_param_optuna_range,selected_columns,results_directory,config):
+    # Récupération des valeurs depuis trial.user_attrs
+    total_tp_val = trial.user_attrs['total_tp_val']
+    total_fp_val = trial.user_attrs['total_fp_val']
+    total_tn_val = trial.user_attrs['total_tn_val']
+    total_fn_val = trial.user_attrs['total_fn_val']
+    weight_param = trial.user_attrs['weight_param']
+    nb_split_tscv = trial.user_attrs['nb_split_tscv']
+    mean_cv_score = trial.user_attrs['mean_cv_score']
+    std_dev_score = trial.user_attrs['std_dev_score']
+    std_penalty_factor = trial.user_attrs['std_penalty_factor']
+    score_adjustedStd_val = trial.user_attrs['score_adjustedStd_val']
+    train_pnl_perTrades = trial.user_attrs['train_pnl_perTrades']
+    val_pnl_perTrades = trial.user_attrs['val_pnl_perTrades']
+    pnl_perTrade_diff = trial.user_attrs['pnl_perTrade_diff']
+    total_samples_val = trial.user_attrs['total_samples_val']
+    n_trials_optuna = trial.user_attrs['n_trials_optuna']
+    total_samples_val = trial.user_attrs['total_samples_val']
+    cummulative_pnl_val = trial.user_attrs['cummulative_pnl_val']
+    scores_ens_val_list = trial.user_attrs['scores_ens_val_list']
+    tp_fp_diff_val = trial.user_attrs['tp_fp_diff_val']
+    tp_percentage = trial.user_attrs['tp_percentage']
+    win_rate = trial.user_attrs['win_rate']
+    selected_feature_names =trial.user_attrs['selected_feature_names']
+    rfe_param_value = trial.user_attrs['use_of_rfe_in_optuna']
+    profit_per_tp = trial.user_attrs['profit_per_tp']
+    penalty_per_fn = trial.user_attrs['penalty_per_fn']
+
+    trial.set_user_attr('win_rate', win_rate)
+    weight_split = trial.user_attrs['weight_split']
+    nb_split_weight = trial.user_attrs['nb_split_weight']
+    pnl_norm_objective = trial.user_attrs['pnl_norm_objective']
+    ecart_train_val = trial.user_attrs['ecart_train_val']
+    print(f"   ##Essai actuel: ")
+    print(
+        f"    =>Objective 1, pnl_norm_objective : {pnl_norm_objective} avec weight_split {weight_split} nb_split_weight {nb_split_weight}")
+
+    print(
+        f"     -score_adjustedStd_val : {score_adjustedStd_val:.2f} avec Moyenne des pnl des {nb_split_tscv} iterations : {mean_cv_score:.2f}, std_dev_score : {std_dev_score}, std_penalty_factor={std_penalty_factor}")
+    print(f"    =>Objective 2, pnl per trade: train {train_pnl_perTrades} // Val {val_pnl_perTrades} "
+          f"donc diff val-train PNL per trade {pnl_perTrade_diff}\n"
+          f"     ecart_train_val:{ecart_train_val}")
+
+    if (rfe_param_value != rfe_param.NO_RFE):
+        print(
+            f"    =>Nombre de features sélectionnées par RFECVCV: {len(selected_feature_names)}, Noms des features: {', '.join(selected_feature_names)}")
+    print(f"    =>Principal métrique pour l'essai en cours :")
+    print(f"     -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
+          f"TN (True Negative) : {total_tn_val}, FN (False Negative) : {total_fn_val},")
+    print(f"     -Pourcentage Winrate           : {win_rate:.2f}%")
+    print(f"     -Pourcentage de TP             : {tp_percentage:.2f}%")
+    print(f"     -Différence (TP - FP)          : {tp_fp_diff_val}")
+    print(
+        f"     -PNL                           : {cummulative_pnl_val}, original: (scores_ens_val_list: {scores_ens_val_list})")
+    print(f"     -Nombre de d'échantillons      : {total_tp_val + total_fp_val + total_tn_val + total_fn_val} dont {total_tp_val + total_fp_val} trade pris")
+
+
+    if total_samples_val > 0:
+        tp_percentage = (total_tp_val / total_samples_val) * 100
+    else:
+        tp_percentage = 0
+    total_trades_val = total_tp_val + total_fp_val
+    win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
+    result_dict_trialOptuna = {
+        "cummulative_pnl": cummulative_pnl_val,
+        "win_rate_percentage": round(win_rate, 2),
+        "scores_ens_val_list": scores_ens_val_list,
+        "score_adjustedStd_val": score_adjustedStd_val,
+        "std_dev_score": std_dev_score,
+        "tp_fp_diff_val": tp_fp_diff_val,
+        "total_trades_val": total_trades_val,
+        "tp_percentage": round(tp_percentage, 3),
+        "total_tp_val": total_tp_val,
+        "total_fp_val": total_fp_val,
+        "total_tn_val": total_tn_val,
+        "total_fn_val": total_fn_val,
+        "current_trial_number": trial.number + 1,
+        "best_trial_with_2_Obj": best_trial_with_2_obj
+    }
+
+    def convert_to_serializable(obj):
+        if isinstance(obj, (np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    def convert_to_serializable_config(obj):
+        """Convert non-serializable objects to a format suitable for JSON."""
+        if isinstance(obj, xgb_metric):
+            return str(obj)  # or obj.name or obj.value depending on the enum or custom class
+        try:
+            json.dumps(obj)  # Try to serialize it
+            return obj  # If no error, return the object itself
+        except (TypeError, ValueError):
+            return str(obj)  # If it's not serializable, convert it to string
+
+    import time
+    from contextlib import contextmanager
+
+    def safe_file_replace(temp_filename, target_filename, max_retries=5, delay=1):
+        """
+        Tente de remplacer un fichier de manière sécurisée avec plusieurs essais.
+        """
+        for attempt in range(max_retries):
+            try:
+                # Tenter de supprimer le fichier cible s'il existe
+                if os.path.exists(target_filename):
+                    os.remove(target_filename)
+                    time.sleep(0.1)  # Petit délai après la suppression
+
+                # Tenter le remplacement
+                os.rename(temp_filename, target_filename)
+                return True
+            except (PermissionError, OSError) as e:
+                if attempt < max_retries - 1:
+                    print(f"Tentative {attempt + 1} échouée: {str(e)}")
+                    time.sleep(delay)
+                else:
+                    print(f"Échec final après {max_retries} tentatives: {str(e)}")
+                    # Tenter une copie comme solution de repli
+                    try:
+                        shutil.copy2(temp_filename, target_filename)
+                        os.remove(temp_filename)
+                        return True
+                    except Exception as copy_error:
+                        print(f"Échec de la copie de secours: {str(copy_error)}")
+                        return False
+
+    def save_trial_results(trial, result_dict_trialOptuna, config=None,
+                           xgb_param_optuna_range=None, weight_param=None, selected_columns=None,
+                           save_dir="optuna_results",
+                           result_file="optuna_results.json"):
+        global _first_call_save_r_trialesults
+
+        try:
+            # Création du répertoire si nécessaire
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Nettoyage au premier appel
+            if _first_call_save_r_trialesults:
+                if os.path.exists(save_dir):
+                    for filename in os.listdir(save_dir):
+                        file_path = os.path.join(save_dir, filename)
+                        try:
+                            if os.path.isfile(file_path):
+                                os.remove(file_path)
+                            elif os.path.isdir(file_path):
+                                shutil.rmtree(file_path)
+                        except Exception as e:
+                            print(f'Attention: Échec suppression {file_path}: {e}')
+                _first_call_save_r_trialesults = False
+
+            result_file_path = os.path.join(save_dir, result_file)
+
+            # Chargement des résultats existants
+            results_data = {}
+            if os.path.exists(result_file_path) and os.path.getsize(result_file_path) > 0:
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        with open(result_file_path, 'r') as f:
+                            results_data = json.load(f)
+                        break
+                    except json.JSONDecodeError as e:
+                        if attempt < max_retries - 1:
+                            time.sleep(1)
+                            continue
+                        print(f"Erreur lecture résultats: {e}")
+                        backup_file = f"{result_file_path}.bak_{int(time.time())}"
+                        shutil.copy2(result_file_path, backup_file)
+                        print(f"Backup créé: {backup_file}")
+                    except Exception as e:
+                        print(f"Erreur inattendue: {e}")
+                        break
+
+            # Mise à jour des données
+            if 'selected_columns' not in results_data:
+                results_data['selected_columns'] = selected_columns
+            if 'config' not in results_data:
+                results_data['config'] = {k: convert_to_serializable_config(v) for k, v in config.items()}
+            if 'weight_param' not in results_data:
+                results_data['weight_param'] = weight_param
+            if 'xgb_param_optuna_range' not in results_data:
+                results_data['xgb_param_optuna_range'] = xgb_param_optuna_range
+
+            # Ajout des résultats du nouveau trial
+            results_data[f"trial_{trial.number + 1}"] = {
+                "best_result": {k: convert_to_serializable(v) for k, v in result_dict_trialOptuna.items()},
+                "params": {k: convert_to_serializable(v) for k, v in trial.params.items()}
+            }
+
+            # Écriture sécurisée avec nom unique
+            temp_filename = os.path.join(save_dir, f'temp_results_{int(time.time())}_{os.getpid()}.json')
+            try:
+                with open(temp_filename, 'w') as tf:
+                    json.dump(results_data, tf, indent=4)
+
+                # Remplacement sécurisé
+                if not safe_file_replace(temp_filename, result_file_path):
+                    raise Exception("Échec du remplacement du fichier")
+
+            except Exception as e:
+                print(f"Erreur lors de la sauvegarde: {e}")
+                # Tentative de sauvegarde de secours
+                backup_path = os.path.join(save_dir, f'backup_results_{int(time.time())}.json')
+                try:
+                    with open(backup_path, 'w') as bf:
+                        json.dump(results_data, bf, indent=4)
+                    print(f"Sauvegarde de secours créée: {backup_path}")
+                except Exception as backup_error:
+                    print(f"Échec de la sauvegarde de secours: {backup_error}")
+
+            finally:
+                # Nettoyage des fichiers temporaires
+                if os.path.exists(temp_filename):
+                    try:
+                        os.remove(temp_filename)
+                    except:
+                        pass
+
+        except Exception as e:
+            print(f"Erreur globale dans save_trial_results: {e}")
+            raise
+
+    # print(f"   Config: {config}")
+
+    # Appel de la fonction save_trial_results
+    save_trial_results(
+        trial,
+        result_dict_trialOptuna,
+        config=config,
+        xgb_param_optuna_range=xgb_param_optuna_range, selected_columns=selected_columns, weight_param=weight_param,
+        save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
+        result_file="optuna_results.json"
+    )
+    print(f"   {trial.number + 1}/{n_trials_optuna} Optuna results and model saved successfully.")
+
+def callback_optuna(study, trial,optuna,study_xgb,rfe_param,config,xgb_param_optuna_range,results_directory):
+    """
+    Callback function for Optuna to monitor progress and log the best trial.
+    """
+    current_trial = trial.number
+    print(f"\n {Fore.CYAN}Optuna Callback Current Trial {current_trial + 1}:{Style.RESET_ALL}")
+    optuna_objective_type_value = trial.user_attrs.get('optuna_objective_type', optuna_doubleMetrics.DISABLE)
+    cv_method = trial.user_attrs.get('cv_method', None)
+
+    weightPareto_pnl_val = config.get('weightPareto_pnl_val', 0.6)
+    weightPareto_pnl_diff = config.get('weightPareto_pnl_diff', 0.4)
+
+    # Return early if the trial is not complete
+    if trial.state != optuna.trial.TrialState.COMPLETE:
+        return
+
+    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not completed_trials:
+        study.set_user_attr('bestResult_dict', {
+            "best_optunaTrial_number": None,
+            "best_pnl_val": None,
+            "best_pnl_perTrade_diff": None,
+            "best_params": None
+        })
+        print("No completed trials found.")
+        return
+    contraints_reached=True
+    # Check if the optimization is single-objective or multi-objective
+    if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
+        # Multi-objective optimization: custom selection of the best trial
+        pareto_trials = study.best_trials
+        weights = np.array([weightPareto_pnl_val, weightPareto_pnl_diff])
+
+        if (optuna_objective_type_value == optuna_doubleMetrics.USE_DIST_TO_IDEAL):
+            # Calculate distances for each Pareto front trial
+            values_0 = np.array([t.values[0] for t in pareto_trials])
+            values_1 = np.array([t.values[1] for t in pareto_trials])
+
+            min_pnl, max_pnl = values_0.min(), values_0.max()
+            min_pnl_diff, max_pnl_diff = values_1.min(), values_1.max()
+
+            pnl_range = max_pnl - min_pnl or 1
+            pnl_diff_range = max_pnl_diff - min_pnl_diff or 1
+
+            pnl_normalized = (max_pnl - values_0) / pnl_range
+            pnl_diff_normalized = (values_1 - min_pnl_diff) / pnl_diff_range
+
+            distances = np.sqrt(
+                (weightPareto_pnl_val * pnl_normalized) ** 2 +
+                (weightPareto_pnl_diff * pnl_diff_normalized) ** 2
+            )
+            best_trial = pareto_trials[np.argmin(distances)]
+        elif (optuna_objective_type_value == optuna_doubleMetrics.USE_WEIGHTED_AVG):
+            # Weighted average calculation for custom selection
+            df = pd.DataFrame({
+                'PnL_val': [-t.values[0] for t in completed_trials],
+                'pnl_perTrade_diff': [t.values[1] for t in completed_trials]
+            })
+
+            for col in df.columns:
+                min_val = df[col].min()
+                max_val = df[col].max()
+                range_val = max_val - min_val or 1
+                df[f'{col}_normalized'] = (df[col] - min_val) / range_val
+
+            weighted_avg = df[['PnL_val_normalized', 'pnl_perTrade_diff_normalized']].dot(weights)
+            best_trial = completed_trials[weighted_avg.idxmin()]
+    else:  # (optuna_doubleMetrics ) nous utilisons le best trial d'optuna directement ici
+        # Single-objective optimization: use best_trial directly
+        try:
+            best_trial = study.best_trial
+        except ValueError as e:
+            if "No feasible trials are completed yet" in str(e):
+                print("Aucun essai respectant les contraintes (ecart_train_val <= 0.05) n'a été trouvé pour le moment")
+                # Utiliser le trial actuel pour l'affichage
+                best_trial = trial
+                contraints_reached=False
+            else:
+                raise e
+
+    # Create the result dictionary
+    bestResult_dict = {
+        "best_optunaTrial_number": best_trial.number + 1,
+        "best_pnl_val": best_trial.user_attrs.get('best_pnl_val', None),
+        "best_pnl_perTrade_diff": best_trial.user_attrs.get('pnl_perTrade_diff', None),
+        "best_params": best_trial.params,
+        'selected_feature_names': best_trial.user_attrs.get('selected_feature_names', None),
+        'use_of_rfe_in_optuna': best_trial.user_attrs.get('use_of_rfe_in_optuna', None),
+
+        'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None,
+        'ecart_train_val': best_trial.values[1] if len(best_trial.values) > 1 else None
+    }
+    study.set_user_attr('bestResult_dict', bestResult_dict)
+
+    # Log additional metrics if available
+    metrics = {
+        'total_tp_val': best_trial.user_attrs.get('total_tp_val', None),
+        'total_fp_val': best_trial.user_attrs.get('total_fp_val', None),
+        'total_tn_val': best_trial.user_attrs.get('total_tn_val', None),
+        'total_fn_val': best_trial.user_attrs.get('total_fn_val', None),
+        'cummulative_pnl_val': best_trial.user_attrs.get('cummulative_pnl_val', None),
+        'tp_fp_diff_val': best_trial.user_attrs.get('tp_fp_diff_val', None),
+        'tp_percentage': best_trial.user_attrs.get('tp_percentage', None),
+        'win_rate': best_trial.user_attrs.get('win_rate', None),
+        'scores_ens_val_list': best_trial.user_attrs.get('scores_ens_val_list', None),
+        'weight_split': best_trial.user_attrs.get('weight_split', None),
+        'nb_split_weight': best_trial.user_attrs.get('nb_split_weight', None),
+
+    }
+    winrates_by_fold = best_trial.user_attrs.get('winrates_by_fold', None)
+    nb_trades_by_fold = best_trial.user_attrs.get('nb_trades_by_fold', None),
+
+    # Calcul des métriques
+    selected_feature_names=best_trial.user_attrs.get('selected_feature_names', None)
+    # Rapport
+    report_trial_optuna(trial, best_trial.number + 1,rfe_param,xgb_param_optuna_range,selected_feature_names,results_directory,config)
+
+    method_names_pareto = {
+        optuna_doubleMetrics.DISABLE: "DISABLE",
+        optuna_doubleMetrics.USE_DIST_TO_IDEAL: "double avec USE_DIST_TO_IDEAL",
+        optuna_doubleMetrics.USE_WEIGHTED_AVG: "double avec USE_WEIGHTED_AVG"
+    }
+
+    method_name_pareto = method_names_pareto.get(optuna_objective_type_value, "UNKNOWN")
+
+    method_names_cv = {
+        cv_config.TIME_SERIE_SPLIT: "TIME_SERIE_SPLIT",
+        cv_config.TIME_SERIE_SPLIT_NON_ANCHORED: "TIME_SERIE_SPLIT_NON_ANCHORED USE_DIST_TO_IDEAL",
+        cv_config.TIMESERIES_SPLIT_BY_ID:'TIMESERIES_SPLIT_BY_ID',
+        cv_config.K_FOLD: "K_FOLD",
+        cv_config.K_FOLD_SHUFFLE: "K_FOLD_SHUFFLE"
+
+    }
+
+    method_names_xgb_metric = {
+        xgb_metric.XGB_METRIC_ROCAUC:"XGB_METRIC_ROCAUC",
+        xgb_metric.XGB_METRIC_AUCPR:"XGB_METRIC_AUCPR",
+        xgb_metric.XGB_METRIC_F1:"XGB_METRIC_F1",
+        xgb_metric.XGB_METRIC_PRECISION:"XGB_METRIC_PRECISION",
+        xgb_metric.XGB_METRIC_RECALL:"XGB_METRIC_RECALL",
+        xgb_metric.XGB_METRIC_RECALL:"XGB_METRIC_MCC",
+        xgb_metric.XGB_METRIC_YOUDEN_J:"XGB_METRIC_YOUDEN_J",
+        xgb_metric.XGB_METRIC_SHARPE_RATIO:"XGB_METRIC_SHARPE_RATIO",
+        xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:"XGB_METRIC_CUSTOM_METRIC_PROFITBASED",
+        xgb_metric.XGB_METRIC_CUSTOM_METRIC_TP_FP:"XGB_METRIC_CUSTOM_METRIC_TP_FP"
+    }
+    scaler_choice= config.get('scaler_choice', 0)
+    winrates_formatted = [f"{x:.2f}" for x in winrates_by_fold]
+    scores_ens_val_list_formatted = [f"{x:.2f}" for x in metrics['scores_ens_val_list']]
+    method_names_xgb_metric=method_names_xgb_metric.get(config.get("xgb_metric_method",None))
+    method_name_cv = method_names_cv.get(cv_method, "UNKNOWN")
+    use_imbalance_penalty = best_trial.user_attrs.get('use_imbalance_penalty', False)
+    print(f"\n   {Fore.BLUE}##Meilleur essai jusqu'à present: {bestResult_dict['best_optunaTrial_number']}, "
+          f"Methode=> Optuna: '{method_name_pareto} | CV: '{method_name_cv} | XGB metric: {method_names_xgb_metric} |\n"
+          f"use_imbalance_penalty: {'Activé' if use_imbalance_penalty else 'Désactivé'}' |"
+          f"scaler_choice: {scaler_choice}\n##{Style.RESET_ALL}")
+    if  config['use_optuna_constraints_func']==True:
+        if contraints_reached==True:
+            print(f"    =>best trial have a constraint ecart_train_val of : {best_trial.user_attrs.get('ecart_train_val', None)} (ecart_train_val:{config['constraint_ecart_train_val']} | "
+                  f"constraint_min_trades_threshold_by_Fold: {config['constraint_min_trades_threshold_by_Fold']}) ")
+        else:
+            print(
+                f"{Fore.RED}    =>WARNING: No feasible trials yet - all current trials violate the constraint (ecart_train_val > {config['constraint_ecart_train_val']}){Style.RESET_ALL}")
+    print(f"    =>Objective 1: pnl_norm_objective -> {bestResult_dict['pnl_norm_objective']:.4f} "
+          f"avec weight_split: {metrics['weight_split']} nb_split_weight {metrics['nb_split_weight']}")
+    if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
+        print(
+            f"    =>Objective 2: score différence par trade (train - val) -> {bestResult_dict['best_pnl_perTrade_diff']:.4f}\n"
+            f"      score ecart_train_val   -> {bestResult_dict['ecart_train_val']}")
+    if (bestResult_dict['use_of_rfe_in_optuna'] != rfe_param.NO_RFE):
+        print(
+            f"    =>Nombre de features sélectionnées par RFECVCV: {len(bestResult_dict['selected_feature_names'])}, Noms des features: {', '.join(bestResult_dict['selected_feature_names'])}")
+
+    print(f"    Principal métrique pour le meilleur essai:")
+    print(f"     -Nombre de: TP: {metrics['total_tp_val']}, FP: {metrics['total_fp_val']}, "
+          f"TN: {metrics['total_tn_val']}, FN: {metrics['total_fn_val']}")
+    print(f"     -Pourcentage Winrate           : {metrics['win_rate']:.2f}%")
+    print(f"     -Pourcentage de TP             : {metrics['tp_percentage']:.2f}%")
+    print(f"     -Différence (TP - FP)          : {metrics['tp_fp_diff_val']}")
+    print(
+        f"     -PNL                           : {metrics['cummulative_pnl_val']}, original: {scores_ens_val_list_formatted}")
+    print(
+        f"                                                        winrate : {winrates_formatted}")
+    print(
+        f"                                                        Nb trade :{nb_trades_by_fold}")
+
+    print(
+        f"     -Nombre d'échantillons           : {sum([metrics['total_tp_val'], metrics['total_fp_val'], metrics['total_tn_val'], metrics['total_fn_val']])} "
+        f"dont {metrics['total_tp_val']+metrics['total_fp_val']} trades pris")
+    print(f"    =>Hyperparamètres du meilleur score trouvé à date: {bestResult_dict['best_params']}")
+
+    study_xgb.set_user_attr('bestResult_dict', bestResult_dict)
+
+    if sum( metrics['scores_ens_val_list']) != 0 and metrics['cummulative_pnl_val'] == 0:
+        raise ValueError(
+            f"Erreur: La somme des métriques ({sum(metrics['scores_ens_val_list'])}) est différente de 0, mais cumulative_pnl_val est égal à 0.")
+    else:
+        print(
+            f"Vérification réussie: Somme des métriques = {metrics['scores_ens_val_list']}, cumulative_pnl_val = {metrics['scores_ens_val_list']}")
+
+
+
+@njit
+def detect_naked_pocs_per_session(
+        closes: np.ndarray,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        pocs: np.ndarray,
+        delta_timestamps: np.ndarray,
+        session_start_idx: int,
+        session_end_idx: int
+) -> tuple[np.ndarray, np.ndarray]:
+    n = session_end_idx - session_start_idx
+    dist_above = np.full(n, np.nan, dtype=np.float64)
+    dist_below = np.full(n, np.nan, dtype=np.float64)
+
+    for idx in range(n):
+        current_idx = session_start_idx + idx
+        current_close = closes[current_idx]
+        closest_above = np.inf
+        closest_below = -np.inf
+        has_above = False
+        has_below = False
+
+        for past_idx in range(current_idx - 1, session_start_idx - 1, -1):
+            past_poc = pocs[past_idx]
+            is_naked = True
+
+            for check_idx in range(past_idx + 1, current_idx + 1):
+                if lows[check_idx] <= past_poc <= highs[check_idx]:
+                    is_naked = False
+                    break
+
+            if is_naked:
+                if past_poc > current_close:
+                    dist = past_poc - current_close
+                    if dist < abs(closest_above - current_close):
+                        closest_above = past_poc
+                        has_above = True
+                elif past_poc < current_close:
+                    dist = current_close - past_poc
+                    if dist < abs(current_close - closest_below):
+                        closest_below = past_poc
+                        has_below = True
+
+        if has_above:
+            dist_above[idx] = closest_above - current_close
+        if has_below:
+            dist_below[idx] = current_close - closest_below
+
+    return dist_above, dist_below
+
+@njit(parallel=True)
+def detect_naked_pocs_parallel(
+        closes: np.ndarray,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        pocs: np.ndarray,
+        delta_timestamps: np.ndarray,
+        session_starts: np.ndarray,
+        session_ends: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    n = len(closes)
+    dist_above = np.full(n, np.nan, dtype=np.float64)
+    dist_below = np.full(n, np.nan, dtype=np.float64)
+
+    num_sessions = len(session_starts)
+
+    for s in prange(num_sessions):
+        session_start_idx = session_starts[s]
+        session_end_idx = session_ends[s]
+
+        # Appeler la fonction pour traiter une session
+        session_dist_above, session_dist_below = detect_naked_pocs_per_session(
+            closes, highs, lows, pocs, delta_timestamps,
+            session_start_idx, session_end_idx
+        )
+
+        # Copier les résultats dans les tableaux principaux
+        dist_above[session_start_idx:session_end_idx] = session_dist_above
+        dist_below[session_start_idx:session_end_idx] = session_dist_below
+
+    return dist_above, dist_below
+
+def calculate_naked_poc_distances(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    start_time = time.time()
+    print(f"Start calculate_naked_poc_distances")
+
+    closes = df['close'].values.astype(np.float64)
+    highs = df['high'].values.astype(np.float64)
+    lows = df['low'].values.astype(np.float64)
+    pocs = df['pocPrice'].values.astype(np.float64)
+    delta_timestamps = df['deltaTimestampOpening'].values.astype(np.float64)
+
+    # Identifier les indices de début et de fin de chaque session
+    session_start_idxs = df[df['SessionStartEnd'] == 10].index.values.astype(np.int64)
+    session_end_idxs = np.append(session_start_idxs[1:], len(df))
+
+    if len(session_start_idxs) == 0:
+        raise ValueError("No sessions found with SessionStartEnd=10")
+
+    dist_above, dist_below = detect_naked_pocs_parallel(
+        closes, highs, lows, pocs, delta_timestamps,
+        session_start_idxs, session_end_idxs
+    )
+
+    dist_above = -np.abs(dist_above)
+    total_time = time.time() - start_time
+    print(f"Total time (calculate_naked_poc_distances): {total_time:.2f} seconds")
+    return pd.Series(dist_above, index=df.index), pd.Series(dist_below, index=df.index)
+
+def calculate_vif(df):
+    """
+    Calcule le Variance Inflation Factor (VIF) pour chaque feature d'un DataFrame.
+    Utilisé comme première méthode de filtrage des features.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant uniquement les colonnes numériques à analyser
+
+    Returns:
+        pd.DataFrame: DataFrame contenant les features et leurs valeurs VIF correspondantes
+    """
+    df_numeric = df.select_dtypes(include=[np.number])
+
+    # Supprimer les colonnes constantes qui causeraient une division par zéro dans le calcul VIF
+    df_numeric = df_numeric.loc[:, df_numeric.apply(pd.Series.nunique) != 1]
+
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = df_numeric.columns
+
+    vif_values = []
+    for i in range(df_numeric.shape[1]):
+        try:
+            vif = variance_inflation_factor(df_numeric.values, i)
+        except (np.linalg.LinAlgError, ValueError):
+            vif = np.nan
+        vif_values.append(vif)
+
+    vif_data["VIF"] = vif_values
+    return vif_data
+
+
+def compute_vif_and_remove_multicollinearity(df, threshold):
+    """
+    Processus itératif de filtrage des features basé sur le VIF.
+    Supprime une à une les features ayant le VIF le plus élevé jusqu'à ce que
+    toutes les features restantes aient un VIF inférieur au seuil.
+
+    Args:
+        df (pd.DataFrame): DataFrame d'entrée
+        threshold (float): Seuil VIF au-delà duquel une feature est considérée comme trop colinéaire
+
+    Returns:
+        pd.DataFrame: DataFrame contenant l'historique des valeurs VIF et le statut final des features
+    """
+    X_train_bis = df.select_dtypes(include=[np.number]).copy()
+    vif_dfs = []
+    iteration = 1
+    removed_features = []
+    retained_features = X_train_bis.columns.tolist()
+
+    # Boucle itérative de suppression des features avec VIF élevé
+    while True:
+        vif_df = calculate_vif(X_train_bis)
+        vif_df.columns = ['Feature', f'VIF{iteration}']
+        vif_df[f'VIF{iteration}'] = pd.to_numeric(vif_df[f'VIF{iteration}'], errors='coerce')
+        vif_dfs.append(vif_df)
+
+        max_vif = vif_df[f'VIF{iteration}'].max()
+        if pd.isna(max_vif) or max_vif <= threshold:
+            break
+        else:
+            # Suppression de la feature avec le VIF le plus élevé
+            max_feature = vif_df.loc[vif_df[f'VIF{iteration}'].idxmax(), 'Feature']
+            X_train_bis = X_train_bis.drop(columns=[max_feature])
+            removed_features.append(max_feature)
+            retained_features.remove(max_feature)
+            iteration += 1
+
+    # Construction du DataFrame de résultat avec l'historique VIF
+    vif_full = reduce(lambda left, right: pd.merge(left, right, on='Feature', how='outer'), vif_dfs)
+    vif_full['Status'] = vif_full['Feature'].apply(lambda x: 'Conservé' if x in retained_features else 'Non conservé')
+
+    # Gestion des valeurs manquantes dans l'historique VIF
+    vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
+    for col in vif_columns:
+        vif_full[col] = vif_full[col].astype(object)
+
+    for feature in vif_full['Feature']:
+        feature_mask = vif_full['Feature'] == feature
+        for idx, col in enumerate(vif_columns):
+            if pd.isna(vif_full.loc[feature_mask, col]).values[0]:
+                vif_full.loc[feature_mask, col] = 'n.a'
+
+    # Réorganisation des colonnes
+    vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
+    vif_full = vif_full[['Feature'] + vif_columns_sorted + ['Status']]
+
+    return vif_full
+
+
+def compute_and_keep_correled(merged_X_Y):
+    """
+    Compute linear (Pearson) and nonlinear (Spearman) correlation with the target variable.
+
+    Parameters:
+    -----------
+    merged_X_Y : pandas.DataFrame
+        Input DataFrame containing features and the target variable.
+
+    Returns:
+    --------
+    corr_df : pandas.DataFrame
+        DataFrame with columns 'Feature', 'lr_target', 'nlr_target' containing
+        the linear and nonlinear correlation with the target variable.
+    """
+    # Compute linear and nonlinear correlations
+    linear_correlation_target = merged_X_Y.corr()["target"] * 100
+    linear_correlation_target.name = "lr_target"
+
+    nonlinear_correlation_target = merged_X_Y.corr(method="spearman")["target"] * 100
+    nonlinear_correlation_target.name = "nlr_target"
+
+    # Combine into a DataFrame
+    corr_df = pd.DataFrame({
+        'Feature': linear_correlation_target.index,
+        'lr_target': linear_correlation_target.values,
+        'nlr_target': nonlinear_correlation_target.values
+    })
+
+    # Exclude the target row
+    corr_df = corr_df[corr_df['Feature'] != 'target']
+
+    return corr_df
+def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="name dataset",
+                                   config=None, enable_vif_corr_mi=False):
+    """
+    Analyse complète des features d'un DataFrame avec options de filtrage.
+
+    Cette fonction combine:
+    1. L'analyse des valeurs manquantes et nulles
+    2. Le filtrage optionnel des features basé sur:
+       - VIF (multicolinéarité)
+       - Corrélation
+       - Information mutuelle
+
+    Args:
+        X (pd.DataFrame): DataFrame des features
+        Y (pd.Series): Série des cibles
+        selected_columns (list): Liste des colonnes à considérer
+        name (str): Nom du dataset pour l'affichage
+        config (dict): Configuration des seuils et colonnes à exclure
+        enable_vif_corr_mi (bool): Active/désactive le filtrage des features
+
+    Returns:
+        list: Liste des colonnes conservées après filtrage si enable_vif_corr_mi=True
+        None: Si enable_vif_corr_mi=False
+    """
+    # Initialisation des seuils
+    vif_threshold = 0
+    corr_threshold = 0
+    mi_threshold = 0
+
+    if config is not None:
+        vif_threshold = config.get('vif_threshold', 0)
+        corr_threshold = config.get('corr_threshold', 0)
+        mi_threshold = config.get('mi_threshold', 0)
+
+    # Création du DataFrame d'analyse
+    analysis_df = pd.DataFrame()
+    analysis_df['Feature'] = X.columns
+
+    # Calcul des statistiques sur les NaN et zéros
+    analysis_df['NaN Count'] = X.isna().sum().values
+    analysis_df['NaN%'] = (X.isna().mean() * 100).values
+    analysis_df['Zeros%'] = ((X == 0).mean() * 100).values
+    analysis_df['NaN+Zeros%'] = analysis_df['NaN%'] + analysis_df['Zeros%']
+    analysis_df['non NaN'] = len(X) - analysis_df['NaN Count']
+    analysis_df['non NaN%'] = 100 - analysis_df['NaN%']
+
+    # Liste pour stocker les colonnes conservées
+    retained_columns = selected_columns.copy()
+
+    if enable_vif_corr_mi:
+        # Application du filtrage VIF (itératif)
+        vif_full = compute_vif_and_remove_multicollinearity(X[selected_columns], vif_threshold)
+        analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
+
+        # Mise à jour des colonnes conservées après VIF
+        retained_columns = vif_full[vif_full['Status'] == 'Conservé']['Feature'].tolist()
+
+        X_afterVIF = X[retained_columns]
+
+        # Filtrage par corrélation
+        merged_dfVIF_target = pd.concat([X_afterVIF, Y], axis=1)
+        merged_dfVIF_target.columns = list(X_afterVIF.columns) + ['target']  # Pour être sûr
+        corr_df = compute_and_keep_correled(merged_dfVIF_target)
+
+        # Fusion des corrélations avec le DataFrame d'analyse
+        analysis_df = pd.merge(analysis_df, corr_df, on='Feature', how='left')
+
+        # Calcul des scores d'information mutuelle
+        if Y.nunique() <= 20 or Y.dtype == 'object' or Y.dtype == 'category' or np.issubdtype(Y.dtype, np.integer):
+            mi_scores = mutual_info_classif(X_afterVIF, Y)
+        else:
+            mi_scores = mutual_info_regression(X_afterVIF, Y)
+
+        # Créer un DataFrame pour les scores MI
+        mi_df = pd.DataFrame({'Feature': X_afterVIF.columns, 'mi': mi_scores})
+
+        # Fusionner les scores MI avec analysis_df
+        analysis_df = pd.merge(analysis_df, mi_df, on='Feature', how='left')
+
+        # Récupération des colonnes VIF
+        vif_columns = [col for col in analysis_df.columns if col.startswith('VIF')]
+        vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)  # Tri décroissant
+
+        # Identifier la dernière colonne VIF (la plus récente)
+        if vif_columns_sorted:
+            last_vif_column = vif_columns_sorted[0]
+        else:
+            last_vif_column = None
+
+        # Mise à jour du 'Status' pour qu'il soit True ou False
+        def compute_status(row):
+            vif_value = row.get(last_vif_column, 'n.a')
+            if vif_value != 'n.a' and not pd.isna(vif_value):
+                vif_ok = float(vif_value) <= vif_threshold
+            else:
+                vif_ok = False
+
+            corr_ok = (
+                (abs(row.get('lr_target', 0)) > corr_threshold) or
+                (abs(row.get('nlr_target', 0)) > corr_threshold)
+            )
+
+            mi_ok = row.get('mi', 0) > mi_threshold
+
+            status = vif_ok and (corr_ok or mi_ok)
+            return status
+
+        analysis_df['Status'] = analysis_df.apply(compute_status, axis=1)
+
+        # Mise à jour des colonnes conservées après application de toutes les conditions
+        retained_columns = analysis_df[analysis_df['Status']]['Feature'].tolist()
+
+        has_status = True
+    else:
+        vif_columns_sorted = []
+        has_status = False
+        # **Ajout de la colonne 'Status' avec une valeur par défaut**
+        analysis_df['Status'] = True  # Ou False, selon ce qui est logique pour votre cas
+
+    # Organisation des colonnes pour l'affichage
+    base_columns = ['Feature', 'NaN Count', 'NaN%', 'Zeros%', 'NaN+Zeros%', 'non NaN', 'non NaN%']
+    if has_status:
+        base_columns.append('Status')
+
+    correlation_columns = []
+    if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
+        correlation_columns = ['lr_target', 'nlr_target']
+    mi_column = []
+    if 'mi' in analysis_df.columns:
+        mi_column = ['mi']
+
+    if has_status:
+        analysis_df_columns = base_columns + correlation_columns + mi_column + vif_columns_sorted
+    else:
+        analysis_df_columns = base_columns + correlation_columns + mi_column
+
+    # Ajustement pour éviter les KeyError
+    analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
+    analysis_df = analysis_df[analysis_df_columns]
+
+    # Formatage de l'affichage
+    base_format = [
+        "{:<48}",  # Feature
+        "{:>10}",  # NaN Count
+        "{:>8}",   # NaN%
+        "{:>8}",   # Zeros%
+        "{:>12}",  # NaN+Zeros%
+        "{:>12}",  # Val non NaN
+        "{:>12}",  # Val non NaN%
+    ]
+    if has_status:
+        base_format.append("{:>8}")  # Status
+
+    # Check if correlation columns exist
+    correlation_format = ["{:>12}", "{:>12}"] if correlation_columns else []
+
+    # Check if mi column exists
+    mi_format = ["{:>12}"] if mi_column else []
+
+    vif_formats = ["{:>12}"] * len(vif_columns_sorted)
+
+    full_format = base_format + correlation_format + mi_format + vif_formats
+
+    headers = [
+        "Feature",
+        "NaN Count",
+        "NaN%",
+        "Zeros%",
+        "NaN+Zeros%",
+        "Val non NaN",
+        "Val non NaN%",
+    ]
+    if has_status:
+        headers.append("Status")
+
+    if correlation_columns:
+        headers += correlation_columns
+
+    if mi_column:
+        headers += mi_column
+
+    headers += vif_columns_sorted
+
+    # Print header
+    header_line = ''
+    for header, fmt in zip(headers, full_format):
+        header_line += fmt.format(header) + ' '
+    print(header_line.strip())
+    print("-" * len(header_line))
+
+    # ANSI color codes
+    RED = '\033[91m'    # Red for features not retained
+    BLUE = '\033[94m'   # Blue for values exceeding thresholds
+    ORANGE = '\033[93m' # Orange for excluded_columns_CorrCol
+    YELLOW = '\033[33m' # Yellow for excluded_columns_category
+    RESET = '\033[0m'   # Reset color
+
+    # Color mapping for excluded columns
+    if config is not None:
+        excluded_columns_principal = config.get('excluded_columns_principal', [])
+        excluded_columns_tradeDirection = config.get('excluded_columns_tradeDirection', [])
+        excluded_columns_CorrCol = config.get('excluded_columns_CorrCol', [])
+        excluded_columns_category = config.get('excluded_columns_category', [])
+    else:
+        excluded_columns_principal = []
+        excluded_columns_tradeDirection = []
+        excluded_columns_CorrCol = []
+        excluded_columns_category = []
+
+    for idx, row in analysis_df.iterrows():
+        feature = row['Feature']
+
+        # Get the basic stats
+        nan_count = row['NaN Count']
+        nan_percentage = row['NaN%']
+        zeros_percentage = row['Zeros%']
+        total_percentage = row['NaN+Zeros%']
+        non_nan_count = row['non NaN']
+        non_nan_percentage = row['non NaN%']
+
+        # Initialize output values and colors
+        output_values = [
+            feature,
+            int(nan_count),
+            f"{nan_percentage:.2f}",
+            f"{zeros_percentage:.2f}",
+            f"{total_percentage:.2f}",
+            int(non_nan_count),
+            f"{non_nan_percentage:.2f}",
+        ]
+
+        output_colors = [''] * len(output_values)
+
+        if has_status:
+            status_value = 'True' if row['Status'] else 'False'
+            output_values.append(status_value)
+            output_colors.append('')
+        else:
+            status_value = 'n.a'  # Ou une autre valeur par défaut
+            output_values.append(status_value)
+            output_colors.append('')
+
+        # Handle correlation columns if they exist
+        if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
+            lr_target = row.get('lr_target', 'n.a')
+            nlr_target = row.get('nlr_target', 'n.a')
+
+            # lr_target
+            if lr_target != 'n.a' and not pd.isna(lr_target):
+                lr_target_formatted = f"{lr_target:.2f}"
+                output_values.append(lr_target_formatted)
+                if abs(lr_target) > corr_threshold:
+                    output_colors.append(BLUE)
+                else:
+                    output_colors.append('')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+
+            # nlr_target
+            if nlr_target != 'n.a' and not pd.isna(nlr_target):
+                nlr_target_formatted = f"{nlr_target:.2f}"
+                output_values.append(nlr_target_formatted)
+                if abs(nlr_target) > corr_threshold:
+                    output_colors.append(BLUE)
+                else:
+                    output_colors.append('')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+        else:
+            # If correlation columns do not exist
+            output_values.extend(['n.a', 'n.a'])
+            output_colors.extend(['', ''])
+
+        # Handle mi column if it exists
+        if 'mi' in analysis_df.columns:
+            mi_value = row.get('mi', 'n.a')
+            if mi_value != 'n.a' and not pd.isna(mi_value):
+                mi_formatted = f"{mi_value:.4f}"
+                output_values.append(mi_formatted)
+                if mi_value > mi_threshold:
+                    output_colors.append(BLUE)
+                else:
+                    output_colors.append('')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+        else:
+            # If mi column does not exist
+            output_values.append('n.a')
+            output_colors.append('')
+
+        # Get vif_values
+        vif_values = []
+        for col in vif_columns_sorted:
+            val = row.get(col, 'n.a')
+            if isinstance(val, str) and val == 'n.a':
+                vif_values.append('n.a')
+            elif not pd.isna(val):
+                vif_values.append(f"{val:.2f}")
+            else:
+                vif_values.append('n.a')
+
+        # Append VIF values and their colors
+        for idx_vif, vif_val in enumerate(vif_values):
+            output_values.append(vif_val)
+            # For coloring VIF values
+            if idx_vif == 0 and vif_val != 'n.a':  # idx_vif == 0 corresponds to the last VIF column
+                if float(vif_val) > vif_threshold:
+                    # Color the last VIF column if value exceeds threshold
+                    output_colors.append(BLUE)
+                else:
+                    output_colors.append('')
+            else:
+                output_colors.append('')
+
+        # Color the entire row red if not retained
+        if has_status and not row['Status']:
+            row_color = RED
+        else:
+            row_color = ''
+
+        # Color coding based on config
+        if feature in excluded_columns_principal:
+            row_color = RED
+        elif feature in excluded_columns_CorrCol:
+            row_color = ORANGE
+        elif feature in excluded_columns_tradeDirection:
+            row_color = BLUE
+        elif feature in excluded_columns_category:
+            row_color = YELLOW
+
+        # Now, format and color each value
+        formatted_values = []
+        for val, fmt, color_code in zip(output_values, full_format, output_colors):
+            formatted_value = fmt.format(val)
+            if color_code:
+                formatted_value = f"{color_code}{formatted_value}{RESET}"
+            elif row_color:
+                formatted_value = f"{row_color}{formatted_value}{RESET}"
+            formatted_values.append(formatted_value)
+
+        # Join the formatted values to form the output line
+        output_line = ' '.join(formatted_values)
+        print(output_line)
+
+    if enable_vif_corr_mi:
+        return retained_columns
+    return None
+
+
+def apply_scaling(X_train, X_test, save_path=None,chosen_scaler=None):
+    """
+    Applique la normalisation sur les données d'entraînement et de test.
+
+    Args:
+        X_train (pd.DataFrame): Données d'entraînement à normaliser
+        X_test (pd.DataFrame): Données de test à normaliser
+        config (dict): Configuration contenant le choix du scaler
+        save_path: Chemin optionnel pour sauvegarder les paramètres du scaler
+
+    Returns:
+        tuple: (X_train_scaled, X_test_scaled, scaler, scaler_params)
+    """
+
+    # Si le scaling est désactivé
+    if chosen_scaler == scalerChoice.SCALER_DISABLE:
+        return X_train, X_test, None, None
+
+    # Création du scaler selon le choix
+    if chosen_scaler == scalerChoice.SCALER_ROBUST:
+        scaler = RobustScaler()
+        scaler_name = "RobustScaler"
+    elif chosen_scaler == scalerChoice.SCALER_STANDARD:
+        scaler = StandardScaler()
+        scaler_name = "StandardScaler"
+    elif chosen_scaler == scalerChoice.SCALER_MINMAX:
+        scaler = MinMaxScaler()
+        scaler_name = "MinMaxScaler"
+    elif chosen_scaler == scalerChoice.SCALER_MAXABS:
+        scaler = MaxAbsScaler()
+        scaler_name = "MaxAbsScaler"
+
+    # Fit sur train et transform sur les deux
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index
+    )
+
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index
+    )
+
+    # Stockage des paramètres selon le type de scaler
+    scaler_params = {
+        'scaler_type': scaler_name,
+        'features': X_train.columns.tolist()
+    }
+
+    if chosen_scaler == scalerChoice.SCALER_ROBUST:
+        scaler_params.update({
+            'center': dict(zip(X_train.columns, scaler.center_)),
+            'scale': dict(zip(X_train.columns, scaler.scale_))
+        })
+        print("\nParamètres du RobustScaler:")
+        print("Médianes:", scaler_params['center'])
+        print("IQRs:", scaler_params['scale'])
+    else:
+        scaler_params.update({
+            'mean': dict(zip(X_train.columns, scaler.mean_)),
+            'scale': dict(zip(X_train.columns, scaler.scale_))
+        })
+        print("\nParamètres du StandardScaler:")
+        print("Moyennes:", scaler_params['mean'])
+        print("Écarts-types:", scaler_params['scale'])
+
+    # Sauvegarde des paramètres si un chemin est fourni
+    if save_path is not None:
+        import os
+        import json
+
+        filename = f"{scaler_name.lower()}_params.json"
+        full_path = os.path.join(save_path, filename)
+
+        os.makedirs(save_path, exist_ok=True)
+
+
+        with open(full_path, 'w') as f:
+            json.dump(scaler_params, f, indent=4)
+        print(f"\nParamètres sauvegardés dans: {full_path}")
+
+    return X_train_scaled, X_test_scaled, scaler, scaler_params
+def save_features_with_sessions(df, custom_sections, file_path):
+    # Sauvegarder le DataFrame normalement
+    df.to_csv(file_path, sep=';', index=False, encoding='iso-8859-1')
+
+    # Ajouter CUSTOM_SECTIONS à la fin avec un séparateur spécial
+    with open(file_path, 'a', encoding='iso-8859-1') as f:
+        f.write('\n###CUSTOM_SECTIONS_START###\n')
+        for section, values in custom_sections.items():
+            f.write(f"{section};{values['start']};{values['end']};{values['session_type_index']};"
+                    f"{values['selected']};{values['description']}\n")
+        f.write('###CUSTOM_SECTIONS_END###\n')
+
+
+from io import StringIO
+
+
+def load_features_and_sections(file_path):
+    # Read all lines from the file
+    with open(file_path, 'r', encoding='iso-8859-1') as f:
+        lines = f.read().splitlines()
+
+    start_marker = '###CUSTOM_SECTIONS_START###'
+    end_marker = '###CUSTOM_SECTIONS_END###'
+
+    try:
+        # Find the indices of the start and end markers
+        start_index = lines.index(start_marker)
+        end_index = lines.index(end_marker, start_index)
+    except ValueError:
+        # If markers are not found, read the entire file as DataFrame
+        data = '\n'.join(lines)
+        features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
+        custom_sections = {}
+        return features_df, custom_sections
+
+    # Extract data lines and custom sections lines
+    data_lines = lines[:start_index]
+    custom_section_lines = lines[start_index + 1:end_index]
+
+    # Join data lines into a single string and read into DataFrame
+    data = '\n'.join(data_lines)
+    features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
+
+    # Safely convert 'deltaTimestampOpening' if it exists
+    if 'deltaTimestampOpening' in features_df.columns:
+        features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
+                                                             errors='coerce').fillna(0).astype(int)
+
+    # Parse custom sections
+    custom_sections = {}
+    for line in custom_section_lines:
+        if line.strip():  # Ensure the line is not empty
+            parts = line.strip().split(';')
+            if len(parts) >= 6:
+                section, start, end, type_idx, selected, description = parts[:6]
+                # If description contains semicolons, join them back
+                if len(parts) > 6:
+                    description = ';'.join(parts[5:])
+                custom_sections[section] = {
+                    'start': int(start),
+                    'end': int(end),
+                    'session_type_index': int(type_idx),
+                    'selected': selected.lower() == 'true',
+                    'description': description
+                }
+
+    return features_df, custom_sections
+
+
+def compare_dataframes_train_test(X_train, X_test):
+    """
+    Compare les colonnes entre X_train et X_test.
+
+    Parameters:
+    -----------
+    X_train : pandas.DataFrame
+        Training dataset déjà sélectionné
+    X_test : pandas.DataFrame
+        Test dataset déjà sélectionné
+
+    Returns:
+    --------
+    tuple
+        (bool, str) - (True si colonnes identiques, message avec détails)
+    """
+    try:
+        # Obtention des listes de colonnes
+        train_cols = list(X_train.columns)
+        test_cols = list(X_test.columns)
+
+        # Vérification de l'égalité des colonnes
+        columns_match = set(train_cols) == set(test_cols)
+
+        if columns_match:
+            # Si les colonnes sont identiques
+            message = f"Nombre de colonnes dans X_train et X_test = {len(train_cols)}\n"
+            message += "Colonnes : \n" + ", ".join(train_cols)
+        else:
+            # Si les colonnes sont différentes
+            message = f"Nombre de colonnes dans X_train = {len(train_cols)}\n"
+            message += f"Nombre de colonnes dans X_test = {len(test_cols)}\n"
+            message += "\nColonnes dans X_train : \n" + ", ".join(train_cols)
+            message += "\nColonnes dans X_test : \n" + ", ".join(test_cols)
+
+            # Détail des différences
+            train_only = set(train_cols) - set(test_cols)
+            test_only = set(test_cols) - set(train_cols)
+
+            if train_only:
+                message += f"\nColonnes uniquement dans X_train: {', '.join(train_only)}"
+            if test_only:
+                message += f"\nColonnes uniquement dans X_test: {', '.join(test_only)}"
+
+        print(message)
+        return columns_match, message
+
+    except Exception as e:
+        error_message = f"Erreur lors de la comparaison: {str(e)}"
+        print(error_message)
+        return False, error_message

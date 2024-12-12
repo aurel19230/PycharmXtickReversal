@@ -3,7 +3,7 @@ import json
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QLabel, QPushButton, QComboBox,QScrollArea,QGridLayout,QMessageBox
 from PyQt5.QtCore import Qt
 import pandas as pd
-from standardFunc import load_data, split_sessions, print_notification
+from standardFunc_sauv import load_data, split_sessions, print_notification
 import os
 
 import sys
@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QCh
     QScrollArea, QMessageBox
 from PyQt5.QtCore import Qt
 import pandas as pd
-from standardFunc import load_data, split_sessions, print_notification
+from standardFunc_sauv import load_data, split_sessions, print_notification
 import os
 import sys
 import os

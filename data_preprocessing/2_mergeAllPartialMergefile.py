@@ -99,26 +99,47 @@ def merge_files(directory):
     merged_df = pd.concat(dataframes, ignore_index=True)
 
     if option == 'd':
-        # Assurez-vous que timeStampOpening est de type numérique (int64 ou float64)
+        # Conversion de timeStampOpening en numérique
         merged_df['timeStampOpening'] = pd.to_numeric(merged_df['timeStampOpening'])
 
         # Colonnes pour la vérification des doublons
+        colonnes_a_verifier = ['close', 'open', 'high', 'low', 'volume', "atr", "vaDelta_6periods", 'vaVol_16periods']
 
-        check_columns = ['candleDir', 'candleSizeTicks', 'close', 'open', 'high', 'low', 'pocPrice', 'volPOC', 'deltaPOC',
-                         'volume', 'delta', 'VolBlw', 'DeltaBlw', 'VolAbv', 'DeltaAbv', 'VolBlw_6Tick', 'DeltaBlw_6Tick',
-                         'VolAbv_6Tick', 'DeltaAbv_6Tick', 'bidVolLow', 'askVolLow', 'bidVolLow_1', 'askVolLow_1',
-                         'bidVolLow_2', 'askVolLow_2', 'bidVolLow_3', 'askVolLow_3', 'bidVolHigh', 'askVolHigh',
-                         'bidVolHigh_1', 'askVolHigh_1', 'bidVolHigh_2', 'askVolHigh_2', 'bidVolHigh_3', 'askVolHigh_3',
-                         'VWAP', 'VWAPsd1Top', 'VWAPsd2Top', 'VWAPsd3Top', 'VWAPsd4Top', 'VWAPsd1Bot', 'VWAPsd2Bot',
-                         'VWAPsd3Bot', 'VWAPsd4Bot', 'bandWidthBB', 'perctBB', 'atr']
+        # Identifier les doublons avant suppression
+        doublons = merged_df[merged_df.duplicated(subset=colonnes_a_verifier, keep=False)].copy()
 
-        # Trier le DataFrame par timeStampOpening
-        #merged_df = merged_df.sort_values('timeStampOpening')
+        # Grouper les doublons pour analyse
+        groupes_doublons = doublons.groupby(colonnes_a_verifier)
 
-        # Supprimer les doublons en gardant la première occurrence, uniquement pour les timeStampOpening égaux
-        merged_df = merged_df.drop_duplicates(
-            subset=['timeStampOpening'] + check_columns, keep='first'
+        print("\nAnalyse des groupes de doublons avant suppression:")
+        for name, group in groupes_doublons:
+            nb_doublons = len(group) - 1  # -1 car on garde une ligne
+            min_timestamp = group['timeStampOpening'].min()
+            print(f"\nGroupe de doublons:")
+            print(f"Nombre de lignes à supprimer: {nb_doublons}")
+            print(f"TimeStampOpening conservé: {min_timestamp}")
+            print("Lignes du groupe:")
+            print(group.sort_values('timeStampOpening'))
+            print("-" * 80)
+
+        # Supprimer les doublons en gardant celui avec le plus petit timeStampOpening
+        merged_df_clean = merged_df.sort_values('timeStampOpening').drop_duplicates(
+            subset=colonnes_a_verifier,
+            keep='first'
         )
+
+        # Statistiques finales
+        nb_lignes_avant = len(merged_df)
+        nb_lignes_apres = len(merged_df_clean)
+        nb_doublons_supprimes = nb_lignes_avant - nb_lignes_apres
+
+        print(f"\nStatistiques finales:")
+        print(f"Nombre de lignes avant: {nb_lignes_avant}")
+        print(f"Nombre de lignes après: {nb_lignes_apres}")
+        print(f"Nombre total de doublons supprimés: {nb_doublons_supprimes}")
+
+        # Assigner le résultat nettoyé
+        merged_df = merged_df_clean
 
     # Vérification finale de l'ordre chronologique
     if not merged_df['timeStampOpening'].is_monotonic_increasing:

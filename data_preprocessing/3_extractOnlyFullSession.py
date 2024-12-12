@@ -3,11 +3,11 @@ import numpy as np
 from numba import jit
 import os
 import time
-from standardFunc import  print_notification
+from standardFunc_sauv import  print_notification
 
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_6TP_1SL\merge"
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
 
-file="Step2_4_0_6TP_1SL_080919_141024.csv"
+file="Step2_4_0_5TP_1SL_newBB_080919_281124.csv"
 
 file_path = os.path.join(directory, file)
 8

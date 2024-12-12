@@ -1,10 +1,10 @@
-from standardFunc import (load_data, split_sessions, print_notification,
-                          plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
-                          timestamp_to_date_utc, calculate_and_display_sessions,
-                          timestamp_to_date_utc, calculate_and_display_sessions,
-                          calculate_weighted_adjusted_score_custom, sigmoidCustom,
-                          custom_metric_ProfitBased_cpu, create_weighted_logistic_obj_cpu,
-                          optuna_options, train_finalModel_analyse, init_dataSet, sigmoidCustom_cpu)
+from standardFunc_sauv import (load_data, split_sessions, print_notification,
+                               plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
+                               timestamp_to_date_utc, calculate_and_display_sessions,
+                               timestamp_to_date_utc, calculate_and_display_sessions,
+                               calculate_weighted_adjusted_score_custom, sigmoidCustom,
+                               custom_metric_ProfitBased_cpu, create_weighted_logistic_obj_cpu,
+                               train_finalModel_analyse, init_dataSet, sigmoidCustom_cpu)
 import pandas as pd
 import os
 
@@ -489,9 +489,9 @@ def print_feature_selection_results(results):
 
 
 # Chemin d'accès et chargement des données
-base_path = "C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/filtrageFeatures/4_0_6TP_1SL_19_46_161124_1st_mine_kfold"
+base_path = "C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/filtrageFeatures/4_0_6TP_1SL_18_12_301124"
 
-correlation_df = load_data(os.path.join(base_path, "correlations_above_0.75.csv"))
+correlation_df = load_data(os.path.join(base_path, "all_correlations.csv"))
 shap_importance_df_train = load_data(os.path.join(base_path, "shap_dependencies_results", "shap_values_Training_Set.csv"))
 print("\n=== DEBUG: Chargement des données ===")
 print("Contenu du fichier SHAP train :")
@@ -507,7 +507,7 @@ for feature in ['bearish_volume_quality', 'bearish_absorption_score', 'bearish_m
     else:
         print(f"{feature}: Non trouvée")
 shap_importance_df_test = load_data(os.path.join(base_path, "shap_dependencies_results", "shap_values_Test_Set.csv"))
-interaction_df = load_data(os.path.join(base_path, "Top_40_interaction.csv"))
+interaction_df = load_data(os.path.join(base_path, "all_interactions_X_train.csv"))
 
 # Utilisation de la fonction de sélection
 results = select_features(
@@ -516,9 +516,9 @@ results = select_features(
     shap_importance_df_test=shap_importance_df_test,
     interaction_df=interaction_df,
     top_n=len(shap_importance_df_train),
-    correlation_threshold=0.95,
-    interaction_threshold=0.0001,
-    shap_percentage=0.9
+    correlation_threshold=0.90,
+    interaction_threshold=15,
+    shap_percentage=0.8
 )
 
 # Affichage des résultats avec récupération des features

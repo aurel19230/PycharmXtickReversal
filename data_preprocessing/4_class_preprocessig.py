@@ -2,17 +2,17 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from standardFunc import timestamp_to_date_utc
-from standardFunc import print_notification, load_data
+from standardFunc_sauv import timestamp_to_date_utc
+from standardFunc_sauv import print_notification, load_data
 import os
 
 # Charger les données
 # Nom du fichier
-file_name = "Step3_4_0_6TP_1SL_080919_141024_extractOnlyFullSession.csv"
-#file_name = "Step3_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession.csv"
+file_name = "Step3_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession.csv"
+file_name = "Step3_4_0_5TP_1SL_newBB_080919_281124_extractOnly750LastFullSession.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_6TP_1SL\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_5TP_1SL_newBB\\merge"
 
 # Combiner le chemin du répertoire avec le nom du fichier
 file_path = os.path.join(directory_path, file_name)

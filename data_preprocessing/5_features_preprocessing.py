@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
-from standardFunc import print_notification
-from standardFunc import load_data,CUSTOM_SECTIONS
+from standardFunc_sauv import print_notification
+from standardFunc_sauv import load_data,calculate_naked_poc_distances,CUSTOM_SESSIONS,save_features_with_sessions
 import math
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
@@ -18,6 +18,7 @@ valueY=np.nan
 from sklearn.preprocessing import MinMaxScaler
 # Définition de la fonction calculate_max_ratio
 import numpy as np
+import time
 
 def calculate_max_ratio(values, condition, calc_max=False, std_multiplier=1):
     valid_ratios = values[condition]
@@ -55,11 +56,13 @@ if user_choice.lower() == 'd' or user_choice.lower() == 's':
 adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
-file_name = "Step4_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort.csv"
 #file_name = "Step4_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort.csv"
-#file_name ="Step4_4_0_4TP_1SL_080919_091024_extractOnlyFullSession.csv"
+file_name ="Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort.csv"
+#file_name ="Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort.csv"
+
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_6TP_1SL\\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_5TP_1SL_newBB\merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -74,22 +77,23 @@ else:
 
 # Configuration
 CONFIG = {
-    'NUM_GROUPS': 9,
-    'MIN_RANGE': 30,  # en minutes
     'FILE_PATH': file_path,
-    'TRADING_START_TIME': "22:00",
-    'FIGURE_SIZE': (20, 10),
-    'GRID_ALPHA': 0.7,
 }
 
 
 
 
-def get_custom_section(minutes: int) -> dict:
-    for section in CUSTOM_SECTIONS:
+def get_custom_section(minutes: int, custom_sections: dict) -> dict:
+    """
+    Retourne la section correspondant au nombre de minutes dans custom_sections.
+    """
+    for section_name, section in custom_sections.items():
         if section['start'] <= minutes < section['end']:
             return section
-    return CUSTOM_SECTIONS[-1]  # Retourne la dernière section si aucune correspondance n'est trouvée
+    # Retourne la dernière section si aucune correspondance
+    return list(custom_sections.values())[-1]
+
+
 
 
 
@@ -115,47 +119,277 @@ for col in all_columns:
 
 
 print_notification("Début du calcul des features")
-
 # Calcul des features
 features_df = pd.DataFrame()
 features_df['deltaTimestampOpening'] = df['deltaTimestampOpening']
 
+# Session 1 minute
+features_df['deltaTimestampOpeningSession1min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/1))*1, 1379))  # 23h = 1380 minutes - 1
 
-features_df['deltaTimestampOpeningSection1min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/15))*15, 1365))
-
-unique_sections = sorted(features_df['deltaTimestampOpeningSection1min'].unique())
+unique_sections = sorted(features_df['deltaTimestampOpeningSession1min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
-features_df['deltaTimestampOpeningSection1index'] = features_df['deltaTimestampOpeningSection1min'].map(section_to_index)
+features_df['deltaTimestampOpeningSession1index'] = features_df['deltaTimestampOpeningSession1min'].map(section_to_index)
 
-features_df['deltaTimestampOpeningSection5min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/5))*5, 1375))
+# Session 5 minutes
+features_df['deltaTimestampOpeningSession5min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/5))*5, 1375))  # Dernier multiple de 5 < 1380
 
-unique_sections = sorted(features_df['deltaTimestampOpeningSection5min'].unique())
+unique_sections = sorted(features_df['deltaTimestampOpeningSession5min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
-features_df['deltaTimestampOpeningSection5index'] = features_df['deltaTimestampOpeningSection5min'].map(section_to_index)
+features_df['deltaTimestampOpeningSession5index'] = features_df['deltaTimestampOpeningSession5min'].map(section_to_index)
 
-features_df['deltaTimestampOpeningSection15min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/15))*15, 1365))
+# Session 15 minutes
+features_df['deltaTimestampOpeningSession15min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/15))*15, 1365))  # Dernier multiple de 15 < 1380
 
-unique_sections = sorted(features_df['deltaTimestampOpeningSection15min'].unique())
+unique_sections = sorted(features_df['deltaTimestampOpeningSession15min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
-features_df['deltaTimestampOpeningSection15index'] = features_df['deltaTimestampOpeningSection15min'].map(section_to_index)
+features_df['deltaTimestampOpeningSession15index'] = features_df['deltaTimestampOpeningSession15min'].map(section_to_index)
 
+# Session 30 minutes
+features_df['deltaTimestampOpeningSession30min'] = df['deltaTimestampOpening'].apply(
+    lambda x: min(int(np.floor(x/30))*30, 1350))  # Dernier multiple de 30 < 1380
 
-features_df['deltaTimestampOpeningSection30min'] = df['deltaTimestampOpening'].apply(
-    lambda x: min(int(np.floor(x/30))*30, 1380))
-
-unique_sections = sorted(features_df['deltaTimestampOpeningSection30min'].unique())
+unique_sections = sorted(features_df['deltaTimestampOpeningSession30min'].unique())
 section_to_index = {section: index for index, section in enumerate(unique_sections)}
-features_df['deltaTimestampOpeningSection30index'] = features_df['deltaTimestampOpeningSection30min'].map(section_to_index)
+features_df['deltaTimestampOpeningSession30index'] = features_df['deltaTimestampOpeningSession30min'].map(section_to_index)
 
-features_df['deltaCustomSectionMin'] = df['deltaTimestampOpening'].apply(
-    lambda x: get_custom_section(x)['start'])
+# Custom session
+features_df['deltaCustomSessionMin'] = df['deltaTimestampOpening'].apply(
+    lambda x: get_custom_section(x, CUSTOM_SESSIONS)['start']
+)
 
-unique_custom_sections = sorted(features_df['deltaCustomSectionMin'].unique())
-custom_section_to_index = {section: index for index, section in enumerate(unique_custom_sections)}
-features_df['deltaCustomSectionIndex'] = features_df['deltaCustomSectionMin'].map(custom_section_to_index)
+def get_custom_section_index(minutes: int, custom_sections: dict) -> int:
+    """
+    Retourne le session_type_index correspondant au nombre de minutes dans custom_sections.
+
+    Args:
+        minutes (int): Nombre de minutes depuis 22h00
+        custom_sections (dict): Dictionnaire des sections personnalisées
+
+    Returns:
+        int: session_type_index de la section correspondante
+    """
+    for section in custom_sections.values():
+        if section['start'] <= minutes < section['end']:
+            return section['session_type_index']
+    # Retourne le session_type_index de la dernière section si aucune correspondance
+    return list(custom_sections.values())[-1]['session_type_index']
+
+
+# Application sur features_df
+features_df['deltaCustomSessionIndex'] = features_df['deltaTimestampOpening'].apply(
+    lambda x: get_custom_section_index(x, CUSTOM_SESSIONS)
+)
+
+
+def linear_regression_slope_market_trend(series):
+    X = np.arange(len(series)).reshape(-1, 1)
+    y = series.values.reshape(-1, 1)
+    model = LinearRegression().fit(X, y)
+    slope = model.coef_[0][0]
+    return slope
+
+
+import numpy as np
+from numba import jit
+from sklearn.linear_model import LinearRegression
+
+
+@jit(nopython=True)
+def fast_linear_regression_slope(x, y):
+    """Calcule la pente de régression linéaire de manière optimisée"""
+    n = len(x)
+    sum_x = np.sum(x)
+    sum_y = np.sum(y)
+    sum_xy = np.sum(x * y)
+    sum_xx = np.sum(x * x)
+
+    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+    return slope
+
+
+@jit(nopython=True)
+def calculate_slopes(close_values: np.ndarray, session_starts: np.ndarray, window: int) -> np.ndarray:
+    n = len(close_values)
+    results = np.full(n, np.nan)
+    x = np.arange(window, dtype=np.float64)
+
+    for i in range(n):
+        # On cherche le début de la session actuelle
+        session_start_idx = -1
+
+        # Remonter pour trouver le début de session
+        for j in range(i, -1, -1):  # On remonte jusqu'au début si nécessaire
+            if session_starts[j]:
+                session_start_idx = j
+                break
+
+        # S'il y a assez de barres depuis le début de session
+        bars_since_start = i - session_start_idx + 1
+
+        if bars_since_start >= window:
+            end_idx = i + 1
+            start_idx = end_idx - window
+            # Vérifier que start_idx est après le début de session
+            if start_idx >= session_start_idx:
+                y = close_values[start_idx:end_idx]
+                results[i] = fast_linear_regression_slope(x, y)
+
+    return results
+
+
+def apply_optimized_slope_calculation(data: pd.DataFrame, window: int) -> pd.Series:
+    """
+    Applique le calcul optimisé des pentes
+
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame contenant les données
+    window : int
+        Taille de la fenêtre pour le calcul
+
+    Returns:
+    --------
+    pd.Series : Série des pentes calculées
+    """
+    # Préparation des données numpy
+    close_values = data['close'].values
+    session_starts = (data['SessionStartEnd'] == 10).values
+
+    # Calcul des pentes
+    slopes = calculate_slopes(close_values, session_starts, window)
+
+    # Conversion en pandas Series
+    return pd.Series(slopes, index=data.index)
+
+
+# Utilisation
+windows = [6, 14, 21, 30]
+for window in windows:
+    features_df[f'linear_slope_{window}'] = apply_optimized_slope_calculation(df, window)
+
+import numpy as np
+from numba import jit
+import pandas as pd
+
+
+@jit(nopython=True)
+def fast_calculate_previous_session_slope(close_values: np.ndarray, session_type_index: np.ndarray) -> np.ndarray:
+    """
+    Calcule rapidement la pente de la session précédente
+    """
+    n = len(close_values)
+    slopes = np.full(n, np.nan)
+
+    # Variables pour tracker la session précédente
+    prev_session_start = 0
+    prev_session_type = session_type_index[0]
+
+    for i in range(1, n):
+        curr_type = session_type_index[i]
+
+        # Détection changement de session
+        if curr_type != session_type_index[i - 1]:
+            # Calculer la pente de la session précédente
+            if prev_session_start < i - 1:  # S'assurer qu'il y a des points pour la régression
+                x = np.arange(float(i - prev_session_start))
+                y = close_values[prev_session_start:i]
+                n_points = len(x)
+                sum_x = np.sum(x)
+                sum_y = np.sum(y)
+                sum_xy = np.sum(x * y)
+                sum_xx = np.sum(x * x)
+                slope = (n_points * sum_xy - sum_x * sum_y) / (n_points * sum_xx - sum_x * sum_x)
+
+                # Assigner la pente à la nouvelle session
+                j = i
+                while j < n and session_type_index[j] == curr_type:
+                    slopes[j] = slope
+                    j += 1
+
+            # Mettre à jour les indices pour la prochaine session
+            prev_session_start = i
+            prev_session_type = curr_type
+
+    return slopes
+
+
+def calculate_previous_session_slope(df,data: pd.DataFrame) -> pd.Series:
+    """
+    Wrapper pandas pour le calcul des pentes
+    """
+
+    if len(features_df) != len(data):
+        raise ValueError(f"Dimensions mismatch: features_df has {len(features_df)} rows but data has {len(data)} rows")
+
+    close_values = df['close'].values
+    session_type_index = data['deltaCustomSessionIndex'].values
+
+    slopes = fast_calculate_previous_session_slope(close_values, session_type_index)
+    return pd.Series(slopes, index=data.index)
+
+
+# Ajout de la colonne à features_df
+features_df['linear_slope_prevSession'] = calculate_previous_session_slope(df,features_df)
+
+
+
+# Version originale pour comparaison
+def linear_regression_slope_market_trend(series):
+    X = np.arange(len(series)).reshape(-1, 1)
+    y = series.values.reshape(-1, 1)
+    model = LinearRegression().fit(X, y)
+    return model.coef_[0][0]
+
+
+def apply_slope_with_session_check(data, window):
+    result = pd.Series(index=data.index, dtype=float)
+
+    for idx in result.index:
+        historical_data = data.loc[:idx]
+        last_session_start = historical_data[::-1]['SessionStartEnd'].eq(10).idxmax()
+        bars_since_session_start = len(historical_data.loc[last_session_start:idx])
+
+        if bars_since_session_start >= window:
+            series = data.loc[:idx, 'close'].tail(window)
+            result[idx] = linear_regression_slope_market_trend(series)
+        else:
+            result[idx] = np.nan
+
+    return result
+
+
+
+"""
+# Test de performance
+def benchmark(data, window):
+    start = time.time()
+    # Première exécution pour compiler le code numba
+    _ = apply_optimized_slope_calculation(data, window)
+
+    # Test réel
+    start = time.time()
+    optimized = apply_optimized_slope_calculation(data, window)
+    optimized_time = time.time() - start
+
+    start = time.time()
+    original = apply_slope_with_session_check(data, window)
+    original_time = time.time() - start
+
+    print(f"Temps version optimisée: {optimized_time:.4f}s")
+    print(f"Temps version originale: {original_time:.4f}s")
+    print(f"Accélération: {original_time / optimized_time:.2f}x")
+
+    # Vérification que les résultats sont identiques
+    np.testing.assert_almost_equal(optimized.values, original.values, decimal=5)
+    print("Les résultats sont identiques ✓")
+"""
+
+#benchmark(df, 14)
+
 
 # Features précédentes
 features_df['VolAbvState'] = np.where(df['VolAbv'] == 0, 0, 1)
@@ -295,29 +529,27 @@ def valueArea_pct(data, nbPeriods):
     # Calculate the difference between the high and low value area bands
     bands_difference = data[f'vaH_{nbPeriods}periods'] - data[f'vaL_{nbPeriods}periods']
 
-    # Avoid division by zero by assigning 0 where bands_difference is zero
+    # Calculate percentage relative to POC, handling division by zero with np.nan
     result = np.where(bands_difference != 0,
                       (data['close'] - data[f'vaPoc_{nbPeriods}periods']) / bands_difference,
-                      0)
+                      np.nan)
 
     # Convert the result into a pandas Series
     return pd.Series(result, index=data.index)
 
-
 # Apply the function for different periods
-import numpy as np
-from itertools import combinations
 
 # Liste des périodes à analyser
 periods = [6, 11, 16,21]
-
 for nbPeriods in periods:
-    # Calcul du pourcentage de la zone de valeur
+    # Calculate the percentage of the value area using pd.notnull()
+    value_area = valueArea_pct(df, nbPeriods)
     features_df[f'perct_VA{nbPeriods}P'] = np.where(
-        valueArea_pct(df, nbPeriods) != 0,
-        valueArea_pct(df, nbPeriods),
+        pd.notnull(value_area),
+        value_area,
         np.nan
     )
+
 
     # Calcul du ratio delta volume
     features_df[f'ratio_delta_vol_VA{nbPeriods}P'] = np.where(
@@ -354,6 +586,7 @@ for nbPeriods1, nbPeriods2 in period_combinations:
     # --- Proposition 1 : Chevauchement des zones de valeur ---
 
     # Récupération des VAH et VAL pour les deux périodes
+
     vaH_p1 = df[f'vaH_{nbPeriods1}periods']
     vaL_p1 = df[f'vaL_{nbPeriods1}periods']
     vaH_p2 = df[f'vaH_{nbPeriods2}periods']
@@ -403,8 +636,8 @@ df_with_range_strength_10_32 , range_strength_percent_in_range_10_32= range_stre
 df_with_range_strength_5_23 , range_strength_percent_in_range_5_23= range_strength(df_copy1, 'range_strength_5_23',window=5, atr_multiple=2.3, min_strength=0.1)
 
 # Ajouter la colonne 'range_strength' à features_df
-features_df['range_strength_10_32'] = df_with_range_strength_10_32['range_strength_10_32']
-features_df['range_strength_5_23'] = df_with_range_strength_5_23['range_strength_5_23']
+#features_df['range_strength_10_32'] = df_with_range_strength_10_32['range_strength_10_32']
+#features_df['range_strength_5_23'] = df_with_range_strength_5_23['range_strength_5_23']
 
 # Appliquer detect_market_regime sur une copie de df pour ne pas modifier df
 df_copy = df.copy()
@@ -458,8 +691,8 @@ features_df['bullish_ask_bid_ratio'] = np.where(df['VolBlwAsk'] != 0, df['VolBlw
 features_df['meanVolx'] = df['volume'].shift().rolling(window=5, min_periods=1).mean()
 
 # Relative delta Momentum
-features_df['ratioDeltaBlw'] = np.where(df['VolBlw'] != 0, df['DeltaBlw'] / df['VolBlw'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
-features_df['ratioDeltaAbv'] = np.where(df['VolAbv'] != 0, df['DeltaAbv'] / df['VolAbv'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+#features_df['ratioDeltaBlw'] = np.where(df['VolBlw'] != 0, df['DeltaBlw'] / df['VolBlw'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+#features_df['ratioDeltaAbv'] = np.where(df['VolAbv'] != 0, df['DeltaAbv'] / df['VolAbv'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # Relatif volume evol
 features_df['diffVolCandle_0_1Ratio'] = np.where(df['volume'] != 0,
@@ -1842,8 +2075,8 @@ def create_composite_features(df, features_df):
 
     # === NEUTRAL FEATURES (2) ===
 
-    df['deltaTimestampOpeningSection5min']=features_df['deltaTimestampOpeningSection5min']
-    df['deltaCustomSectionIndex']=features_df['deltaCustomSectionIndex']
+    df['deltaTimestampOpeningSession5min']=features_df['deltaTimestampOpeningSession5min']
+    df['deltaCustomSessionIndex']=features_df['deltaCustomSessionIndex']
     df['total_count_abv']=features_df['total_count_abv']
     df['total_count_blw']=features_df['total_count_blw']
     df['bearish_extrem_zone_volume_ratio_extrem']=features_df['bearish_extrem_zone_volume_ratio_extrem']
@@ -1856,26 +2089,26 @@ def create_composite_features(df, features_df):
 
     # 1. Volume-Volatility Score
     features_df['vol_volatility_score'] = np.where(
-        df.groupby('deltaTimestampOpeningSection5min')['volume'].transform('mean') == 0,
+        df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean') == 0,
         valueY,
         np.where(
-            df.groupby('deltaTimestampOpeningSection5min')['atr'].transform('mean') == 0,
+            df.groupby('deltaTimestampOpeningSession5min')['atr'].transform('mean') == 0,
             valueY,
-            (df['volume'] / df.groupby('deltaTimestampOpeningSection5min')['volume'].transform('mean')) *
-            (df['atr'] / df.groupby('deltaTimestampOpeningSection5min')['atr'].transform('mean'))
+            (df['volume'] / df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean')) *
+            (df['atr'] / df.groupby('deltaTimestampOpeningSession5min')['atr'].transform('mean'))
         )
     )
 
     # 2. Price-Volume Dynamic
     vol_ratio_5min = np.where(
-        df.groupby('deltaTimestampOpeningSection5min')['volume'].transform('mean') == 0,
+        df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean') == 0,
         valueY,
-        df['volume'] / df.groupby('deltaTimestampOpeningSection5min')['volume'].transform('mean')
+        df['volume'] / df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean')
     )
     vol_ratio_session = np.where(
-        df.groupby('deltaCustomSectionIndex')['volume'].transform('mean') == 0,
+        df.groupby('deltaCustomSessionIndex')['volume'].transform('mean') == 0,
         valueY,
-        df['volume'] / df.groupby('deltaCustomSectionIndex')['volume'].transform('mean')
+        df['volume'] / df.groupby('deltaCustomSessionIndex')['volume'].transform('mean')
     )
     features_df['price_volume_dynamic'] = np.where(
         (vol_ratio_5min == 0) | (vol_ratio_session == 0),
@@ -1886,41 +2119,6 @@ def create_composite_features(df, features_df):
 
     # === DIRECTIONAL FEATURES (7 pairs) ===
 
-    # 1. Activity Volume Score (multi-scale)
-    def create_activity_volume_score(count_col, direction):
-        count_ratio_5min = np.where(
-            df.groupby('deltaTimestampOpeningSection5min')[count_col].transform('mean') == 0,
-            valueY,
-            df[count_col] / df.groupby('deltaTimestampOpeningSection5min')[count_col].transform('mean')
-        )
-        count_ratio_session = np.where(
-            df.groupby('deltaCustomSectionIndex')[count_col].transform('mean') == 0,
-            valueY,
-            df[count_col] / df.groupby('deltaCustomSectionIndex')[count_col].transform('mean')
-        )
-
-        return np.where(
-            df[count_col] == 0,
-            valueY,
-            (0.7 * (vol_ratio_5min * count_ratio_5min) +
-             0.3 * (vol_ratio_session * count_ratio_session))
-        )
-
-    features_df['bearish_activity_volume_score'] = create_activity_volume_score('total_count_abv', 'bearish')
-    features_df['bullish_activity_volume_score'] = create_activity_volume_score('total_count_blw', 'bullish')
-
-    # 2. Extreme Volume Score
-    features_df['bearish_extreme_volume_score'] = np.where(
-        df['VolAbv'] == 0,
-        valueY,
-        df['bearish_extrem_zone_volume_ratio_extrem'] * vol_ratio_5min
-    )
-
-    features_df['bullish_extreme_volume_score'] = np.where(
-        df['VolBlw'] == 0,
-        valueY,
-        df['bullish_extrem_zone_volume_ratio_extrem'] * vol_ratio_5min
-    )
 
     # 3. Absorption Score
     features_df['bearish_absorption_score'] = np.where(
@@ -1959,37 +2157,17 @@ def create_composite_features(df, features_df):
     features_df['bullish_combined_pressure'] = create_combined_pressure('bullish_absorption_score',
                                                                         'bullish_dsc_ask_bid_delta_imbalance')
 
-    # 6. Volume Quality
-    def create_volume_quality(activity_score, extreme_score):
-        return np.where(
-            (features_df[activity_score] == 0) | (features_df[extreme_score] == 0),
-            valueY,
-            features_df['vol_volatility_score'] * features_df[activity_score] * features_df[extreme_score]
-        )
-
-    features_df['bearish_volume_quality'] = create_volume_quality('bearish_activity_volume_score',
-                                                                  'bearish_extreme_volume_score')
-    features_df['bullish_volume_quality'] = create_volume_quality('bullish_activity_volume_score',
-                                                                  'bullish_extreme_volume_score')
-
-    # 7. Market Momentum
-    def create_market_momentum(context_score, pressure_score):
-        return np.where(
-            (features_df[context_score] == 0) | (features_df[pressure_score] == 0),
-            valueY,
-            features_df[context_score] * features_df[pressure_score] * features_df['vol_volatility_score']
-        )
-
-    features_df['bearish_market_momentum'] = create_market_momentum('bearish_market_context_score',
-                                                                    'bearish_combined_pressure')
-    features_df['bullish_market_momentum'] = create_market_momentum('bullish_market_context_score',
-                                                                    'bullish_combined_pressure')
-
     return features_df
+
+
 
 # Ajout des features composites
 features_df = create_composite_features(df, features_df)
 
+dist_above, dist_below = calculate_naked_poc_distances(df)
+
+features_df["naked_poc_dist_above"]=dist_above
+features_df["naked_poc_dist_below"]=dist_below
 print_notification("Ajout des informations sur les class et les trades")
 
 features_df['class_binaire']=df['class_binaire']
@@ -2010,19 +2188,18 @@ def toBeDisplayed_if_s(user_choice, choice):
 ## 0) key nom de la feature / 1) Ative Floor / 2) Active Crop / 3) % à Floored / ') % à Croped / 5) Afficher et/ou inclure Features dans fichiers cibles
 # choix des features à traiter
 column_settings = {
-
     # Time-based features
     'deltaTimestampOpening':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection1min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection1index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection5min':       (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection5index':     (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection15min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection15index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection30min':      (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSection30index':    (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaCustomSectionMin':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
-    'deltaCustomSectionIndex':                (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession1min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession1index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession5min':       (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession5index':     (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession15min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession15index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession30min':      (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession30index':    (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSessionMin':                  (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSessionIndex':                (False, False, 10, 90,toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
     'VolAbvState': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
@@ -2099,8 +2276,8 @@ column_settings = {
 
     'market_regimeADX':                       (False, True, 0.5, 99.8,toBeDisplayed_if_s(user_choice, True)),
     'market_regimeADX_state':                 (False, False, 0.5, 99.8,toBeDisplayed_if_s(user_choice, True)),
-    'range_strength_10_32':                   (False, True, 0.1, 99.5,toBeDisplayed_if_s(user_choice, True)),
-    'range_strength_5_23':                    (False, True, 0.1, 99.5, toBeDisplayed_if_s(user_choice, True)),
+    #'range_strength_10_32':                   (False, True, 0.1, 99.5,toBeDisplayed_if_s(user_choice, True)),
+    #'range_strength_5_23':                    (False, True, 0.1, 99.5, toBeDisplayed_if_s(user_choice, True)),
     'is_in_range_10_32':                      (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
     'is_in_range_5_23':                       (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
 
@@ -2110,8 +2287,8 @@ column_settings = {
     'bearish_ask_bid_ratio':                  (False, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok
     'bullish_ask_bid_ratio':                  (False, True, 1, 98,toBeDisplayed_if_s(user_choice, False)),#ok
     'meanVolx':                               (False, True, 1, 99.7,toBeDisplayed_if_s(user_choice, False)),#ok
-    'ratioDeltaBlw':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
-    'ratioDeltaAbv':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+  #  'ratioDeltaBlw':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+   # 'ratioDeltaAbv':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolCandle_0_1Ratio':                 (False, True, 1, 98.5,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolDelta_0_1Ratio':                  (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'cumDiffVolDeltaRatio':                  (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
@@ -2315,13 +2492,7 @@ column_settings = {
     'vol_volatility_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'price_volume_dynamic': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Features d'activité et volume (paires bearish/bullish)
-    'bearish_activity_volume_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_activity_volume_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Features de volume extrême
-    'bearish_extreme_volume_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_extreme_volume_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Features d'absorption
     'bearish_absorption_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
@@ -2334,14 +2505,14 @@ column_settings = {
     # Features de pression combinée
     'bearish_combined_pressure': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'bullish_combined_pressure': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'naked_poc_dist_above': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'naked_poc_dist_below': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_prevSession': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Features de qualité du volume
-    'bearish_volume_quality': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_volume_quality': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-
-    # Features de momentum de marché
-    'bearish_market_momentum': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_market_momentum': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 }
 columns_to_process = list(column_settings.keys())
 
@@ -2662,6 +2833,7 @@ for i, columnName in enumerate(columns_to_process):
     winsorized_df[columnName] = winsorized_valuesWithNanValue
 
     # Préparation de la colonne pour la normalisation
+    """
     scaled_column = winsorized_valuesWithNanValue.copy()
     if ENABLE_PANDAS_METHOD_SCALING:
         # Sélectionner la colonne 'columnName'
@@ -2693,7 +2865,8 @@ for i, columnName in enumerate(columns_to_process):
         # Remettre les nan_value à leur place seulement s'il y en avait
         if nan_replacement_values is not None and columnName in nan_replacement_values:
             scaled_column.loc[nan_positions] = nan_value
-
+    """
+    """
     # Assignation directe de la colonne normalisée au DataFrame
     winsorized_scaledWithNanValue_df[columnName] = scaled_column
 
@@ -2729,20 +2902,15 @@ for i, columnName in enumerate(columns_to_process):
             ),
             adjust_xaxis=adjust_xaxis
         )
-
+    """
 print("\n")
 print("Vérification finale :")
 print(f"   - Nombre de colonnes dans winsorized_df : {len(winsorized_df.columns)}")
-print(
-    f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
-assert len(winsorized_df.columns) == len(
-    winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 print(f"\n")
-print("Vérification finale :")
-print(f"   - Nombre de colonnes dans winsorized_df : {len(winsorized_df.columns)}")
-print(f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
-assert len(winsorized_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
+
+#print(f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
+#assert len(winsorized_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 
 print_notification("Ajout de  'timeStampOpening', class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
@@ -2761,10 +2929,12 @@ if missing_columns:
 # Créez un DataFrame avec les colonnes à ajouter
 
 columns_df = df[columns_to_add]
-# Ajoutez ces colonnes à features_df, winsorized_df, et winsorized_scaledWithNanValue_df en une seule opération
+# Ajoutez ces colonnes à features_df, winsorized_df en une seule opération
 features_NANReplacedVal_df = pd.concat([features_NANReplacedVal_df, columns_df], axis=1)
 winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
-winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
+
+
+#winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
 
 print_notification("Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' ajoutées")
 
@@ -2775,15 +2945,10 @@ file_without_extension = file_without_extension.replace("Step4", "Step5")
 
 
 # Créer le nouveau nom de fichier pour les features originales
-new_file_name = file_without_extension + '_feat.csv'
+#new_file_name = file_without_extension + '_feat.csv'
 
 # Construire le chemin complet du nouveau fichier
-feat_file = os.path.join(file_dir, new_file_name)
-
-# Sauvegarder le fichier des features originales
-print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
-features_NANReplacedVal_df.to_csv(feat_file, sep=';', index=False, encoding='iso-8859-1')
-
+#feat_file = os.path.join(file_dir, new_file_name)
 
 # Créer le nouveau nom de fichier pour winsorized_df
 winsorized_file_name = file_without_extension+ '_feat_winsorized.csv'
@@ -2791,10 +2956,14 @@ winsorized_file_name = file_without_extension+ '_feat_winsorized.csv'
 # Construire le chemin complet du nouveau fichier winsorized
 winsorized_file = os.path.join(file_dir, winsorized_file_name)
 
+# Sauvegarder le fichier des features originales
+#print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
+#save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
+
 # Sauvegarder le fichier winsorized
 print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")
-winsorized_df.to_csv(winsorized_file, sep=';', index=False, encoding='iso-8859-1')
-
+save_features_with_sessions(winsorized_df, CUSTOM_SESSIONS, winsorized_file)
+"""
 # Créer le nouveau nom de fichier pour winsorized_scaledWithNanValue_df
 scaled_file_name = file_without_extension+ '_feat_winsorizedScaledWithNanVal.csv'
 
@@ -2804,7 +2973,7 @@ scaled_file = os.path.join(file_dir, scaled_file_name)
 # Sauvegarder le fichier scaled
 winsorized_scaledWithNanValue_df.to_csv(scaled_file, sep=';', index=False, encoding='iso-8859-1')
 print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
-
+"""
 
 # Affichage final des graphiques si demandé
 if user_choice.lower() in ['d', 's']:

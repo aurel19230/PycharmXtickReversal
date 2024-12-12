@@ -1,9 +1,9 @@
-
 from numba import njit
 import xgboost as xgb
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import make_scorer
 from functools import partial
+from typing import Dict, List, Tuple
 
 import time
 
@@ -17,18 +17,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
 import cupy as cp
-import shutil
 from sklearn.model_selection import KFold, TimeSeriesSplit
 import sys
-import json
+
 import tempfile
-import shutil
+
 import shap
 import pandas as pd
 import numpy as np
 
-import json
-import shutil
 import pandas as pd
 # Define the custom_metric class using Enum
 from enum import Enum
@@ -37,13 +34,10 @@ from enum import Enum
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', None)
-
-class cv_config(Enum):
-    TIME_SERIE_SPLIT = 0
-    TIME_SERIE_SPLIT_NON_ANCHORED = 1
-    K_FOLD = 2
-    K_FOLD_SHUFFLE = 3
-
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_rows', 1000)
+pd.set_option('display.expand_frame_repr', False)
 
 class rfe_param(Enum):
     NO_RFE = 0
@@ -51,17 +45,8 @@ class rfe_param(Enum):
     RFE_AUTO = 2
 
 
-class optuna_doubleMetrics(Enum):
-    DISABLE = 0
-    USE_DIST_TO_IDEAL = 1
-    USE_WEIGHTED_AVG = 2
-
-
-# Variable globale pour suivre si la fonction a déjà été appelée
-_first_call_save_r_trialesults = True
-
-
 import os
+
 
 def detect_environment():
     """
@@ -78,6 +63,7 @@ def detect_environment():
             return 'pycharm'
         return 'other'
 
+
 def install_and_import_packages(packages, ENV=None):
     """
     Installe et importe les packages nécessaires
@@ -93,6 +79,7 @@ def install_and_import_packages(packages, ENV=None):
             return False
     return False
 
+
 # Import des packages communs
 import optuna
 from colorama import Fore, Style, init
@@ -107,24 +94,31 @@ if ENV == 'colab':
 
     try:
         from IPython import get_ipython
+
         ipython = get_ipython()
         if ipython is not None:
             print("le code s'éxécute sur collab1")
             ipython.run_line_magic('run', '/content/drive/MyDrive/Colab_Notebooks/xtickReversal/standardFunc.ipynb')
-            from standardFunc import *  # Import après l'exécution du notebook
+            from standardFunc_sauv import *  # Import après l'exécution du notebook
     except Exception as e:
         print(f"Erreur lors de l'exécution du notebook: {str(e)}")
 
 elif ENV == 'pycharm':
     BASE_PATH = "C:/Users/aulac/OneDrive/..."
     from standardFunc import (load_data, split_sessions, print_notification,
-                          plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
-                          timestamp_to_date_utc, calculate_and_display_sessions,
-                          timestamp_to_date_utc, calculate_and_display_sessions,
-                          calculate_weighted_adjusted_score_custom, sigmoidCustom,
-                          custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
-                          optuna_options, train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
-                          CUSTOM_SECTIONS, sessions_selection,calculate_normalized_objectives,process_RFE_filteringg,calculate_fold_stats)
+                              plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
+                              optuna_doubleMetrics,
+                              timestamp_to_date_utc, calculate_and_display_sessions,
+                              calculate_and_display_sessions, callback_optuna,
+                              calculate_weighted_adjusted_score_custom, sigmoidCustom,
+                              custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
+                              xgb_metric, scalerChoice,ScalerMode,modeleType,
+                              train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
+                              sessions_selection, calculate_normalized_objectives,
+                              run_cross_validation, setup_metric_dict,
+                              process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
+                              initialize_metrics_dict, setup_model_params, cv_config,displaytNan_vifMiCorrFiltering,
+                              load_features_and_sections,apply_scaling)
     import keyboard
 
     print("le code s'éxécute sur pycharm")
@@ -140,42 +134,18 @@ elif ENV == 'pycharm':
     except Exception as e:
         print(f"Erreur lors de l'exécution du notebook: {str(e)}")
 
-
     print("le code s'éxécute sur pycharm")
 
 # Après le redémarrage, on peut importer les packages
-import optuna
 from colorama import Fore, Style, init
+
+
+# 3. Optimisation des splits
 
 
 ########################################
 #########    FUNCTION DEF      #########
 ########################################
-
-
-def verify_session_integrity(df, context=""):
-    starts = df[df['SessionStartEnd'] == 10].index
-    ends = df[df['SessionStartEnd'] == 20].index
-
-    print(f"Vérification pour {context}")
-    print(f"Nombre total de débuts de session : {len(starts)}")
-    print(f"Nombre total de fins de session : {len(ends)}")
-
-    if len(starts) != len(ends):
-        print(f"Erreur : Le nombre de débuts et de fins de session ne correspond pas pour {context}.")
-        return False
-
-    for i, (start, end) in enumerate(zip(starts, ends), 1):
-        if start >= end:
-            print(f"Erreur : Session {i} invalide détectée. Début : {start}, Fin : {end}")
-            return False
-        elif df.loc[start, 'SessionStartEnd'] != 10 or df.loc[end, 'SessionStartEnd'] != 20:
-            print(
-                f"Erreur : Session {i} mal formée. Début : {df.loc[start, 'SessionStartEnd']}, Fin : {df.loc[end, 'SessionStartEnd']}")
-            return False
-
-    print(f"OK : Toutes les {len(starts)} sessions sont correctement formées pour {context}.")
-    return True
 
 
 # Fonction optimisée avec Numba pour vérifier et remplacer les valeurs
@@ -251,179 +221,11 @@ def average_learning_curves(learning_curve_data_list):
     }
 
 
-"""
-# Fonction pour calculer les scores d'entraînement et de validation
-def calculate_scores_for_cv_split_learning_curve(
-        params, num_boost_round, X_train, y_train_label, X_val,
-        y_val, weight_dict, combined_metric, metric_dict, custom_metric):
-    sample_weights = np.array([weight_dict[label] for label in y_train_label])
-    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights)
-    dval = xgb.DMatrix(X_val, label=y_val)
-
-booster = xgb.train(params, dtrain, num_boost_round=num_boost_round, maximize=True, custom_metric=custom_metric)
-
-    train_pred = booster.predict(dtrain)
-    val_pred = booster.predict(dval)
-
-    train_score = combined_metric(y_train_label, train_pred, metric_dict=metric_dict)
-    val_score_best = combined_metric(y_val, val_pred, metric_dict=metric_dict)
-
-    return {
-        'train_sizes': [len(X_train)],
-        'train_scores_mean': [train_score],
-        'val_scores_mean': [val_score_best]
-    }
-"""
-
 from sklearn.model_selection import train_test_split
-
-"""
-def print_callback(study, trial, X_train, y_train_label, config):
-    trial_values = trial.values  # [score_adjustedStd_val, pnl_perTrade_diff]
-
-    learning_curve_data = trial.user_attrs.get('learning_curve_data')
-    best_val_score= trial_values[0]  # Premier objectif (maximize)
-    pnl_diff = trial_values[1]   # Deuxième objectif (minimize)
-    std_dev_score = trial.user_attrs['std_dev_score']
-    total_train_size = len(X_train)
-
-    n_trials_optuna = config.get('n_trials_optuna', 4)
-
-    print(f"\nSur les differents ensembles de validation :")
-    print(f"   -Essai terminé Optuna: {trial.number+1}/{n_trials_optuna}")
-    print(f"   -Score de validation moyen (score_adjustedStd_val) : {best_val_score:.2f}")
-    print(f"   -Écart-type des scores : {std_dev_score:.2f}")
-    print(
-        f"   -Intervalle de confiance (±1 écart-type) : [{best_val_score - std_dev_score:.2f}, {best_val_score + std_dev_score:.2f}]")
-    print(f"   -Différence PnL train-val par sample (pnl_diff): {pnl_diff:.2f}")
-
-
-    # Récupérer les valeurs de TP et FP
-    total_tp_val = trial.user_attrs.get('total_tp_val', 0)
-    total_fp_val = trial.user_attrs.get('total_fp_val', 0)
-    total_tn_train = trial.user_attrs.get('total_tn_train', 0)
-    total_fn_train = trial.user_attrs.get('total_fn_train', 0)
-    tp_fp_diff = trial.user_attrs.get('tp_fp_diff', 0)
-    cummulative_pnl = trial.user_attrs.get('cummulative_pnl', 0)
-
-    weight_param_FromAttr = trial.user_attrs['weight_param']
-
-    cummulative_pnl_FromAttr = total_tp_val * weight_param_FromAttr['profit_per_tp']['min'] + total_fp_val * weight_param_FromAttr['loss_per_fp'][
-        'max']
-
-    print(f"{cummulative_pnl} {cummulative_pnl_FromAttr}")
-    exit(23)
-    tp_percentage = trial.user_attrs.get('tp_percentage', 0)
-    total_trades_val = total_tp_val + total_fp_val
-    win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
-    print(f"\nEnsemble de validation (somme de l'ensemble des splits) :")
-    print(f"   -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
-          f"TN (True Negative) : {total_tn_train}, FN (False Negative) : {total_fn_train},")
-    print(f"   -Pourcentage Winrate           : {win_rate:.2f}%")
-    print(f"   -Pourcentage de TP             : {tp_percentage:.2f}%")
-    print(f"   -Différence (TP - FP)          : {tp_fp_diff}")
-    print(f"   -PNL                           : {cummulative_pnl}")
-    print(f"   -Nombre de trades              : {total_tp_val+total_fp_val+total_tn_train+total_fn_train}")
-
-    if learning_curve_data:
-        train_scores = learning_curve_data['train_scores_mean']
-        val_scores = learning_curve_data['val_scores_mean']
-        train_sizes = learning_curve_data['train_sizes']
-
-        print("\nCourbe d'apprentissage :")
-        for size, train_score, val_score_best in zip(train_sizes, train_scores, val_scores):
-            print(f"Taille d'entraînement: {size} ({size / total_train_size * 100:.2f}%)")
-            print(f"  Score d'entraînement : {train_score:.4f}")
-            print(f"  Score de validation  : {val_score_best:.4f}")
-            if val_score_best != 0:
-                diff_percentage = ((train_score - val_score_best) / val_score_best) * 100
-                print(f"  Différence en % : {diff_percentage:.2f}%")
-            print()
-
-        max_train_size_index = np.argmax(train_sizes)
-        best_train_size = train_sizes[max_train_size_index]
-        best_train_score = train_scores[max_train_size_index]
-        corresponding_val_score = val_scores[max_train_size_index]
-
-        print(f"Meilleur score d'entraînement : {best_train_score:.4f}")
-        print(f"Score de validation correspondant : {corresponding_val_score:.4f}")
-        if corresponding_val_score != 0:
-            diff_percentage = ((best_train_score - corresponding_val_score) / corresponding_val_score) * 100
-            print(f"Différence en % entre entraînement et validation : {diff_percentage:.2f}%")
-        print(
-            f"Nombre d'échantillons d'entraînement utilisés : {int(best_train_size)} ({best_train_size / total_train_size * 100:.2f}% du total)")
-    #else:
-     #   print("Option Courbe d'Apprentissage non activé")
-
-    # Afficher les trials sur le front de Pareto
-    print("\nTrials sur le front de Pareto :") #ensemble d'essais dits optimaux qui constituent le front de Pareto
-    #Un essai est considéré sur ce front s'il n'est pas "dominé" par un autre essai sur tous les objectifs.
-
-    for trial in study.best_trials:
-        pnl_val = trial.values[0]
-        pnl_perTrade_diff = trial.values[1]
-        trial_number = trial.number + 1
-        print(f"Trial numéro {trial_number}:")
-        print(f"  pnl sur validation : {pnl_val:.4f}")
-        print(f"  Différence pnl per trade : {pnl_perTrade_diff:.4f}\n")
-
-    # Trouver et afficher le trial avec le meilleur pnl sur validation
-    best_trial_pnl = max(study.trials, key=lambda t: t.values[0])
-    print(
-        f"\nMeilleure valeur de pnl sur validation jusqu'à présent : {best_trial_pnl.values[0]:.4f} "
-        f"(obtenue lors de l'essai numéro : {best_trial_pnl.number + 1})"
-    )
-
-    # Trouver et afficher le trial avec la plus petite différence de pnl per trade
-    best_trial_pnl_diff = min(study.trials, key=lambda t: t.values[1])
-    print(
-        f"Meilleur score de différence de pnl per trade : {best_trial_pnl_diff.values[1]:.4f} "
-        f"(obtenu lors de l'essai numéro : {best_trial_pnl_diff.number + 1})"
-    )
-
-    print("------")
-"""
-
-# Fonctions supplémentaires pour l'analyse des erreurs et SHAP
-""""
-def calculate_precision_recall_tp_ratio_gpu(y_true, y_pred_threshold, metric_dict):
-    y_true_gpu = cp.array(y_true)
-    y_pred_gpu = cp.array(y_pred_threshold)
-
-    tp = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 1))
-    fp = cp.sum((y_true_gpu == 0) & (y_pred_gpu == 1))
-    total_samples = len(y_true_gpu)
-    total_trades_val = tp + fp
-
-    # Calcul des métriques
-    profit_ratio = (tp - fp) / total_trades_val if total_trades_val > 0 else 0
-    win_rate = tp / total_trades_val if total_trades_val > 0 else 0
-    selectivity = total_trades_val / total_samples
-
-    # Récupérer les poids et la préférence de sélectivité
-    profit_ratio_weight = metric_dict.get('profit_ratio_weight', 0.5)
-    win_rate_weight = metric_dict.get('win_rate_weight', 0.3)
-    selectivity_weight = metric_dict.get('selectivity_weight', 0.2)
-
-    # Calculer le score combiné
-   # if (profit_ratio <= 0 or win_rate < 0.5):
-    #    return 0.0  # Retourner directement 0.0 si ces conditions sont remplies
-
-    combined_score = (profit_ratio * profit_ratio_weight +
-                      win_rate * win_rate_weight +
-                      selectivity * selectivity_weight)
-
-    # Normaliser le score
-    sum_of_weights = profit_ratio_weight + win_rate_weight + selectivity_weight
-    normalized_score = combined_score / sum_of_weights if sum_of_weights > 0 else 0
-
-    return float(normalized_score)  # Retourner un float pour XGBoost
-"""
 
 # Ajoutez cette variable globale au début de votre script
 global lastBest_score
 lastBest_score = float('-inf')
-
 
 
 def timestamp_to_date_utc_(timestamp):
@@ -435,46 +237,129 @@ def timestamp_to_date_utc_(timestamp):
 
 
 # Et dans get_val_cv_time_range, utiliser les index correctement :
-def get_val_cv_time_range(X_train_full, X_train, val_index):
-    """
-    Obtient la plage temporelle en utilisant les index originaux
-    """
-    # Récupérer les index originaux correspondant aux indices de validation
-    original_indices = X_train.index[val_index]
 
-    # Utiliser ces index originaux pour accéder à X_train_full
-    start_time = X_train_full.loc[original_indices[0], 'timeStampOpening']
-    end_time = X_train_full.loc[original_indices[-1], 'timeStampOpening']
-
-    # Extraire les données en utilisant les index originaux
-    df_extracted = X_train_full.loc[original_indices[0]:original_indices[-1]]
-    num_sessions_XTest, _, _ = calculate_and_display_sessions(df_extracted)
-
-    return start_time, end_time, num_sessions_XTest
 
 from dateutil.relativedelta import relativedelta
 
 from sklearn.model_selection import BaseCrossValidator
 
+from sklearn.model_selection._split import BaseCrossValidator
+import numpy as np
+from typing import Iterator, Optional, Tuple, Union
+from numbers import Integral
 
-class CustomTimeSeriesSplitter(BaseCrossValidator):
-    def __init__(self, n_splits, train_window, val_window):
+"""
+class NonAnchoredWalkForwardCV(BaseCrossValidator):
+
+
+    def __init__(self, n_splits, r=1.0):
         self.n_splits = n_splits
-        self.train_window = train_window
-        self.val_window = val_window
-
-    def split(self, X, y=None, groups=None):
-        n_samples = len(X)
-        max_start = n_samples - self.n_splits * self.val_window - self.train_window
-        for i in range(self.n_splits):
-            train_start = i * self.val_window
-            train_end = train_start + self.train_window
-            val_start = train_end
-            val_end = val_start + self.val_window
-            yield (range(train_start, train_end), range(val_start, val_end))
+        self.r = r
 
     def get_n_splits(self, X=None, y=None, groups=None):
         return self.n_splits
+
+    def split(self, X, y=None, groups=None):
+        N = len(X)
+        nb_split_tscv = self.n_splits
+        r = self.r
+
+        # Calcul du train_size de base
+        # Equation : train_size * (1 + nb_split_tscv * r) <= N
+        train_size = N // (1 + nb_split_tscv * r)
+        val_size = int(train_size * r)
+
+        required_size = train_size + nb_split_tscv * val_size
+        leftover = N - required_size
+        if leftover < 0:
+            raise ValueError("Pas assez de données pour le nombre de splits et le ratio demandé.")
+
+        train_size_first = train_size + leftover
+
+        # Premier split
+        current_index = 0
+        train_indices = np.arange(current_index, current_index + train_size_first)
+        current_index += train_size_first
+        val_indices = np.arange(current_index, current_index + val_size)
+        current_index += val_size
+
+        yield train_indices, val_indices
+
+        # Splits suivants
+        for _ in range(1, nb_split_tscv):
+            train_indices = val_indices
+            val_indices = np.arange(current_index, current_index + val_size)
+            current_index += val_size
+
+            yield train_indices, val_indices
+"""
+class NonAnchoredWalkForwardCV(BaseCrossValidator):
+    """
+    Validation croisée Non-Anchored Walk-Forward avec ratio stable.
+
+    - Le ratio r = val_size / train_size est maintenu constant à partir du second fold.
+    - Le leftover est ajouté au premier train pour utiliser au mieux toutes les données.
+    - Chaque split est déterminé à l'avance en fonction du ratio, puis on avance dans les données.
+    """
+
+    def __init__(self, n_splits, r=1.0):
+        self.n_splits = n_splits
+        self.r = r
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
+
+    def split(self, X, y=None, groups=None):
+        N = len(X)
+        nb_split_tscv = self.n_splits
+        r = self.r
+
+        # Calcul du train_size maximum
+        # On veut (train_size + val_size)*nb_split_tscv <= N
+        # val_size = r * train_size => (1 + r)*train_size * nb_split_tscv <= N
+        # train_size <= N / (nb_split_tscv*(1+r))
+        train_size = int(N // (nb_split_tscv * (1 + r)))
+        val_size = int(train_size * r)
+
+        required_size = nb_split_tscv * (train_size + val_size)
+        leftover = N - required_size
+
+        # Ajout du leftover au premier train
+        train_size_first = train_size + leftover
+
+        # Fold 1
+        current_index = 0
+        train_indices = np.arange(current_index, current_index + train_size_first)
+        current_index += train_size_first
+        val_indices = np.arange(current_index, current_index + val_size)
+        current_index += val_size
+
+        yield train_indices, val_indices
+
+        # Folds suivants
+        for i in range(1, nb_split_tscv):
+            train_indices = np.arange(current_index, current_index + train_size)
+            current_index += train_size
+            val_indices = np.arange(current_index, current_index + val_size)
+            current_index += val_size
+
+            yield train_indices, val_indices
+def convert_metrics_to_numpy(metrics_dict):
+    """
+    Convertit de manière sûre les métriques GPU en arrays NumPy
+
+    Args:
+        metrics_dict: Dictionnaire contenant les métriques CuPy
+    Returns:
+        Dict avec les mêmes métriques en NumPy
+    """
+    numpy_metrics = {}
+    for key, value in metrics_dict.items():
+        if isinstance(value, cp.ndarray):
+            numpy_metrics[key] = cp.asnumpy(value)
+        else:
+            numpy_metrics[key] = value
+    return numpy_metrics
 
 
 def calculate_time_difference(start_date_str, end_date_str):
@@ -485,823 +370,470 @@ def calculate_time_difference(start_date_str, end_date_str):
     return diff
 
 
-def report_trial_optuna(trial, best_trial_with_2_obj):
-    # Récupération des valeurs depuis trial.user_attrs
-    total_tp_val = trial.user_attrs['total_tp_val']
-    total_fp_val = trial.user_attrs['total_fp_val']
-    total_tn_val = trial.user_attrs['total_tn_val']
-    total_fn_val = trial.user_attrs['total_fn_val']
-    weight_param = trial.user_attrs['weight_param']
-    nb_split_tscv = trial.user_attrs['nb_split_tscv']
-    mean_cv_score = trial.user_attrs['mean_cv_score']
-    std_dev_score = trial.user_attrs['std_dev_score']
-    std_penalty_factor = trial.user_attrs['std_penalty_factor']
-    score_adjustedStd_val = trial.user_attrs['score_adjustedStd_val']
-    train_pnl_perTrades = trial.user_attrs['train_pnl_perTrades']
-    val_pnl_perTrades = trial.user_attrs['val_pnl_perTrades']
-    pnl_perTrade_diff = trial.user_attrs['pnl_perTrade_diff']
-    total_samples_val = trial.user_attrs['total_samples_val']
-    n_trials_optuna = trial.user_attrs['n_trials_optuna']
-    total_samples_val = trial.user_attrs['total_samples_val']
-    cummulative_pnl_val = trial.user_attrs['cummulative_pnl_val']
-    scores_ens_val_list = trial.user_attrs['scores_ens_val_list']
-    tp_fp_diff_val = trial.user_attrs['tp_fp_diff_val']
-    tp_percentage = trial.user_attrs['tp_percentage']
-    win_rate = trial.user_attrs['win_rate']
-    selected_feature_names = trial.user_attrs['selected_feature_names']
-    rfe_param_value = trial.user_attrs['use_of_rfe_in_optuna']
-    profit_per_tp = trial.user_attrs['profit_per_tp']
-    penalty_per_fn = trial.user_attrs['penalty_per_fn']
+from sklearn.model_selection import BaseCrossValidator
+import numpy as np
 
-    trial.set_user_attr('win_rate', win_rate)
-    weight_split = trial.user_attrs['weight_split']
-    nb_split_weight = trial.user_attrs['nb_split_weight']
-    pnl_norm_objective = trial.user_attrs['pnl_norm_objective']
-    winrate_diff_norm_objective = trial.user_attrs['winrate_diff_norm_objective']
-    print(f"   ##Essai actuel: ")
-    print(
-        f"    =>Objective 1, pnl_norm_objective : {pnl_norm_objective} avec weight_split {weight_split} nb_split_weight {nb_split_weight}")
 
-    print(
-        f"     -score_adjustedStd_val : {score_adjustedStd_val:.2f} avec Moyenne des pnl des {nb_split_tscv} iterations : {mean_cv_score:.2f}, std_dev_score : {std_dev_score}, std_penalty_factor={std_penalty_factor}")
-    print(f"    =>Objective 2, pnl per trade: train {train_pnl_perTrades} // Val {val_pnl_perTrades} "
-          f"donc diff val-train PNL per trade {pnl_perTrade_diff}\n"
-          f"     winrate_diff_norm_objective:{winrate_diff_norm_objective}")
+class CustomSessionTimeSeriesSplit_byID(BaseCrossValidator):
+    def __init__(self, session_ids, n_splits=5):
+        self.session_ids = np.array(session_ids)
+        self.n_splits = n_splits
+        # Trier les sessions uniques pour garantir l'ordre chronologique
+        self.unique_sessions = np.sort(np.unique(self.session_ids))
 
-    if (rfe_param_value != rfe_param.NO_RFE):
-        print(
-            f"    =>Nombre de features sélectionnées par RFECVCV: {len(selected_feature_names)}, Noms des features: {', '.join(selected_feature_names)}")
-    print(f"    =>Principal métrique pour l'essai en cours :")
-    print(f"     -Nombre de: TP (True Positives) : {total_tp_val}, FP (False Positives) : {total_fp_val}, "
-          f"TN (True Negative) : {total_tn_val}, FN (False Negative) : {total_fn_val},")
-    print(f"     -Pourcentage Winrate           : {win_rate:.2f}%")
-    print(f"     -Pourcentage de TP             : {tp_percentage:.2f}%")
-    print(f"     -Différence (TP - FP)          : {tp_fp_diff_val}")
-    print(
-        f"     -PNL                           : {cummulative_pnl_val}, orginal: (scores_ens_val_list: {scores_ens_val_list})")
-    print(f"     -Nombre de trades              : {total_tp_val + total_fp_val + total_tn_val + total_fn_val}")
+    def split(self, X, y=None, groups=None):
+        n_sessions = len(self.unique_sessions)
+        print("____CustomSessionTimeSeriesSplit_byID____")
+        if self.n_splits >= n_sessions:
+            raise ValueError(
+                f"Le nombre de splits ({self.n_splits}) doit être inférieur au nombre de sessions uniques ({n_sessions}).")
 
+        # Calculer la taille minimale pour chaque fold
+        min_sessions_per_fold = n_sessions // (self.n_splits + 1)
+
+        for fold in range(self.n_splits):
+            # Calculer les indices pour ce fold
+            train_end = min_sessions_per_fold * (fold + 1)
+            val_start = train_end
+            val_end = val_start + min_sessions_per_fold
+
+            # Sélectionner les sessions
+            train_sessions = self.unique_sessions[:train_end]
+            val_sessions = self.unique_sessions[val_start:val_end]
+
+            # Obtenir les indices correspondants
+            train_mask = np.isin(self.session_ids, train_sessions)
+            val_mask = np.isin(self.session_ids, val_sessions)
+
+            train_indices = np.where(train_mask)[0]
+            val_indices = np.where(val_mask)[0]
+            """
+            # Vérifications et logs
+            print(f"\nFold {fold + 1}:")
+            print(f"Sessions train: {len(train_sessions)} ({train_sessions[0]} à {train_sessions[-1]})")
+            print(f"Sessions val: {len(val_sessions)} ({val_sessions[0]} à {val_sessions[-1]})")
+            print(f"Indices train: {len(train_indices)}")
+            print(f"Indices val: {len(val_indices)}")
+            """
+            yield train_indices, val_indices
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
+
+
+def setup_cv_method(df_init=None,X_train=None,y_train_label=None,cv_method=None, nb_split_tscv=None, config=None):
+    # D'abord, vérifier si la colonne existe dans df_init
+    if 'timeStampOpening' not in df_init.columns:
+        raise ValueError("La colonne 'timeStampOpening' est absente de df_init.")
+
+    """Configure la méthode de validation croisée"""
+    if cv_method == cv_config.TIME_SERIE_SPLIT:
+        return TimeSeriesSplit(n_splits=nb_split_tscv)
+    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
+        r = config.get('non_acnhored_val_ratio', 1)
+
+        cv=NonAnchoredWalkForwardCV(n_splits=nb_split_tscv, r=r)
+        return cv
+
+    elif cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
+        # Ensuite, appliquer la logique en fonction de cv_method
+        # On garde une trace des colonnes originales
+        X_train_ = X_train.copy()
+
+        original_columns = set(X_train_.columns)
+
+        # Ajout des colonnes nécessaires si elles n'existent pas déjà
+        if 'timeStampOpening' not in X_train_.columns:
+            X_train_['timeStampOpening'] = df_init.loc[X_train_.index, 'timeStampOpening']
+
+        if 'session_type_index' not in X_train_.columns:
+            X_train_['session_type_index'] = df_init.loc[X_train_.index, 'session_type_index']
+
+        # Vérification des valeurs
+        columns_to_check = ['timeStampOpening']
+        comparison_results = X_train_[columns_to_check].eq(df_init.loc[X_train_.index, columns_to_check])
+        discrepancies = comparison_results[~comparison_results.all(axis=1)]
+
+        if not discrepancies.empty:
+            print("\nDétails des divergences :")
+            print(discrepancies)
+            raise ValueError("divergence df_init X_train_")
+
+
+        # Création d'une colonne temporaire session_type_index_utc
+        X_train_['session_type_index_utc'] = timestamp_to_date_utc(X_train_['timeStampOpening']).str[:10] + '_' + X_train_[
+            'session_type_index'].astype(str)
+
+        session_ids = X_train_['session_type_index_utc'].values
+
+        # Suppression de la colonne temporaire
+
+        cv = CustomSessionTimeSeriesSplit_byID(session_ids=session_ids, n_splits=nb_split_tscv)
+
+
+        return cv
+    elif cv_method == cv_config.K_FOLD:
+        return KFold(n_splits=nb_split_tscv, shuffle=False)
+    elif cv_method == cv_config.K_FOLD_SHUFFLE:
+        return KFold(n_splits=nb_split_tscv, shuffle=True, random_state=42)
+    else:
+        raise ValueError(f"Unknown cv_method: {cv_method}")
+
+def select_features_ifRfe(X_train, y_train_label, trial, config, params, weight_param, metric_dict,    use_of_rfe_in_optuna=None):
+    """Sélection des features avec RFE"""
+    if use_of_rfe_in_optuna == rfe_param.RFE_WITH_OPTUNA:
+        n_features_to_select = trial.suggest_int("n_features_to_select", 1, X_train.shape[1])
+    elif use_of_rfe_in_optuna == rfe_param.RFE_AUTO:
+        n_features_to_select = config.get('min_features_if_RFE_AUTO', 5)
+
+    selected_feature_names = process_RFE_filteringg(params, trial, weight_param, metric_dict,
+                                                    selected_columns, n_features_to_select,
+                                                    X_train, y_train_label)
+    X_train_selected = X_train[selected_feature_names]
+
+    return X_train_selected, selected_feature_names
+
+
+def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
+                     X_train_full=None,
+                     device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
+                     optima_score=None, metric_dict=None, weight_param=None,
+                     random_state_seed_=None, is_log_enabled=None, cv_method=cv_config.K_FOLD, selected_columns=None):
+    try:
+        # État de l'itération
+        if not hasattr(objective_optuna, 'iteration_counter'):
+            objective_optuna.iteration_counter = 0
+        objective_optuna.iteration_counter += 1
+
+        print(f"\n{'=' * 50}")
+        print_notification(f"Début itération Optuna #{objective_optuna.iteration_counter}")
+        print(f"{'=' * 50}")
+
+        np.random.seed(random_state_seed_)
+        n_trials_optuna = config.get('n_trials_optuna', 4)
+
+        params, num_boost_round = setup_model_params(trial, modele_param_optuna_range, random_state_seed_, device)
+
+        metric_dict = setup_metric_dict(trial, weight_param, optima_score,metric_dict)
+
+        cv = setup_cv_method(df_init=df_init,X_train=X_train, y_train_label=y_train_label,cv_method=cv_method,
+                             nb_split_tscv=nb_split_tscv,config=config)
+
+        use_of_rfe_in_optuna = config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE)
+
+        if use_of_rfe_in_optuna!=rfe_param.NO_RFE:
+            print(f"\n------- RFE activé activé:")
+            X_train, selected_feature_names = select_features_ifRfe(
+                X_train, y_train_label, trial, config, params, weight_param, metric_dict,use_of_rfe_in_optuna=use_of_rfe_in_optuna
+            )
+            print(f"              - Features sélectionnées avec rfe: {len(selected_feature_names)}")
+        else :
+            selected_feature_names=X_train.columns.tolist()
+
+        cv_results = run_cross_validation(
+            X_train=X_train, X_train_full=X_train_full,
+            y_train_label=y_train_label,
+            trial=trial,
+            params=params,
+            num_boost_round=num_boost_round,
+            metric_dict=metric_dict,
+            cv=cv,
+            nb_split_tscv=nb_split_tscv,
+            weight_param=weight_param,
+            optima_score=optima_score,
+            xgb_metric=xgb_metric,
+            is_log_enabled=is_log_enabled,
+            framework='xgboost'
+        )
+
+        # 8. Sauvegarde de l'état
+        state = {
+            'iteration': objective_optuna.iteration_counter,
+            'trial_number': trial.number,
+            'params': params,
+            'threshold': metric_dict['threshold'],
+            'mean_score': cv_results['mean_val_score'],
+            'std_score': cv_results['std_val_score'],
+            'metrics': {k: float(v) for k, v in cv_results['metrics'].items()},
+            'memory_usage': cp.get_default_memory_pool().used_bytes() / 1024 ** 2
+        }
+        """
+        print(f"\n{'=' * 50}")
+        print(f"Fin itération Optuna #{objective_optuna.iteration_counter}")
+        print(f"{'=' * 50}")
+         """
+
+    except Exception as e:
+        print(f"\n{'!' * 50}")
+        print(f"Erreur dans l'itération #{objective_optuna.iteration_counter}:")
+        print(str(e))
+        print(f"{'!' * 50}")
+        raise
+    finally:
+        # Nettoyage
+        cp.get_default_memory_pool().free_all_blocks()
+    # print_notification("fin de la CV")
+
+    if ENV == 'pycharm':
+        if keyboard.is_pressed('q'):  # Nécessite le package 'keyboard'
+            study.stop()
+    else:
+        if os.path.exists('stop_optimization.txt'):
+            study.stop()
+    # Calculs finaux et métriques
+
+    # Conversion des métriques par fold
+    winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
+    nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
+    scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
+    tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
+    fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
+    tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
+    fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
+    scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+
+    # Conversion des totaux validation
+    total_tp_val = float(cv_results['metrics']['total_tp_val'])  # Déjà en NumPy
+    total_fp_val = float(cv_results['metrics']['total_fp_val'])
+    total_tn_val = float(cv_results['metrics']['total_tn_val'])
+    total_fn_val = float(cv_results['metrics']['total_fn_val'])
+
+    # Conversion des totaux entraînement
+    total_tp_train = float(cv_results['metrics']['total_tp_train'])
+    total_fp_train = float(cv_results['metrics']['total_fp_train'])
+    total_tn_train = float(cv_results['metrics']['total_tn_train'])
+    total_fn_train = float(cv_results['metrics']['total_fn_train'])
+
+    def display_metrics(cv_results):
+        """
+        Affiche toutes les métriques de manière organisée
+        """
+        # Métriques par fold
+        # print("\n=== Métriques par Fold ===")
+        winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
+        nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
+        scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
+        tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
+        fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
+        tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
+        fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
+        scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+
+        # print("\nWinrates par fold      :", winrates_by_fold_cpu)
+        # print("Nombre trades par fold :", nb_trades_by_fold_cpu)
+        # print("\nScores Train par fold  :", scores_train_by_fold_cpu)
+        # print("TP Train par fold      :", tp_train_by_fold_cpu)
+        # print("FP Train par fold      :", fp_train_by_fold_cpu)
+        # print("\nTP Val par fold        :", tp_val_by_fold_cpu)
+        # print("FP Val par fold        :", fp_val_by_fold_cpu)
+        # print("Scores Val par fold    :", scores_val_by_fold_cpu)
+
+        # Totaux validation
+        # print("\n=== Totaux Validation ===")
+        total_tp_val = float(cv_results['metrics']['total_tp_val'])
+        total_fp_val = float(cv_results['metrics']['total_fp_val'])
+        total_tn_val = float(cv_results['metrics']['total_tn_val'])
+        total_fn_val = float(cv_results['metrics']['total_fn_val'])
+
+        # print(f"Total TP : {total_tp_val}")
+        # print(f"Total FP : {total_fp_val}")
+        # print(f"Total TN : {total_tn_val}")
+        # print(f"Total FN : {total_fn_val}")
+
+        # Totaux entraînement
+        # print("\n=== Totaux Entraînement ===")
+        total_tp_train = float(cv_results['metrics']['total_tp_train'])
+        total_fp_train = float(cv_results['metrics']['total_fp_train'])
+        total_tn_train = float(cv_results['metrics']['total_tn_train'])
+        total_fn_train = float(cv_results['metrics']['total_fn_train'])
+
+        # print(f"Total TP : {total_tp_train}")
+        # print(f"Total FP : {total_fp_train}")
+        # print(f"Total TN : {total_tn_train}")
+        # print(f"Total FN : {total_fn_train}")
+
+        # Statistiques supplémentaires
+        # print("\n=== Statistiques Globales ===")
+        # print(f"Taux de succès validation : {(total_tp_val / (total_tp_val + total_fp_val)) * 100:.2f}%" if (
+        #                                                                                                               total_tp_val + total_fp_val) > 0 else "N/A")
+        # print(f"Taux de succès entraînement : {(total_tp_train / (total_tp_train + total_fp_train)) * 100:.2f}%" if (
+        #                                                                                                                       total_tp_train + total_fp_train) > 0 else "N/A")
+
+    # Utilisation :
+    # display_metrics(cv_results)
+    # Conversion des fold_stats
+    fold_stats = {}
+    for fold_num, stats in cv_results['fold_stats'].items():
+        fold_stats[fold_num] = {
+            'train_n_trades': float(cp.asnumpy(stats['train_n_trades'])) if isinstance(stats['train_n_trades'],
+                                                                                       cp.ndarray) else stats[
+                'train_n_trades'],
+            'train_n_class_1': float(cp.asnumpy(stats['train_n_class_1'])) if isinstance(stats['train_n_class_1'],
+                                                                                         cp.ndarray) else stats[
+                'train_n_class_1'],
+            'train_n_class_0': float(cp.asnumpy(stats['train_n_class_0'])) if isinstance(stats['train_n_class_0'],
+                                                                                         cp.ndarray) else stats[
+                'train_n_class_0'],
+            'train_class_ratio': float(cp.asnumpy(stats['train_class_ratio'])) if isinstance(stats['train_class_ratio'],
+                                                                                             cp.ndarray) else stats[
+                'train_class_ratio'],
+            'train_success_rate': float(cp.asnumpy(stats['train_success_rate'])) if isinstance(
+                stats['train_success_rate'], cp.ndarray) else stats['train_success_rate'],
+            'val_n_trades': float(cp.asnumpy(stats['val_n_trades'])) if isinstance(stats['val_n_trades'],
+                                                                                   cp.ndarray) else stats[
+                'val_n_trades'],
+            'val_n_class_1': float(cp.asnumpy(stats['val_n_class_1'])) if isinstance(stats['val_n_class_1'],
+                                                                                     cp.ndarray) else stats[
+                'val_n_class_1'],
+            'val_n_class_0': float(cp.asnumpy(stats['val_n_class_0'])) if isinstance(stats['val_n_class_0'],
+                                                                                     cp.ndarray) else stats[
+                'val_n_class_0'],
+            'val_class_ratio': float(cp.asnumpy(stats['val_class_ratio'])) if isinstance(stats['val_class_ratio'],
+                                                                                         cp.ndarray) else stats[
+                'val_class_ratio'],
+            'val_success_rate': float(cp.asnumpy(stats['val_success_rate'])) if isinstance(stats['val_success_rate'],
+                                                                                           cp.ndarray) else stats[
+                'val_success_rate'],
+            'fold_num': stats['fold_num'],
+            'train_size': stats['train_size'],
+            'val_size': stats['val_size'],
+            'best_iteration': stats['best_iteration'],
+            'val_score': stats['val_score'],
+            'train_score': stats['train_score']
+        }
+
+    # Nettoyage mémoire GPU
+    cp.get_default_memory_pool().free_all_blocks()
+
+    # Calculs des métriques finales
+    total_samples_val = total_tp_val + total_fp_val + total_tn_val + total_fn_val
+    total_samples_train = total_tp_train + total_fp_train + total_tn_train + total_fn_train
+    total_trades_val = total_tp_val + total_fp_val
+    total_trades_train = total_tp_train + total_fp_train
+
+    total_pnl_val = sum(scores_val_by_fold_cpu)
+    total_pnl_train = sum(scores_train_by_fold_cpu)
+
+    val_pnl_perTrades = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
+    train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_train > 0 else 0
+
+    pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
+    # print(f"PnL par trade - Train: {train_pnl_perTrades:.2f}")
+    # print(f"PnL par trade - Validation: {val_pnl_perTrades:.2f}")
+    # print(f"Différence absolue: {abs(val_pnl_perTrades - train_pnl_perTrades):.2f}")
+
+    # Suggestions des paramètres finaux
+    weight_split = trial.suggest_float('weight_split', weight_param['weight_split']['min'],
+                                       weight_param['weight_split']['max'])
+    nb_split_weight = trial.suggest_int('nb_split_weight', weight_param['nb_split_weight']['min'],
+                                        weight_param['nb_split_weight']['max'])
+    std_penalty_factor = trial.suggest_float('std_penalty_factor', weight_param['std_penalty_factor']['min'],
+                                             weight_param['std_penalty_factor']['max'])
+
+    # Calcul du score final ajusté
+    score_adjustedStd_val, mean_cv_score, std_dev_score = calculate_weighted_adjusted_score_custom(
+        scores_val_by_fold_cpu,
+        weight_split=weight_split,
+        nb_split_weight=nb_split_weight,
+        std_penalty_factor=std_penalty_factor)
+
+    # Calculs des métriques finales
     if total_samples_val > 0:
         tp_percentage = (total_tp_val / total_samples_val) * 100
     else:
         tp_percentage = 0
-    total_trades_val = total_tp_val + total_fp_val
+
     win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
-    result_dict_trialOptuna = {
-        "cummulative_pnl": cummulative_pnl_val,
-        "win_rate_percentage": round(win_rate, 2),
-        "scores_ens_val_list": scores_ens_val_list,
-        "score_adjustedStd_val": score_adjustedStd_val,
-        "std_dev_score": std_dev_score,
-        "tp_fp_diff_val": tp_fp_diff_val,
-        "total_trades_val": total_trades_val,
-        "tp_percentage": round(tp_percentage, 3),
-        "total_tp_val": total_tp_val,
-        "total_fp_val": total_fp_val,
-        "total_tn_val": total_tn_val,
-        "total_fn_val": total_fn_val,
-        "current_trial_number": trial.number + 1,
-        "best_trial_with_2_Obj": best_trial_with_2_obj
-    }
+    tp_fp_diff_val = total_tp_val - total_fp_val
+    cummulative_pnl_val = total_tp_val * weight_param['profit_per_tp']['min'] + total_fp_val * \
+                          weight_param['loss_per_fp']['max']
 
-    def convert_to_serializable(obj):
-        if isinstance(obj, (np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.float64, np.float32)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return obj
+    # print(f"cummulative_pnl_val: {cummulative_pnl_val}")
 
-    def convert_to_serializable_config(obj):
-        """Convert non-serializable objects to a format suitable for JSON."""
-        if isinstance(obj, optuna_options):
-            return str(obj)  # or obj.name or obj.value depending on the enum or custom class
-        try:
-            json.dumps(obj)  # Try to serialize it
-            return obj  # If no error, return the object itself
-        except (TypeError, ValueError):
-            return str(obj)  # If it's not serializable, convert it to string
+    # Mise à jour des attributs du trial
+    trial.set_user_attr('total_tp_val', total_tp_val)
+    trial.set_user_attr('total_fp_val', total_fp_val)
+    trial.set_user_attr('total_tn_val', total_tn_val)
+    trial.set_user_attr('total_fn_val', total_fn_val)
+    trial.set_user_attr('weight_param', weight_param)
+    trial.set_user_attr('scores_ens_val_list', scores_val_by_fold_cpu.tolist())
+    trial.set_user_attr('nb_split_tscv', nb_split_tscv)
+    trial.set_user_attr('mean_cv_score', mean_cv_score)
+    trial.set_user_attr('std_dev_score', std_dev_score)
+    trial.set_user_attr('std_penalty_factor', std_penalty_factor)
+    trial.set_user_attr('score_adjustedStd_val', score_adjustedStd_val)
+    trial.set_user_attr('train_pnl_perTrades', train_pnl_perTrades)
+    trial.set_user_attr('val_pnl_perTrades', val_pnl_perTrades)
+    trial.set_user_attr('pnl_perTrade_diff', pnl_perTrade_diff)
+    trial.set_user_attr('total_samples_val', total_samples_val)
+    trial.set_user_attr('n_trials_optuna', n_trials_optuna)
+    trial.set_user_attr('tp_percentage', tp_percentage)
+    trial.set_user_attr('win_rate', win_rate)
+    trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
+    trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
 
-    import time
-    from contextlib import contextmanager
+    trial.set_user_attr('winrates_by_fold', winrates_by_fold_cpu.tolist())
+    trial.set_user_attr('nb_trades_by_fold', nb_trades_by_fold_cpu.tolist())
 
-    def safe_file_replace(temp_filename, target_filename, max_retries=5, delay=1):
-        """
-        Tente de remplacer un fichier de manière sécurisée avec plusieurs essais.
-        """
-        for attempt in range(max_retries):
-            try:
-                # Tenter de supprimer le fichier cible s'il existe
-                if os.path.exists(target_filename):
-                    os.remove(target_filename)
-                    time.sleep(0.1)  # Petit délai après la suppression
+    trial.set_user_attr('weight_split', weight_split)
+    trial.set_user_attr('nb_split_weight', nb_split_weight)
+    # trial.set_user_attr('model', model)
+    trial.set_user_attr('selected_feature_names', selected_feature_names)
+    trial.set_user_attr('use_of_rfe_in_optuna', config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE))
+    trial.set_user_attr('optuna_objective_type',
+                        config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE))
+    trial.set_user_attr('profit_per_tp', weight_param['profit_per_tp'])
+    trial.set_user_attr('penalty_per_fn', weight_param['penalty_per_fn'])
+    trial.set_user_attr('tp_val_list', tp_val_by_fold_cpu)
+    trial.set_user_attr('fp_val_list', fp_val_by_fold_cpu)
+    trial.set_user_attr('cv_method', cv_method)
+    use_imbalance_penalty = config.get('use_imbalance_penalty', False)
+    trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
 
-                # Tenter le remplacement
-                os.rename(temp_filename, target_filename)
-                return True
-            except (PermissionError, OSError) as e:
-                if attempt < max_retries - 1:
-                    print(f"Tentative {attempt + 1} échouée: {str(e)}")
-                    time.sleep(delay)
-                else:
-                    print(f"Échec final après {max_retries} tentatives: {str(e)}")
-                    # Tenter une copie comme solution de repli
-                    try:
-                        shutil.copy2(temp_filename, target_filename)
-                        os.remove(temp_filename)
-                        return True
-                    except Exception as copy_error:
-                        print(f"Échec de la copie de secours: {str(copy_error)}")
-                        return False
 
-    def save_trial_results(trial, result_dict_trialOptuna, config=None,
-                           xgb_param_optuna_range=None, weight_param=None, selected_columns=None,
-                           save_dir="optuna_results",
-                           result_file="optuna_results.json"):
-        global _first_call_save_r_trialesults
 
-        try:
-            # Création du répertoire si nécessaire
-            os.makedirs(save_dir, exist_ok=True)
-
-            # Nettoyage au premier appel
-            if _first_call_save_r_trialesults:
-                if os.path.exists(save_dir):
-                    for filename in os.listdir(save_dir):
-                        file_path = os.path.join(save_dir, filename)
-                        try:
-                            if os.path.isfile(file_path):
-                                os.remove(file_path)
-                            elif os.path.isdir(file_path):
-                                shutil.rmtree(file_path)
-                        except Exception as e:
-                            print(f'Attention: Échec suppression {file_path}: {e}')
-                _first_call_save_r_trialesults = False
-
-            result_file_path = os.path.join(save_dir, result_file)
-
-            # Chargement des résultats existants
-            results_data = {}
-            if os.path.exists(result_file_path) and os.path.getsize(result_file_path) > 0:
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        with open(result_file_path, 'r') as f:
-                            results_data = json.load(f)
-                        break
-                    except json.JSONDecodeError as e:
-                        if attempt < max_retries - 1:
-                            time.sleep(1)
-                            continue
-                        print(f"Erreur lecture résultats: {e}")
-                        backup_file = f"{result_file_path}.bak_{int(time.time())}"
-                        shutil.copy2(result_file_path, backup_file)
-                        print(f"Backup créé: {backup_file}")
-                    except Exception as e:
-                        print(f"Erreur inattendue: {e}")
-                        break
-
-            # Mise à jour des données
-            if 'selected_columns' not in results_data:
-                results_data['selected_columns'] = selected_columns
-            if 'config' not in results_data:
-                results_data['config'] = {k: convert_to_serializable_config(v) for k, v in config.items()}
-            if 'weight_param' not in results_data:
-                results_data['weight_param'] = weight_param
-            if 'xgb_param_optuna_range' not in results_data:
-                results_data['xgb_param_optuna_range'] = xgb_param_optuna_range
-
-            # Ajout des résultats du nouveau trial
-            results_data[f"trial_{trial.number + 1}"] = {
-                "best_result": {k: convert_to_serializable(v) for k, v in result_dict_trialOptuna.items()},
-                "params": {k: convert_to_serializable(v) for k, v in trial.params.items()}
-            }
-
-            # Écriture sécurisée avec nom unique
-            temp_filename = os.path.join(save_dir, f'temp_results_{int(time.time())}_{os.getpid()}.json')
-            try:
-                with open(temp_filename, 'w') as tf:
-                    json.dump(results_data, tf, indent=4)
-
-                # Remplacement sécurisé
-                if not safe_file_replace(temp_filename, result_file_path):
-                    raise Exception("Échec du remplacement du fichier")
-
-            except Exception as e:
-                print(f"Erreur lors de la sauvegarde: {e}")
-                # Tentative de sauvegarde de secours
-                backup_path = os.path.join(save_dir, f'backup_results_{int(time.time())}.json')
-                try:
-                    with open(backup_path, 'w') as bf:
-                        json.dump(results_data, bf, indent=4)
-                    print(f"Sauvegarde de secours créée: {backup_path}")
-                except Exception as backup_error:
-                    print(f"Échec de la sauvegarde de secours: {backup_error}")
-
-            finally:
-                # Nettoyage des fichiers temporaires
-                if os.path.exists(temp_filename):
-                    try:
-                        os.remove(temp_filename)
-                    except:
-                        pass
-
-        except Exception as e:
-            print(f"Erreur globale dans save_trial_results: {e}")
-            raise
-
-    # print(f"   Config: {config}")
-
-    # Appel de la fonction save_trial_results
-    save_trial_results(
-        trial,
-        result_dict_trialOptuna,
-        config=config,
-        xgb_param_optuna_range=xgb_param_optuna_range, selected_columns=selected_columns, weight_param=weight_param,
-        save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
-        result_file="optuna_results.json"
+    # 5. Retour du score ajusté (à minimiser) et de la différence de PnL par trade
+    objectives = calculate_normalized_objectives(
+        tp_train_list=tp_train_by_fold_cpu,
+        fp_train_list=fp_train_by_fold_cpu,
+        tp_val_list=tp_val_by_fold_cpu,
+        fp_val_list=fp_val_by_fold_cpu,
+        scores_train_list=scores_train_by_fold_cpu,
+        scores_val_list=scores_val_by_fold_cpu,
+        fold_stats=fold_stats,
+        scale_objectives=False,
+        use_imbalance_penalty=use_imbalance_penalty
     )
-    print(f"   {trial.number + 1}/{n_trials_optuna} Optuna results and model saved successfully.")
 
-    """"
-    if learning_curve_enabled and learning_curve_data_list:
-        avg_learning_curve_data = average_learning_curves(learning_curve_data_list)
-        if avg_learning_curve_data is not None:
-            trial.set_user_attr('learning_curve_data', avg_learning_curve_data)
-            if trial.number == 0 or score_adjustedStd_val > trial.study.best_value:
-                plot_learning_curve(
-                    avg_learning_curve_data,
-                    title=f"Courbe d'apprentissage moyenne (Meilleur essai {trial.number})",
-                    filename=f'learning_curve_best_trial_{trial.number}.png'
-                )
-    """
-
-
-
-def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
-                     device,
-                     xgb_param_optuna_range, config=None, nb_split_tscv=None,
-                     learning_curve_enabled=None,
-                     optima_score=None, metric_dict=None, weight_param=None, random_state_seed_=None,
-                     early_stopping_rounds=None,
-                     cv_method=cv_config.K_FOLD):
-    np.random.seed(random_state_seed_)
-
-    try:
-        global lastBest_score
-        params = {
-            'max_depth': trial.suggest_int('max_depth', xgb_param_optuna_range['max_depth']['min'],
-                                           xgb_param_optuna_range['max_depth']['max']),
-            'learning_rate': trial.suggest_float('learning_rate', xgb_param_optuna_range['learning_rate']['min'],
-                                                 xgb_param_optuna_range['learning_rate']['max'],
-                                                 log=xgb_param_optuna_range['learning_rate'].get('log', False)),
-            'min_child_weight': trial.suggest_int('min_child_weight', xgb_param_optuna_range['min_child_weight']['min'],
-                                                  xgb_param_optuna_range['min_child_weight']['max']),
-            'subsample': trial.suggest_float('subsample', xgb_param_optuna_range['subsample']['min'],
-                                             xgb_param_optuna_range['subsample']['max']),
-            'colsample_bytree': trial.suggest_float('colsample_bytree', xgb_param_optuna_range['colsample_bytree']['min'],
-                                                    xgb_param_optuna_range['colsample_bytree']['max']),
-            'colsample_bylevel': trial.suggest_float('colsample_bylevel',
-                                                     xgb_param_optuna_range['colsample_bylevel']['min'],
-                                                     xgb_param_optuna_range['colsample_bylevel']['max']),
-            'colsample_bynode': trial.suggest_float('colsample_bynode', xgb_param_optuna_range['colsample_bynode']['min'],
-                                                    xgb_param_optuna_range['colsample_bynode']['max']),
-            'gamma': trial.suggest_float('gamma', xgb_param_optuna_range['gamma']['min'],
-                                         xgb_param_optuna_range['gamma']['max']),
-            'reg_alpha': trial.suggest_float('reg_alpha', xgb_param_optuna_range['reg_alpha']['min'],
-                                             xgb_param_optuna_range['reg_alpha']['max'],
-                                             log=xgb_param_optuna_range['reg_alpha'].get('log', False)),
-            'reg_lambda': trial.suggest_float('reg_lambda', xgb_param_optuna_range['reg_lambda']['min'],
-                                              xgb_param_optuna_range['reg_lambda']['max'],
-                                              log=xgb_param_optuna_range['reg_lambda'].get('log', False)),
-            'random_state': random_state_seed_,
-            'tree_method': 'hist',
-            'device': device,
-        }
-        n_trials_optuna = config.get('n_trials_optuna', 4)
-        tp_train_list = []
-        fp_train_list = []
-        tp_val_list = []
-        fp_val_list = []
-        scores_ens_val_list = []
-        scores_ens_train_list = []
-
-        print(f"\n## Optuna {trial.number + 1}/{n_trials_optuna} ##")
-
-        # Initialiser les compteurs
-        total_tp_val = total_fp_val = total_tn_val = total_fn_val = total_samples_val = 0
-        total_tp_train = total_fp_train = total_tn_train = total_fn_train = total_samples_train = 0
-
-        # Fonction englobante qui intègre metric_dict
-
-        threshold_value = trial.suggest_float('threshold', weight_param['threshold']['min'],
-                                              weight_param['threshold']['max'])
-
-        # Sélection de la fonction de métrique appropriée
-        if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_TP_FP:
-
-            # Suggérer les poids pour la métrique combinée
-            profit_ratio_weight = trial.suggest_float('profit_ratio_weight', weight_param['profit_ratio_weight']['min'],
-                                                      weight_param['profit_ratio_weight']['max'])
-
-            win_rate_weight = trial.suggest_float('win_rate_weight', weight_param['win_rate_weight']['min'],
-                                                  weight_param['win_rate_weight']['max'])
-
-            selectivity_weight = trial.suggest_float('selectivity_weight', weight_param['selectivity_weight']['min'],
-                                                     weight_param['selectivity_weight']['max'])
-
-            # Normaliser les poids pour qu'ils somment à 1
-            total_weight = profit_ratio_weight + win_rate_weight + selectivity_weight
-            profit_ratio_weight /= total_weight
-            win_rate_weight /= total_weight
-            selectivity_weight /= total_weight
-
-            # Définir la préférence de sélectivité
-
-            metric_dict = {
-                'profit_ratio_weight': profit_ratio_weight,
-                'win_rate_weight': win_rate_weight,
-                'selectivity_weight': selectivity_weight
-            }
-
-        elif optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
-
-            # Définir les paramètres spécifiques pour la métrique basée sur le profit
-            metric_dict = {
-                'profit_per_tp': trial.suggest_float('profit_per_tp', weight_param['profit_per_tp']['min'],
-                                                     weight_param['profit_per_tp']['max']),
-                'loss_per_fp': trial.suggest_float('loss_per_fp', weight_param['loss_per_fp']['min'],
-                                                   weight_param['loss_per_fp']['max']),
-                'penalty_per_fn': trial.suggest_float('penalty_per_fn', weight_param['penalty_per_fn']['min'],
-                                                      weight_param['penalty_per_fn']['max'])
-            }
-        metric_dict['threshold'] = threshold_value
-
-        num_boost_round = trial.suggest_int('num_boost_round', xgb_param_optuna_range['num_boost_round']['min'],
-                                            xgb_param_optuna_range['num_boost_round']['max'])
-
-        # Initialisez des listes pour chaque fold
-        winrates_by_fold = []
-        nb_trades_by_fold = []
-        last_score = None
-        learning_curve_data_list = []
-
-        if nb_split_tscv < 2:
-            print("nb_split_tscv < 2")
-            exit(1)
-        else:
-            # Choisir la méthode de validation croisée en fonction du paramètre cv_method
-            if cv_method == cv_config.TIME_SERIE_SPLIT:
-                cv = TimeSeriesSplit(n_splits=nb_split_tscv)
-                typeCV = 'timeSerie'
-            elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
-
-                x_percent = 50  # La fenêtre d'entraînement est 50 % plus grande que celle de validation
-                n_samples = len(X_train)
-                n_splits = nb_split_tscv  # Nombre de splits (nb_split_tscv)
-                size_per_split = n_samples / (n_splits + 1)  # = 1000 / (5 + 1) = 166.67 (rounded down to 166)
-
-                validation_size = size_per_split / (1 + x_percent / 100)  # = 166 / 1.5 = 110
-                train_window = int((1 + x_percent / 100) * validation_size)  # = int(1.5 * 110) = 165
-
-                cv = CustomTimeSeriesSplitter(n_splits=n_splits, train_window=train_window, val_window=validation_size)
-
-            elif cv_method == cv_config.K_FOLD:
-                cv = KFold(n_splits=nb_split_tscv, shuffle=False)
-                typeCV = 'kfold'
-            elif cv_method == cv_config.K_FOLD_SHUFFLE:
-                cv = KFold(n_splits=nb_split_tscv, shuffle=True, random_state=42)
-                typeCV = 'kfold_shuffle'
-            else:
-                raise ValueError(f"Unknown cv_method: {cv_method}")
-
-            # Initialisation du timing
-            for_loop_start_time = time.time()
-            xgboost_train_time_cum = 0
-            i = 0
-
-            # 2. Préchargement des données sur GPU
-            def prepare_gpu_data(X, y, weights=None):
-                X_gpu = cp.asarray(X)
-                y_gpu = cp.asarray(y)
-                if weights is not None:
-                    weights_gpu = cp.asarray(weights)
-                    return xgb.DMatrix(X_gpu, label=y_gpu, weight=weights_gpu)
-                return xgb.DMatrix(X_gpu, label=y_gpu)
-
-            # 3. Optimisation des splits
-            def predict_and_process(pred_proba, threshold):
-                # Supposons que pred_proba est déjà un tableau CuPy
-                pred_proba = sigmoidCustom(pred_proba)
-                pred_proba = cp.clip(pred_proba, 0.0, 1.0)
-                pred = (pred_proba > threshold).astype(cp.int32)
-                return pred_proba, pred
-
-                # Paramètre pour le nombre de caractéristiques avec RFECV
-
-            # Paramètre pour le nombre de caractéristiques avec RFECV
-            use_of_rfe_in_optuna = config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE)
-
-            # Initialisation de selected_features
-            if use_of_rfe_in_optuna == rfe_param.RFE_WITH_OPTUNA:
-                # Optuna propose le nombre de caractéristiques
-                n_features_to_select = trial.suggest_int("n_features_to_select", 1, X_train.shape[1])
-            elif use_of_rfe_in_optuna == rfe_param.RFE_AUTO:
-                # RFECV détermine automatiquement le nombre optimal
-                n_features_to_select = config.get('min_features_if_RFE_AUTO', 5)
-            else:
-                n_features_to_select = X_train.shape[1]
-
-            # Sélection des features
-            if use_of_rfe_in_optuna != rfe_param.NO_RFE:
-
-                selected_feature_names=process_RFE_filteringg(params, trial, weight_param, metric_dict,selected_columns, n_features_to_select, X_train,y_train_label)
-            else:
-                # Utiliser toutes les features
-                selected_features = np.arange(X_train.shape[1])
-                selected_feature_names = X_train.columns.tolist()
-
-            # Réduction des données aux caractéristiques sélectionnées
-            # Assurez-vous que 'optimal_features' contient la liste des caractéristiques sélectionnées
-            X_train_selected = X_train[selected_feature_names]
-
-            # Afficher la forme de X_train_selected pour vérification
-            print(f"X_train_selected shape: {X_train_selected.shape}")
-
-            # Conversion des données en CuPy avec vérification des types
-            X_train_gpu_full = cp.asarray(X_train_selected.values, dtype=cp.float32)
-            y_train_gpu_full = cp.asarray(y_train_label, dtype=cp.int32)
-            fold_stats = {}
-
-            if use_of_rfe_in_optuna != rfe_param.NO_RFE:
-                print(f"dans Optuna: nombre de features après RFECE: {len(selected_feature_names)}")
-                print(f"Features sélectionnées: {selected_feature_names}")
-            else:
-                print(f"Features : {selected_feature_names}")
-            i = 0
-            # Boucle sur les splits
-            is_log_enabled = False
-
-            for train_index, val_index in cv.split(X_train):
-                i += 1
-                is_log_enabled=False
-                #print(f"Processing fold {i}/{nb_split_tscv}")
-                train_labels = y_train_label.iloc[train_index] if isinstance(y_train_label, pd.Series) else pd.Series(
-                    y_train_label[train_index])
-                val_labels = y_train_label.iloc[val_index] if isinstance(y_train_label, pd.Series) else pd.Series(
-                    y_train_label[val_index])
-                if is_log_enabled:
-                    print(f"\n--- Vérification Fold {i} ---")
-                    print(f"Taille train: {len(train_index)}, Taille val: {len(val_index)}")
-
-                    # Utilisation sûre des indices
-                    train_data = X_train.iloc[train_index].copy()
-                    val_data = X_train.iloc[val_index].copy()
-
-                    print("\nAnalyse comparative:")
-                    metrics = {
-                        'ATR': 'atr',
-                        'Taille Bougie': 'candleSizeTicks',
-                        'Band Width': 'bandWidthBB',
-                        'Pression Baissière': 'bearish_combined_pressure',
-                        'Pression Haussière': 'bullish_combined_pressure',
-                        'Score Absorption Baissier': 'bearish_absorption_score',
-                        'Score Absorption Haussier': 'bullish_absorption_score'
-                    }
-
-                    print("\nMétriques Train vs Validation:")
-                    for name, col in metrics.items():
-                        if col in train_data.columns:
-                            train_mean = train_data[col].mean()
-                            val_mean = val_data[col].mean()
-                            print(
-                                f"{name:25} - Train: {train_mean:8.4f}, Val: {val_mean:8.4f}, Diff: {((val_mean / train_mean) - 1) * 100:6.2f}%")
-
-                    print("\nDistribution des classes:")
-                    print("Train:", train_labels.value_counts().to_dict())
-                    print("Val:", val_labels.value_counts().to_dict())
-
-                    # Ratio de décision et succès
-                    train_decisions = (train_labels != 99).sum()
-                    val_decisions = (val_labels != 99).sum()
-                    train_success = (train_labels == 1).sum() / train_decisions if train_decisions > 0 else 0
-                    val_success = (val_labels == 1).sum() / val_decisions if val_decisions > 0 else 0
-
-                    print("\nRatios:")
-                    print(f"Décisions Train: {train_decisions / len(train_labels):6.2%}")
-                    print(f"Décisions Val: {val_decisions / len(val_labels):6.2%}")
-                    print(f"Succès Train: {train_success:6.2%}")
-                    print(f"Succès Val: {val_success:6.2%}")
-
-
-                # 2. Sélection des données sur le GPU
-                X_train_gpu = X_train_gpu_full[train_index]
-                y_train_gpu = y_train_gpu_full[train_index]
-                X_val_gpu = X_train_gpu_full[val_index]
-                y_val_gpu = y_train_gpu_full[val_index]
-                fold_stats[i] = {
-                    **calculate_fold_stats(train_labels, "train"),
-                    **calculate_fold_stats(val_labels, "val")
-                }
-
-                def compute_balanced_weights_gpu(y):
-                    """Version GPU de compute_sample_weight('balanced')"""
-                    unique_classes, class_counts = cp.unique(y, return_counts=True)
-                    n_samples = len(y)
-                    n_classes = len(unique_classes)
-
-                    # Calcul des poids comme sklearn
-                    weights = n_samples / (n_classes * class_counts)
-                    samples_weights = weights[y.astype(cp.int32)]
-
-                    return samples_weights
-
-                # Dans la boucle CV
-                # 3. Calcul des poids d'échantillons sur le GPU
-                sample_weights_gpu = compute_balanced_weights_gpu(y_train_gpu)
-
-                # 4. Création des matrices DMatrix
-                dtrain = xgb.DMatrix(X_train_gpu, label=y_train_gpu, weight=sample_weights_gpu)
-                dval = xgb.DMatrix(X_val_gpu, label=y_val_gpu)  # Pas de poids pour validation
-
-
-                     # 4. Configuration des paramètres
-                w_p = trial.suggest_float('w_p', weight_param['w_p']['min'], weight_param['w_p']['max'])
-                w_n = trial.suggest_float('w_n', weight_param['w_n']['min'], weight_param['w_n']['max'])
-
-                if optima_score == optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED:
-                    custom_metric = lambda predtTrain, dtrain: custom_metric_ProfitBased_gpu(predtTrain, dtrain,
-                                                                                             metric_dict)
-                    obj_function = create_weighted_logistic_obj_gpu(w_p, w_n)
-                    params['disable_default_eval_metric'] = 1
-                else:
-                    params.update({
-                        'objective': 'binary:logistic',
-                        'eval_metric': ['aucpr', 'logloss'],
-                        'disable_default_eval_metric': 0,
-                        'nthread': -1
-                    })
-                    obj_function = None
-                    custom_metric = None
-
-                # Remplace la section de prédiction et évaluation dans votre code original
-
-                try:
-                    # 5. Entraînement avec mesure du temps
-                    evals_result = {}
-                    xgboost_start_time = time.time()
-                    model = xgb.train(
-                        params,
-                        dtrain,
-                        num_boost_round=num_boost_round,
-                        evals=[(dtrain, 'train'), (dval, 'eval')],
-                        obj=obj_function,
-                        custom_metric=custom_metric,
-                        early_stopping_rounds=early_stopping_rounds,
-                        verbose_eval=False,
-                        evals_result=evals_result,
-                        maximize=True
-                    )
-                    xgboost_train_time = time.time() - xgboost_start_time
-                    xgboost_train_time_cum += xgboost_train_time
-
-                    # 6. Calcul optimisé des scores
-                    eval_scores = evals_result['eval']['custom_metric_ProfitBased']
-                    val_score_best = max(eval_scores)
-                    val_score_bestIdx = eval_scores.index(val_score_best)
-                    best_iteration = val_score_bestIdx + 1
-
-                    # 7. Prédictions optimisées
-                    # Validation - tout sur GPU
-                    # Prédictions validation
-                    val_pred_proba = model.predict(dval, iteration_range=(0, best_iteration))
-                    val_pred_proba = cp.asarray(val_pred_proba, dtype=cp.float32)
-                    val_pred_proba, val_pred = predict_and_process(val_pred_proba, metric_dict['threshold'])
-                    val_pred = cp.asnumpy(val_pred)  # Conversion en numpy une seule fois
-
-                    # Obtenir y_val_gpu depuis dval
-                    y_val_gpu = dval.get_label()  # Devrait déjà être un tableau CuPy
-                    tn_val, fp_val, fn_val, tp_val = compute_confusion_matrix_cupy(y_val_gpu, val_pred)
-
-                    # Entrainement - tout sur GPU
-                    train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
-                    train_pred_proba = cp.asarray(train_pred_proba, dtype=cp.float32)
-                    train_pred_proba, train_pred = predict_and_process(train_pred_proba, metric_dict['threshold'])
-                    train_pred = cp.asnumpy(train_pred)  # Conversion en numpy une seule fois
-
-                    # Obtenir y_val_gpu depuis dval
-                    y_train_gpu = dtrain.get_label()  # Devrait déjà être un tableau CuPy
-                    tn_train, fp_train, fn_train, tp_train = compute_confusion_matrix_cupy(y_train_gpu, train_pred)
-
-                    # Récupération des scores 	d'entraînement
-                    train_scores = evals_result['train']['custom_metric_ProfitBased']
-                    train_score_at_val_best = train_scores[val_score_bestIdx]
-
-                    # 8. Mise à jour des scores de manière optimisée
-
-
-                    # 9. Mise à jour des totaux de manière optimisée (en une fois)
-                    total_samples_val += len(y_val_gpu)
-                    total_tp_val += tp_val
-                    total_fp_val += fp_val
-                    total_tn_val += tn_val
-                    total_fn_val += fn_val
-                    total_tp_train += tp_train
-                    total_fp_train += fp_train
-                    total_tn_train += tn_train
-                    total_fn_train += fn_train
-                    tp_train_list.append(tp_train)
-                    fp_train_list.append(fp_train)
-                    # Utilisation explicite de .item() pour extraire des scalaires
-                    tp_val_list.append(tp_val.item() if hasattr(tp_val, "item") else tp_val)
-                    fp_val_list.append(fp_val.item() if hasattr(fp_val, "item") else fp_val)
-                    # Une fois les métriques calculées pour un fold, stockez-les
-                    tp = tp_val.item() if hasattr(tp_val, "item") else tp_val
-                    fp = fp_val.item() if hasattr(fp_val, "item") else fp_val
-
-                    # Vérifiez que tp et fp sont des valeurs numériques
-                    if not isinstance(tp, (int, float)) or not isinstance(fp, (int, float)):
-                        raise ValueError(f"tp_val ou fp_val contient une valeur invalide : tp={tp}, fp={fp}")
-
-                    # Calculs
-                    winrate = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                    nb_trades = tp + fp
-
-                    winrates_by_fold.append(winrate)
-                    nb_trades_by_fold.append(nb_trades)
-
-
-                    scores_ens_train_list.append(train_score_at_val_best)
-                    scores_ens_val_list.append(val_score_best)
-
-                    if True:#is_log_enabled:
-                        try:
-                            # 2. Traitement des informations temporelles
-                            start_time, end_time, val_sessions = get_val_cv_time_range(X_train_full, X_train, val_index)
-
-                            time_diff = calculate_time_difference(timestamp_to_date_utc_(start_time),
-                                                                  timestamp_to_date_utc_(end_time))
-                            # S'assurer que les données sont en format CuPy
-                            n_train = y_train_gpu.size if isinstance(y_train_gpu, cp.ndarray) else cp.asarray(
-                                y_train_gpu).size
-                            n_val = y_val_gpu.size if isinstance(y_val_gpu, cp.ndarray) else cp.asarray(y_val_gpu).size
-
-                            print(
-                                f"Période de validation - Du {timestamp_to_date_utc_(start_time)} ({start_time}) au {timestamp_to_date_utc_(end_time)} ({end_time}) "
-                                f"(Durée: {time_diff.days} jours, {time_diff.months} mois, {time_diff.years} ans)\n"
-                                f"Trades - Train: {n_train:,d}, Val: {n_val:,d}\n"
-                                f"Train Metrics - TP: {tp_train:4d} | FP: {fp_train:4d} | TN: {tn_train:4d} | FN: {fn_train:4d}\n"
-                                f"Val Metrics   - TP: {tp_val:4d} | FP: {fp_val:4d} | TN: {tn_val:4d} | FN: {fn_val:4d}")
-                        except Exception as e:
-                            print(f"Erreur lors de l'affichage des métriques: {str(e)}")
-
-                except Exception as e:
-                    print(f"Erreur lors de la vérification des conditions d'arrêt: {str(e)}")
-                    return False
-
-            if ENV == 'pycharm':
-                if keyboard.is_pressed('q'):  # Nécessite le package 'keyboard'
-                    study.stop()
-            else:
-                if os.path.exists('stop_optimization.txt'):
-                    study.stop()
-            # Calculs finaux et métriques
-            for_loop_end_time = time.time()
-            total_for_loop_time = for_loop_end_time - for_loop_start_time
-
-            print(
-                f"\n <Total time spent in for loop: {total_for_loop_time:.2f} sec // Cummulative time spent in xgb.train {xgboost_train_time_cum:.2f} sec>")
-
-            endPartOptuna_start_time = time.time()
-
-            # Calculs des métriques finales
-            total_samples_val = total_tp_val + total_fp_val + total_tn_val + total_fn_val
-            total_samples_train = total_tp_train + total_fp_train + total_tn_train + total_fn_train
-            total_trades_val = total_tp_val + total_fp_val
-            total_trades_train = total_tp_train + total_fp_train
-
-            total_pnl_val = sum(scores_ens_val_list)
-            total_pnl_train = sum(scores_ens_train_list)
-
-            val_pnl_perTrades = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
-            train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_train > 0 else 0
-
-            pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
-            #print(f"PnL par trade - Train: {train_pnl_perTrades:.2f}")
-            #print(f"PnL par trade - Validation: {val_pnl_perTrades:.2f}")
-            #print(f"Différence absolue: {abs(val_pnl_perTrades - train_pnl_perTrades):.2f}")
-
-            # Suggestions des paramètres finaux
-            weight_split = trial.suggest_float('weight_split', weight_param['weight_split']['min'],
-                                               weight_param['weight_split']['max'])
-            nb_split_weight = trial.suggest_int('nb_split_weight', weight_param['nb_split_weight']['min'],
-                                                weight_param['nb_split_weight']['max'])
-            std_penalty_factor = trial.suggest_float('std_penalty_factor', weight_param['std_penalty_factor']['min'],
-                                                     weight_param['std_penalty_factor']['max'])
-
-            # Calcul du score final ajusté
-            score_adjustedStd_val, mean_cv_score, std_dev_score = calculate_weighted_adjusted_score_custom(
-                scores_ens_val_list,
-                weight_split=weight_split,
-                nb_split_weight=nb_split_weight,
-                std_penalty_factor=std_penalty_factor)
-
-            # Calculs des métriques finales
-            if total_samples_val > 0:
-                tp_percentage = (total_tp_val / total_samples_val) * 100
-            else:
-                tp_percentage = 0
-
-            win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
-            tp_fp_diff_val = total_tp_val - total_fp_val
-            cummulative_pnl_val = total_tp_val * weight_param['profit_per_tp']['min'] + total_fp_val * \
-                                  weight_param['loss_per_fp']['max']
-
-            # Mise à jour des attributs du trial
-            trial.set_user_attr('total_tp_val', total_tp_val)
-            trial.set_user_attr('total_fp_val', total_fp_val)
-            trial.set_user_attr('total_tn_val', total_tn_val)
-            trial.set_user_attr('total_fn_val', total_fn_val)
-            trial.set_user_attr('weight_param', weight_param)
-            trial.set_user_attr('scores_ens_val_list', scores_ens_val_list)
-            trial.set_user_attr('nb_split_tscv', nb_split_tscv)
-            trial.set_user_attr('mean_cv_score', mean_cv_score)
-            trial.set_user_attr('std_dev_score', std_dev_score)
-            trial.set_user_attr('std_penalty_factor', std_penalty_factor)
-            trial.set_user_attr('score_adjustedStd_val', score_adjustedStd_val)
-            trial.set_user_attr('train_pnl_perTrades', train_pnl_perTrades)
-            trial.set_user_attr('val_pnl_perTrades', val_pnl_perTrades)
-            trial.set_user_attr('pnl_perTrade_diff', pnl_perTrade_diff)
-            trial.set_user_attr('total_samples_val', total_samples_val)
-            trial.set_user_attr('n_trials_optuna', n_trials_optuna)
-            trial.set_user_attr('tp_percentage', tp_percentage)
-            trial.set_user_attr('win_rate', win_rate)
-            trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
-            trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
-
-            trial.set_user_attr('winrates_by_fold', winrates_by_fold)
-            trial.set_user_attr('nb_trades_by_fold', nb_trades_by_fold)
-
-
-            trial.set_user_attr('weight_split', weight_split)
-            trial.set_user_attr('nb_split_weight', nb_split_weight)
-            trial.set_user_attr('model', model)
-            trial.set_user_attr('selected_feature_names', selected_feature_names)
-            trial.set_user_attr('use_of_rfe_in_optuna', config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE))
-            trial.set_user_attr('optuna_objective_type', config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE))
-            trial.set_user_attr('profit_per_tp', weight_param['profit_per_tp'])
-            trial.set_user_attr('penalty_per_fn', weight_param['penalty_per_fn'])
-            trial.set_user_attr('tp_val_list', tp_val_list)
-            trial.set_user_attr('fp_val_list', fp_val_list)
-            endPartOptuna_end_time = time.time()
-            endPartOptuna_TOTAL_time = endPartOptuna_end_time - endPartOptuna_start_time
-
-            print(
-                f"\n <Total time spent in for en Optuna: {endPartOptuna_TOTAL_time:.2f} sec")
-
-            # 5. Retour du score ajusté (à minimiser) et de la différence de PnL par trade
-            objectives = calculate_normalized_objectives(
-                tp_train_list=tp_train_list,
-                fp_train_list=fp_train_list,
-                tp_val_list=tp_val_list,
-                fp_val_list=fp_val_list,
-                scores_train_list=scores_ens_train_list,
-                scores_val_list=scores_ens_val_list,
-                fold_stats=fold_stats,
-                scale_objectives=False,
-                use_imbalance_penalty=True
-            )
-
-            # Extraction des métriques brutes pour analyse
-            raw_metrics = objectives['raw_metrics']
-
-            # Affichage des métriques détaillées
-            print("\nMétriques brutes :")
-            print(f"PnL moyen          : {raw_metrics['avg_pnl']:.4f}")
-            print(f"Winrate diff moyen : {raw_metrics['avg_winrate_diff']:.4%}")
-            print(f"Pénalité imbalance : {raw_metrics['imbalance_penalty']:.4f}")
-
-            print("\nObjectifs normalisés finaux :")
-            print(f"PnL objectif  Normalisé        : {objectives['pnl_norm_objective']:.4f}")
-            print(f"Winrate diff objectif Normalisé: {objectives['winrate_diff_norm_objective']:.4f}")
-
-            # Sauvegarde des métriques dans Optuna
-            trial.set_user_attr('pnl_norm_objective', objectives['pnl_norm_objective'])
-            trial.set_user_attr('winrate_diff_norm_objective', objectives['winrate_diff_norm_objective'])
-            trial.set_user_attr('raw_avg_pnl', raw_metrics['avg_pnl'])
-            trial.set_user_attr('raw_avg_winrate_diff', raw_metrics['avg_winrate_diff'])
-            trial.set_user_attr('imbalance_penalty', raw_metrics['imbalance_penalty'])
-
-            # Retourner les objectifs pour Optuna
-            return [
-                objectives['pnl_norm_objective'],
-                objectives['winrate_diff_norm_objective']
-            ]
-            #return score_adjustedStd_val, pnl_perTrade_diff  # Retour normal
-    except Exception as e:
-        print(f"Erreur lors de l'exécution: {str(e)}")
-    return float('-inf'), float('inf')  # Valeurs pénalisantes
+    # Extraction des métriques brutes pour analyse
+    raw_metrics = objectives['raw_metrics']
+
+    # Affichage des métriques détaillées
+    print("\nMétriques brutes :")
+    print(f"PnL moyen          : {raw_metrics['avg_pnl']:.4f}")
+#    print(f"Winrate diff moyen : {raw_metrics['ecart_train_val']:.4%}")
+    print(f"Pénalité imbalance : {raw_metrics['imbalance_penalty']:.4f}")
+
+    print("\nObjectifs normalisés finaux :")
+    print(f"PnL objectif  Normalisé        : {objectives['pnl_norm_objective']:.4f}")
+    print(f"Winrate diff objectif Normalisé: {objectives['ecart_train_val']:.4f}")
+
+    # Sauvegarde des métriques dans Optuna
+    trial.set_user_attr('pnl_norm_objective', objectives['pnl_norm_objective'])
+    trial.set_user_attr('ecart_train_val', objectives['ecart_train_val'])
+    trial.set_user_attr('constraint_ecart_train_val', config.get('constraint_ecart_train_val',0))
+    trial.set_user_attr('constraint_winrates_by_fold', config.get('constraint_winrates_by_fold', 0))
+    trial.set_user_attr('constraint_min_trades_threshold_by_Fold',
+                        config.get('constraint_min_trades_threshold_by_Fold', 0))
+    trial.set_user_attr('raw_avg_pnl', raw_metrics['avg_pnl'])
+    trial.set_user_attr('imbalance_penalty', raw_metrics['imbalance_penalty'])
+
+    # Retourner les objectifs pour Optuna
+    return [
+        objectives['pnl_norm_objective'],
+        objectives['ecart_train_val']
+    ]
+    # return score_adjustedStd_val, pnl_perTrade_diff  # Retour normal
 
 
 ########################################
@@ -1310,32 +842,115 @@ def objective_optuna(trial, study, X_train, y_train_label, X_train_full,
 
 
 def train_and_evaluate_XGBOOST_model(
-        df=None,
-
+        df_init=None,
         config=None,  # Add config parameter here
-        xgb_param_optuna_range=None,
-        selected_columns=None,
-        use_shapeImportance_file=None,
+        modele_param_optuna_range=None,
         user_input=None,
         weight_param=None,
+        CUSTOM_SECTIONS=None
 ):
-    optuna_options_method = config.get('optuna_options_method', optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED)
+    xgb_metric_method = config.get('xgb_metric_method', xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED)
     device = config.get('device_', 'cuda')
     n_trials_optimization = config.get('n_trials_optuna', 4)
     nb_split_tscv = config.get('nb_split_tscv_', 10)
     nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
-    learning_curve_enabled = config.get('learning_curve_enabled', False)
     random_state_seed = config.get('random_state_seed', 30)
     early_stopping_rounds = config.get('early_stopping_rounds', 70)
-    preShapImportance = config.get('preShapImportance', 1)
-    use_shapeImportance_file = config.get('use_shapeImportance_file', r'C:\Users\aulac\Downloads')
     cv_method = config.get('cv_method', cv_config.K_FOLD)
-    optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.DISABLE)
+    optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
+    is_log_enabled = config.get('is_log_enabled', False)
+    selected_columns= config.get('selected_columns', None)
 
-    X_train_full, X_train, y_train_label, X_test, y_test_label, nb_SessionTrain, nb_SessionTest, nan_value = (
-        init_dataSet(df, nanvalue_to_newval, selected_columns))
+    zeros = (df_init['class_binaire'] == 0).sum()
+    ones = (df_init['class_binaire'] == 1).sum()
+    total = zeros + ones
+    print(f"Dimensions de df_init: {df_init.shape} (lignes, colonnes)")
+    print("df_init:")
+    print(df_init)
+
+    (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
+     X_train, y_train_label, X_test, y_test_label,
+     nb_SessionTrain, nb_SessionTest, nan_value) = (
+        init_dataSet(df_init=df_init, nanvalue_to_newval=nanvalue_to_newval,
+                     config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
+
+    print(X_train)
+    print(X_train_full)
     print(
         f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
+
+    print(f"Dimensions de X_train: {X_train.shape} (lignes, colonnes)")
+
+    print(f"Nb de features après exlusion manuelle: {len(selected_columns)}\n")
+
+    # Affichage des informations sur les NaN et zéros dans chaque colonne
+    print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
+    displaytNan_vifMiCorrFiltering(X=X_train_full, selected_columns=selected_columns,name="X_train_full",config=config)
+
+    print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
+    displaytNan_vifMiCorrFiltering(X=X_train, selected_columns=selected_columns, name="X_train",
+                                   config=config)
+
+    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+    if (chosen_scaler!=scalerChoice.SCALER_DISABLE):
+        # Calculer le nombre de lignes initiales
+        initial_count = len(X_train)
+
+        # Garder les indices des lignes à conserver (celles sans inf ou nan)
+        mask = ~X_train.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
+
+        # Appliquer le même masque à X_train et y_train_label pour maintenir l'homogénéité
+        X_train = X_train[mask]
+        y_train_label = y_train_label[mask]
+
+        # Calculer le nombre de lignes après nettoyage
+        final_count = len(X_train)
+
+        # Calculer le nombre de lignes supprimées
+        lines_removed = initial_count - final_count
+
+        # Calculer le pourcentage de lignes supprimées
+        percentage_removed = (lines_removed / initial_count) * 100
+
+        # Afficher les résultats
+        print(f"Nombre initial de trades : {initial_count}")
+        print(f"Nombre de trades supprimés après nettoyage des inf et nan : {lines_removed}")
+        print(f"Pourcentage de trades supprimés : {percentage_removed:.2f}%")
+
+        save_sacler_dir = os.path.join(results_directory, 'optuna_results')
+        # Pour les données d'entraînement
+        X_train, X_test, scaler, scaler_params = apply_scaling(
+            X_train,
+            X_test,
+            save_path=save_sacler_dir,chosen_scaler=chosen_scaler
+        )
+        print("\nSacler actif\n")
+    else :
+        print("\nPas de sacler actif\n")
+
+    print("X_train:")
+    print(X_train)
+    print("X_test:")
+    print(X_test)
+
+    enable_vif_corr_mi = config.get('enable_vif_corr_mi', None)
+    if enable_vif_corr_mi:
+        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorrFiltering(X=X_train,Y= y_train_label,selected_columns=selected_columns,name="X_train",config=config,enable_vif_corr_mi=enable_vif_corr_mi)
+        print("\nRésumé:")
+        print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
+        print(
+            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
+    else :
+        selected_columns_afterVifCorrMiFiltering=selected_columns
+        print("\nRésumé:")
+        print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
+        print(
+            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
+
+    X_train=X_train[selected_columns_afterVifCorrMiFiltering]
+    X_test=X_test[selected_columns_afterVifCorrMiFiltering]
+
+
 
     # Affichage de la distribution des classes
     print("Distribution des trades (excluant les 99):")
@@ -1365,32 +980,29 @@ def train_and_evaluate_XGBOOST_model(
 
     # Début de l'optimisation
     print_notification('###### DÉBUT: OPTIMISATION BAYESIENNE ##########', color="blue")
-    start_time = time.time()
 
-    maskShap = np.ones(X_train.shape[1], dtype=bool)
-    selected_features = X_train.columns
-    print(f"Avant lancement Optuna: Nb de toutes les features ({len(selected_features)}) : {list(selected_features)}")
-
-    X_train = X_train.loc[:, maskShap]
-    X_test = X_test.loc[:, maskShap]
-    feature_names = X_train.columns.tolist()
 
     # Assurez-vous que X_test et y_test_label ont le même nombre de lignes
     assert X_test.shape[0] == y_test_label.shape[0], "X_test et y_test_label doivent avoir le même nombre de lignes"
 
-
     # Adjust the objective wrapper function
     def objective_wrapper(trial, study, metric_dict):
         # Call your original objective function
-        score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(
-            trial=trial, study=study, X_train=X_train, y_train_label=y_train_label, X_train_full=X_train_full,
-            device=device,
-            xgb_param_optuna_range=xgb_param_optuna_range, config=config, nb_split_tscv=nb_split_tscv,
-            learning_curve_enabled=learning_curve_enabled,
-            optima_score=optuna_options_method, metric_dict=metric_dict, weight_param=weight_param,
-            random_state_seed_=random_state_seed,
-            early_stopping_rounds=early_stopping_rounds, cv_method=cv_method
-        )
+        score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(df_init=df_init,
+                                                                    trial=trial, study=study, X_train=X_train,
+                                                                    X_test=X_test,
+                                                                    y_train_label=y_train_label,
+                                                                    X_train_full=X_train_full,
+                                                                    device=device,
+                                                                    modele_param_optuna_range=modele_param_optuna_range,
+                                                                    config=config, nb_split_tscv=nb_split_tscv,
+                                                                    optima_score=xgb_metric_method,
+                                                                    metric_dict=metric_dict, weight_param=weight_param,
+                                                                    random_state_seed_=random_state_seed,
+                                                                    is_log_enabled=is_log_enabled,
+                                                                    cv_method=cv_method,
+                                                                    selected_columns=selected_columns
+                                                                    )
 
         if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) == optuna_doubleMetrics.DISABLE:
             # Return only the first objective
@@ -1408,162 +1020,59 @@ def train_and_evaluate_XGBOOST_model(
     if abs(weightPareto_pnl_val + weightPareto_pnl_diff - 1.0) > 1e-6:  # Tolérance d'erreur flottante
         raise ValueError("La somme des poids (weightPareto_pnl_val + weightPareto_pnl_diff) doit être égale à 1.0")
 
-    def callback_optuna(study, trial):
-        """
-        Callback function for Optuna to monitor progress and log the best trial.
-        """
-        current_trial = trial.number
-        print(f"\n {Fore.CYAN}Optuna Callback Current Trial {current_trial + 1}:{Style.RESET_ALL}")
-        optuna_objective_type_value = trial.user_attrs.get('optuna_objective_type', optuna_doubleMetrics.DISABLE)
-
-        # Return early if the trial is not complete
-        if trial.state != optuna.trial.TrialState.COMPLETE:
-            return
-
-        completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-        if not completed_trials:
-            study.set_user_attr('bestResult_dict', {
-                "best_optunaTrial_number": None,
-                "best_pnl_val": None,
-                "best_pnl_perTrade_diff": None,
-                "best_params": None
-            })
-            print("No completed trials found.")
-            return
-
-        # Check if the optimization is single-objective or multi-objective
-        if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
-            # Multi-objective optimization: custom selection of the best trial
-            pareto_trials = study.best_trials
-            weights = np.array([weightPareto_pnl_val, weightPareto_pnl_diff])
-
-            if (optuna_objective_type_value == optuna_doubleMetrics.USE_DIST_TO_IDEAL):
-                # Calculate distances for each Pareto front trial
-                values_0 = np.array([t.values[0] for t in pareto_trials])
-                values_1 = np.array([t.values[1] for t in pareto_trials])
-
-                min_pnl, max_pnl = values_0.min(), values_0.max()
-                min_pnl_diff, max_pnl_diff = values_1.min(), values_1.max()
-
-                pnl_range = max_pnl - min_pnl or 1
-                pnl_diff_range = max_pnl_diff - min_pnl_diff or 1
-
-                pnl_normalized = (max_pnl - values_0) / pnl_range
-                pnl_diff_normalized = (values_1 - min_pnl_diff) / pnl_diff_range
-
-                distances = np.sqrt(
-                    (weightPareto_pnl_val * pnl_normalized) ** 2 +
-                    (weightPareto_pnl_diff * pnl_diff_normalized) ** 2
-                )
-                best_trial = pareto_trials[np.argmin(distances)]
-            elif (optuna_objective_type_value == optuna_doubleMetrics.USE_WEIGHTED_AVG):
-                # Weighted average calculation for custom selection
-                df = pd.DataFrame({
-                    'PnL_val': [-t.values[0] for t in completed_trials],
-                    'pnl_perTrade_diff': [t.values[1] for t in completed_trials]
-                })
-
-                for col in df.columns:
-                    min_val = df[col].min()
-                    max_val = df[col].max()
-                    range_val = max_val - min_val or 1
-                    df[f'{col}_normalized'] = (df[col] - min_val) / range_val
-
-                weighted_avg = df[['PnL_val_normalized', 'pnl_perTrade_diff_normalized']].dot(weights)
-                best_trial = completed_trials[weighted_avg.idxmin()]
-        else:  # (optuna_doubleMetrics ) nous utilisons le best trial d'optuna directement ici
-            # Single-objective optimization: use best_trial directly
-            best_trial = study.best_trial
-
-        # Create the result dictionary
-        bestResult_dict = {
-            "best_optunaTrial_number": best_trial.number + 1,
-            "best_pnl_val": best_trial.user_attrs.get('best_pnl_val', None),
-            "best_pnl_perTrade_diff": best_trial.user_attrs.get('pnl_perTrade_diff', None),
-            "best_params": best_trial.params,
-            'selected_feature_names': best_trial.user_attrs.get('selected_feature_names', None),
-            'use_of_rfe_in_optuna': best_trial.user_attrs.get('use_of_rfe_in_optuna', None),
-
-            'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None,
-            'winrate_diff_norm_objective': best_trial.values[1] if len(best_trial.values) > 1 else None
-        }
-        study.set_user_attr('bestResult_dict', bestResult_dict)
-
-        # Log additional metrics if available
-        metrics = {
-            'total_tp_val': best_trial.user_attrs.get('total_tp_val', None),
-            'total_fp_val': best_trial.user_attrs.get('total_fp_val', None),
-            'total_tn_val': best_trial.user_attrs.get('total_tn_val', None),
-            'total_fn_val': best_trial.user_attrs.get('total_fn_val', None),
-            'cummulative_pnl_val': best_trial.user_attrs.get('cummulative_pnl_val', None),
-            'tp_fp_diff_val': best_trial.user_attrs.get('tp_fp_diff_val', None),
-            'tp_percentage': best_trial.user_attrs.get('tp_percentage', None),
-            'win_rate': best_trial.user_attrs.get('win_rate', None),
-            'scores_ens_val_list': best_trial.user_attrs.get('scores_ens_val_list', None),
-            'weight_split': best_trial.user_attrs.get('weight_split', None),
-            'nb_split_weight': best_trial.user_attrs.get('nb_split_weight', None),
-
-
-        }
-        winrates_by_fold=best_trial.user_attrs.get('winrates_by_fold', None)
-        nb_trades_by_fold=best_trial.user_attrs.get('nb_trades_by_fold', None),
-
-        # Calcul des métriques
-
-        # Rapport
-        report_trial_optuna(trial, best_trial.number + 1)
-
-        method_names = {
-            optuna_doubleMetrics.DISABLE: "DISABLE",
-            optuna_doubleMetrics.USE_DIST_TO_IDEAL: "double avec USE_DIST_TO_IDEAL",
-            optuna_doubleMetrics.USE_WEIGHTED_AVG: "double avec USE_WEIGHTED_AVG"
-        }
-
-        method_name = method_names.get(optuna_objective_type_value, "UNKNOWN")
-
-        print(f"\n   {Fore.BLUE}##Meilleur essai jusqu'à present: {bestResult_dict['best_optunaTrial_number']}, "
-              f"Méthode pour l'objctive Optuna: '{method_name}'##{Style.RESET_ALL}")
-
-        print(f"    =>Objective 1: pnl_norm_objective -> {bestResult_dict['pnl_norm_objective']:.4f} "
-              f"avec weight_split: {metrics['weight_split']} nb_split_weight {metrics['nb_split_weight']}")
-        if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
-            print(
-                f"    =>Objective 2: score différence par trade (train - val) -> {bestResult_dict['best_pnl_perTrade_diff']:.4f}\n"
-                f"      score winrate_diff_norm_objective   -> {bestResult_dict['winrate_diff_norm_objective']}")
-        if (bestResult_dict['use_of_rfe_in_optuna'] != rfe_param.NO_RFE):
-            print(
-                f"    =>Nombre de features sélectionnées par RFECVCV: {len(bestResult_dict['selected_feature_names'])}, Noms des features: {', '.join(bestResult_dict['selected_feature_names'])}")
-
-        print(f"    Principal métrique pour le meilleur essai:")
-        print(f"     -Nombre de: TP: {metrics['total_tp_val']}, FP: {metrics['total_fp_val']}, "
-              f"TN: {metrics['total_tn_val']}, FN: {metrics['total_fn_val']}")
-        print(f"     -Pourcentage Winrate           : {metrics['win_rate']:.2f}%")
-        print(f"     -Pourcentage de TP             : {metrics['tp_percentage']:.2f}%")
-        print(f"     -Différence (TP - FP)          : {metrics['tp_fp_diff_val']}")
-        print(
-            f"     -PNL                           : {metrics['cummulative_pnl_val']}, original: {metrics['scores_ens_val_list']}")
-        print(
-            f"                                                                        winrate : {winrates_by_fold}")
-        print(
-            f"                                                                        Nb trade :{nb_trades_by_fold}")
-
-        print(
-            f"     -Nombre de trades              : {sum([metrics['total_tp_val'], metrics['total_fp_val'], metrics['total_tn_val'], metrics['total_fn_val']])}")
-        print(f"    =>Hyperparamètres du meilleur score trouvé à date: {bestResult_dict['best_params']}")
-
-        study_xgb.set_user_attr('bestResult_dict', bestResult_dict)
-
-    ##end callback_optuna
-
     # Créer l'étude
     # Assume 'optuna_objective_type' is the parameter that determines the optimization mode
+
+
 
     # Conditionally create the study
     if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) == optuna_doubleMetrics.DISABLE:
         # Create a single-objective study
+        # Définition de la fonction de contraintes
+
+        def create_constraints_func():
+            def constraints_func(trial):
+                """
+                Contraintes:
+                1. écart train-val <= seuil
+                2. nombre minimal de trades par fold >= 20
+                """
+                ecart_train_val = trial.user_attrs.get('ecart_train_val', float('inf'))
+                nb_trades_by_fold_list = trial.user_attrs.get('nb_trades_by_fold', [float('inf')])
+                constraint_min_trades_threshold_by_Fold = trial.user_attrs.get('constraint_min_trades_threshold_by_Fold', [float('inf')])  # Seuil minimal de trades par fold
+                constraint_ecart_train_val = trial.user_attrs.get('constraint_ecart_train_val', float('inf'))
+                winrates_by_fold = trial.user_attrs.get('winrates_by_fold', None)
+                constraint_winrates_by_fold = trial.user_attrs.get('constraint_winrates_by_fold', None)
+
+                # Contrainte sur l'écart train-val
+
+                constraint_ecart = max(0, ecart_train_val - constraint_ecart_train_val)
+
+                # Contrainte sur le nombre minimal de trades par fold
+                min_trades = min(nb_trades_by_fold_list) if isinstance(nb_trades_by_fold_list, list) else float('inf')
+                min_winrate = min(winrates_by_fold) if isinstance(winrates_by_fold, list) else float('inf')
+
+                constraint_min_trades = max(0, constraint_min_trades_threshold_by_Fold - min_trades)
+                constraint_winrates_by_fold = max(0, constraint_winrates_by_fold - min_winrate)
+
+
+                constraints = [
+                    constraint_ecart,  # Contrainte 1: écart train-val
+                    constraint_min_trades,  # Contrainte 2: nombre minimal de trades
+                    constraint_winrates_by_fold,  # Contrainte 3: min min_winrate
+
+                ]
+
+                return constraints
+
+            return constraints_func
+        sampler = optuna.samplers.TPESampler(
+            seed=42,
+            constraints_func=create_constraints_func() if config.get('use_optuna_constraints_func', False) else None
+        )
         study_xgb = optuna.create_study(
             direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=42),
+            sampler=sampler,
             pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)
         )
     else:
@@ -1573,14 +1082,21 @@ def train_and_evaluate_XGBOOST_model(
             sampler=optuna.samplers.NSGAIISampler(seed=42),
             pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)
         )
+
+    # Créer une fonction wrapper pour le callback qui inclut optuna
+    def callback_wrapper(study, trial):
+        return callback_optuna(study, trial, optuna, study_xgb, rfe_param, config, modele_param_optuna_range,
+                               results_directory)
+
+
+    # Lancer l'optimisation avec le wrapper
+
     # Lancer l'optimisation
     study_xgb.optimize(
         lambda trial: objective_wrapper(trial, study_xgb, metric_dict),
         n_trials=n_trials_optimization,
-        callbacks=[callback_optuna],
+        callbacks=[callback_wrapper],
     )
-    end_time = time.time()
-    execution_time = end_time - start_time
 
     bestResult_dict = study_xgb.user_attrs['bestResult_dict']
 
@@ -1588,24 +1104,23 @@ def train_and_evaluate_XGBOOST_model(
     best_params = bestResult_dict["best_params"]
     selected_feature_names = bestResult_dict["selected_feature_names"]
     rfe_param_value = bestResult_dict["use_of_rfe_in_optuna"]
-
-    print(f"\nTemps d'exécution total : {execution_time:.2f} secondes")
     print("#################################")
     print("#################################")
     print(
         f"## Optimisation Optuna terminée avec distance euclidienne. Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
     print(f"## Meilleurs hyperparamètres trouvés: ", best_params)
-    if (rfe_param_value != rfe_param.NO_RFE):
-        feature_names = selected_feature_names
-        print(
-            f"## Nb des features lectionnées par RFECE({len(selected_feature_names)}) : {list(selected_feature_names)}")
-    print(f"##       - Rappel avant RFECE nombre de feature: {len(X_train.columns)}")
+    #if (rfe_param_value != rfe_param.NO_RFE):
+       # feature_names = selected_feature_names
+    #     print(
+    #       f"## Nb des features lectionnées par RFECE({len(selected_feature_names)}) : {list(selected_feature_names)}")
+   # print(f"##       - Rappel avant RFECE nombre de feature: {len(X_train.columns)}")
 
     optimal_threshold = best_params['threshold']
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])
     if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) != optuna_doubleMetrics.DISABLE:
-        print("## Meilleur score Objective 2 (winrate_diff_norm_objective): ", bestResult_dict["winrate_diff_norm_objective"])
+        print("## Meilleur score Objective 2 (ecart_train_val): ",
+              bestResult_dict["ecart_train_val"])
     print("#################################")
     print("#################################\n")
 
@@ -1613,18 +1128,43 @@ def train_and_evaluate_XGBOOST_model(
 
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
 
+    """
+    if cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
+        if 'session_type_index' not in selected_columns:
+            feature_names.remove('session_type_index')
+            # Vérification pour session_type_index
+            if 'session_type_index' in X_train.columns and 'session_type_index' in X_test.columns:
+                X_train.drop('session_type_index', axis=1, inplace=True)
+                X_test.drop('session_type_index', axis=1, inplace=True)
+
+    # Vérifie si les colonnes sont identiques
+    if not set(X_train.columns) == set(selected_columns) or not set(X_test.columns) == set(selected_columns):
+        raise ValueError(
+            f"Les colonnes ne correspondent pas:\nColonnes attendues: {sorted(selected_columns)}\nColonnes X_train: {sorted(X_train.columns)}\nColonnes X_test: {sorted(X_test.columns)}")
+    """
+
+    # Réduire X_train à seulement les colonnes sélectionnées
+    use_of_rfe_in_optuna = config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE)
+
+    #if (use_of_rfe_in_optuna!=rfe_param.NO_RFE): # retrive best parameter form optuma ussing RFE
+    print(selected_feature_names)
+    X_train = X_train[selected_feature_names]
+    X_test = X_test[selected_feature_names]
+
     # Créer les DMatrix pour l'entraînement
     sample_weights_train = compute_sample_weight('balanced', y=y_train_label)
+    print(X_train)
     dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights_train)
 
     # Créer les DMatrix pour le test
     dtest = xgb.DMatrix(X_test, label=y_test_label)
 
-
-    train_finalModel_analyse(xgb=xgb, X_train=X_train, X_test=X_test, y_train_label=y_train_label,
+    train_finalModel_analyse(xgb=xgb,
+                             X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
+                             y_train_label=y_train_label,
                              y_test_label=y_test_label,
                              dtrain=dtrain, dtest=dtest,
-                             nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=feature_names,
+                             nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
                              best_params=best_params, config=config, weight_param=weight_param,
                              user_input=user_input)
 
@@ -1635,11 +1175,17 @@ if __name__ == "__main__":
     check_gpu_availability()
 
     if ENV == 'pycharm':
+        FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorized_oldclean.csv"
         FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-        FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-        #FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorizedScaledWithNanVal.csv"
-        # FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat.csv"
-        DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_6TP_1SL\merge"
+        # FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorizedScaledWithNanVal.csv"
+        #FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
+        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+
+        DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
 
     FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
     directories = DIRECTORY_PATH_.split(os.path.sep)
@@ -1669,26 +1215,48 @@ if __name__ == "__main__":
     # Configuration
     config = {
         'target_directory': target_directory,
-        'optuna_options_method': optuna_options.USE_OPTIMA_CUSTOM_METRIC_PROFITBASED,
+        'xgb_metric_method': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED,
         'device_': 'cuda',
-        'n_trials_optuna': 2000,
-        'nb_split_tscv_': 7,
+        'n_trials_optuna': 3000,
+        'nb_split_tscv_': 6,
+        'test_size_ratio':0.15,
         'nanvalue_to_newval_': np.nan,
-        'learning_curve_enabled': False,
         'random_state_seed': 35,
-        'early_stopping_rounds': 50,
-        'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
+        'early_stopping_rounds': 60,
+        #'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
         'results_directory': os.path.join(base_results_path, target_directory),
-        'preShapImportance': 1,
-        'cv_method': cv_config.TIME_SERIE_SPLIT, #cv_config.K_FOLD, #,TIME_SERIE_SPLIT
-        'weightPareto_pnl_val': 0.7,
-        'weightPareto_pnl_diff': 0.3,
+        'cv_method': cv_config.TIME_SERIE_SPLIT,  # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED
+        'non_acnhored_val_ratio':0.5,
+        'weightPareto_pnl_val': 0.4,
+        'weightPareto_pnl_diff': 0.6,
         'use_of_rfe_in_optuna': rfe_param.NO_RFE,
         'min_features_if_RFE_AUTO': 3,
-        'optuna_objective_type': optuna_doubleMetrics.USE_DIST_TO_IDEAL
+        'optuna_objective_type': optuna_doubleMetrics.DISABLE, #USE_DIST_TO_IDEAL,
+        'use_optuna_constraints_func':True,
+        'constraint_min_trades_threshold_by_Fold': 25,
+        'constraint_ecart_train_val': 0.25,
+        'constraint_winrates_by_fold':0.53,
+        'use_imbalance_penalty': False,
+        'is_log_enabled': False,
+        'enable_vif_corr_mi':False,
+        'vif_threshold' : 15,
+        'corr_threshold' : 1,
+        'mi_threshold': 0.001,
+        'scaler_choice': scalerChoice.SCALER_DISABLE,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD
+        'modele_type': modeleType.XGB
     }
 
+    if (config['use_optuna_constraints_func'] == True and
+            config['optuna_objective_type'] != optuna_doubleMetrics.DISABLE):
+        raise ValueError(
+            "Configuration invalide : Impossible d'utiliser à la fois les contraintes Optuna "
+            "et l'optimisation multi-objectif. "
+            "Si use_optuna_constraints_func=True, alors optuna_objective_type "
+            "doit être optuna_doubleMetrics.DISABLE"
+        )
+
     results_directory = config.get('results_directory', None)
+    user_input = ''
     """
 
     user_input = input(
@@ -1706,7 +1274,7 @@ if __name__ == "__main__":
         exit(35)
     """
 
-        # Créer le répertoire s'il n'existe pas
+    # Créer le répertoire s'il n'existe pas
     os.makedirs(results_directory, exist_ok=True)
 
     # Vérifier si le répertoire existe déjà
@@ -1724,15 +1292,15 @@ if __name__ == "__main__":
     # Définir les paramètres supplémentaires
 
     weight_param = {
-        'threshold': {'min': 0.51, 'max': 0.70},  # total_trades_val = tp + fp
-        'w_p': {'min': 1.2, 'max': 2.2},  # poid pour la class 1 dans objective
-        'w_n': {'min': 1, 'max': 1},  # poid pour la class 0 dans objective
-        'profit_per_tp': {'min': 1.5, 'max': 1.5},  # fixe, dépend des profits par trade
-        'loss_per_fp': {'min': -1.1, 'max': -1.1},  # fixe, dépend des pertes par trade
-        'penalty_per_fn': {'min': -0.000, 'max': -0.000},
+        'threshold': {'min': 0.50, 'max': 0.65},  # total_trades_val = tp + fp
+        'w_p': {'min': 0.8, 'max': 2},  # poid pour la class 1 dans objective
+        'w_n': {'min': 0.7, 'max': 1.5},  # poid pour la class 0 dans objective
+        'profit_per_tp': {'min': 1.25, 'max': 1.25},  # fixe, dépend des profits par trade
+        'loss_per_fp': {'min': -1.25, 'max': -1.25},  # fixe, dépend des pertes par trade
+        'penalty_per_fn': {'min': 0, 'max': 0},
         'weight_split': {'min': 0.65, 'max': 0.65},
         'nb_split_weight': {'min': 0, 'max': 0},  # si 0, pas d'utilisation de weight_split
-        'std_penalty_factor': {'min': 0.15, 'max': 0.15}
+        'std_penalty_factor': {'min': 0, 'max': 0}
 
     }
 
@@ -1740,197 +1308,180 @@ if __name__ == "__main__":
     # 'win_rate_weight': {'min': 0.45, 'max': 0.45},  # win_rate = tp / total_trades_val if total_trades_val
     # 'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades_val / total_samples
 
-    xgb_param_optuna_range = {
-        'num_boost_round': {'min': 200, 'max': 650},  # Étendre vers le haut
+    modele_param_optuna_range = {
+        'num_boost_round': {'min': 500, 'max': 1000},  # Étendre vers le haut
 
-        'max_depth': {'min': 4, 'max': 7},  # Étendre vers le haut
+        'max_depth': {'min': 6, 'max': 10},  # Étendre vers le haut
 
-        'learning_rate': {'min': 0.015, 'max': 0.035,  # Resserrer autour de 0.025
+        'learning_rate': {'min': 0.001, 'max': 0.009,  # Resserrer autour de 0.025
                           'log': True},
 
         'min_child_weight': {'min': 1, 'max': 4},  # Resserrer vers le bas
 
-        'subsample': {'min': 0.35, 'max': 0.65},  # Resserrer autour de 0.57
+        'subsample': {'min': 0.45, 'max': 0.75},  # Resserrer autour de 0.57
 
-        'colsample_bytree': {'min': 0.80, 'max': 0.95},  # Resserrer vers le haut
+        'colsample_bytree': {'min': 0.6, 'max': 0.80},  # Resserrer vers le haut
 
-        'colsample_bylevel': {'min': 0.45, 'max': 0.65},  # Étendre vers le bas
+        'colsample_bylevel': {'min': 0.4, 'max': 0.6},  # Étendre vers le bas
 
-        'colsample_bynode': {'min': 0.80, 'max': 0.95},  # Resserrer vers le haut
+        'colsample_bynode': {'min': 0.65, 'max': 0.95},  # Resserrer vers le haut
 
-        'gamma': {'min': 2, 'max': 6},  # Resserrer autour de 4.18
+        'gamma': {'min': 5, 'max': 13},  # Resserrer autour de 4.18
 
-        'reg_alpha': {'min': 1, 'max': 4,  # Resserrer vers le bas
+        'reg_alpha': {'min': 1, 'max': 2,  # Resserrer vers le bas
                       'log': True},
 
-        'reg_lambda': {'min': 0.2, 'max': 4,  # Resserrer vers le bas
+        'reg_lambda': {'min': 0.1, 'max': 0.9,  # Resserrer vers le bas
                        'log': True}
     }
 
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
     file_path = FILE_PATH_
     if ENV == 'pycharm':
-        df = load_data(file_path)
+        #df_init = load_data(file_path)
+        df_init, CUSTOM_SESSIONS = load_features_and_sections(file_path)
+
+    print("\nContenu de CUSTOM_SESSIONS (format tabulé) :")
+    print(f"{'Section':<15} {'Start':>6} {'End':>6} {'Type':>6} {'Selected':>8} {'Description':<20}")
+    print("-" * 70)
+    for section, data in CUSTOM_SESSIONS.items():
+        print(f"{section:<15} {data['start']:>6} {data['end']:>6} {data['session_type_index']:>6} "
+              f"{str(data['selected']):>8} {data['description']:<20}")
+
     print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-
-
     # Utilisation
-    selected_sessions = [
+    # Définition des sections personnalisées
+    print("df_init: ")
+    zeros = (df_init['class_binaire'] == 0).sum()
+    ones = (df_init['class_binaire'] == 1).sum()
+    total = zeros + ones
+    print(f"   - Dimensions de df_init: {df_init.shape} (lignes, colonnes)")
+    print(
+        f"   - Distribution des trades df_init - Échecs (0): {zeros} ({zeros / total * 100:.1f}%), Réussis (1): {ones} ({ones / total * 100:.1f}%), Total: {total}")
 
-    ]
-    print(df)
-
-    time_periods_dict = {
-        'Opening': {
-            'start': 0,
-            'end': 65,
-            'selected': False,  # ou 'active': False
-            'description': "22:00-23:05"
-        },
-        'Asie': {
-            'start': 65,
-            'end': 535,
-            'selected': True,
-            'description': "23:05-6:55"
-        },
-        'MonningEurope': {
-            'start': 535,
-            'end': 865,
-            'selected': True,
-            'description': "6:55-12:25"
-        },
-        'MoringUS': {
-            'start': 865,
-            'end': 1065,
-            'selected': False,
-            'description': "12:25-15:45"
-        },
-        'AfternonUS': {
-            'start': 1065,
-            'end': 1195,
-            'selected': False,
-            'description': "15:45-17:55"
-        },
-        'Evening': {
-            'start': 1195,
-            'end': 1280,
-            'selected': True,
-            'description': "17:55-19:20"
-        },
-        'Close': {
-            'start': 1280,
-            'end': 1380,
-            'selected': True,
-            'description': "19:20-21:00"
-        }
-    }
-
-    df_filtered = sessions_selection(df, selected_sessions, CUSTOM_SECTIONS,time_periods_dict=time_periods_dict)
-
-    # Pour vérifier
-    print("\nDistribution de class_binaire après filtrage:")
-    print(df_filtered['class_binaire'].value_counts())
-
-    print(f"Nb de features avant  selection: {len(df.columns)}\n")
+    print(f"   - Nb de features avant  selection manuelle: {len(df_init.columns)}\n")
 
     # Définition des colonnes de features et des colonnes exclues
-    excluded_columns = [
-        # 'class_binaire', 'date', 'trade_category','SessionStartEnd',
+    excluded_columns_principal = [
+        'class_binaire', 'date', 'trade_category',
+        'SessionStartEnd',
 
         'timeStampOpening',
         'deltaTimestampOpening',
         'candleDir',
-        # 'deltaTimestampOpeningSection1min',
-        'deltaTimestampOpeningSection1index',
-        # 'deltaTimestampOpeningSection5min',
-        'deltaTimestampOpeningSection5index',
-        # 'deltaTimestampOpeningSection15min',
-        'deltaTimestampOpeningSection15index',
-        # 'deltaTimestampOpeningSection30min',
-        'deltaTimestampOpeningSection30index',
-        # 'deltaCustomSectionMin',
-        'deltaCustomSectionIndex',
+        # 'deltaTimestampOpeningSession1min', bear_imbalance_high_3 4.49 NAN
+        'deltaTimestampOpeningSession1index',
+        'deltaTimestampOpeningSession5min',
+        'deltaTimestampOpeningSession5index',
+        'deltaTimestampOpeningSession15min',
+        'deltaTimestampOpeningSession15index',
+        'deltaTimestampOpeningSession30min',
+        'deltaTimestampOpeningSession30index',
+        'deltaCustomSessionMin',
+        'deltaCustomSessionIndex',
         'meanVolx',
         'total_count_abv',
         'total_count_blw',
-        # 'extrem_ask_bid_imbalance_bearish_extrem',  # nan  51.64
-        # 'extrem_asc_dsc_comparison_bearish_extrem',  # nan 54.89
-        # 'bearish_extrem_abs_ratio_extrem',  # nan 54.27
-        # 'extrem_asc_dsc_comparison_bearish_extrem',  # nan  54.89
-        # 'bearish_extrem_pressure_ratio_extrem',  # nan 51.62
-        # 'bearish_continuation_vs_reversal_extrem',  # nan 50.69
-        # 'bearish_repeat_ticks_ratio_extrem',  # nan 50.69
         'staked00_high',
         'staked00_low',
-        # 'diffPriceCloseVWAPbyIndex', #redondant avec vwap
-        # 'extrem_asc_ratio_bullish_extrem',#bas de classement shap
-        # 'extrem_dsc_ratio_bullish_extrem',#bas de classement shap
-        # 'extrem_zone_significance_bullish_extrem',#bas de classement shap
-        # 'extrem_ask_bid_imbalance_bullish',#bas de classement shap
-        # 'extrem_asc_dsc_comparison_bullish_extrem',#bas de classement shap
-        # 'bullish_continuation_vs_reversal_extrem',#bas de classement shap
-        # 'bullish_extrem_revIntensity_ratio_extrem',#bas de classement shap
-        # 'bullish_extrem_zone_volume_ratio_extrem',#bas de classement shap
-        # 'bullish_extrem_pressure_ratio_extrem',#bas de classement shap
-        # 'bullish_extrem_abs_ratio_extrem',#bas de classement shap
-        # 'bullish_extrem_vs_rest_activity_extrem',#bas de classement shap
-        # 'bullish_repeat_ticks_ratio_extrem',#bas de classement shap
-        # 'is_in_range_10_32',#bas de classement shap
-        # 'is_in_range_5_23', #bas de classement shap
-        # 'bullish_repeatAskBid_ratio', #haut du classement mais interessaction plus faibles avec d'autres variables, summary shap plot peu informatif
+       # 'bear_imbalance_high_3', ## 4.8 % de NAN
+        #'bull_imbalance_high_0', #7.8%
+        #'bearish_absorption_ratio' #2.8nan,
+
+
     ]
-    selected_columns = [col for col in df.columns if col not in excluded_columns
-                        and '_special' not in col
-                        and '_6Tick' not in col
-                        and 'BigHigh' not in col
-                        and 'bigHigh' not in col
-                        and 'big' not in col
-                        and 'Big' not in col
-                        and 'state' not in col
-                        and 'State' not in col
-                        ]
+    excluded_columns_tradeDirection= [
+        'bullish_ask_bid_ratio',
+        'bullish_ask_ratio',
+        'bullish_bid_ratio',
+        'bullish_ask_score',
+        'bullish_bid_score',
+        'bullish_imnbScore_score',
+        'bullish_ask_abs_ratio_blw',
+        'bullish_bid_abs_ratio_blw',
+        'bullish_abs_diff_blw',
+        'bullish_asc_dsc_ratio',
+        'bullish_asc_dynamics',
+        'bullish_dsc_dynamics',
+        'bullish_asc_ask_bid_imbalance',
+        'bullish_dsc_ask_bid_imbalance',
+        'bullish_imbalance_evolution',
+        'bullish_asc_ask_bid_delta_imbalance',
+        'bullish_dsc_ask_bid_delta_imbalance',
+        'bullish_absorption_ratio',
+        'absorption_intensity_repeat_bullish_vol',
+        'bullish_absorption_intensity_repeat_count',
+        'bullish_repeatAskBid_ratio',
+        'bullish_absorption_score',
+        'bullish_market_context_score',
+        'bullish_combined_pressure',
+      # 'naked_poc_dist_above',
+        'bull_imbalance_low_1',
+        'bull_imbalance_low_2',
+        'bull_imbalance_low_3',
+        'bear_imbalance_low_0',
+        'bear_imbalance_low_1',
+        'bear_imbalance_low_2',
+        ]
+
+    excluded_columns_CorrCol = [
+    ]
+
+    # Liste des catégories à exclure
+    excluded_categories = [
+        '_special',
+        '_6Tick',
+        'BigHigh',
+        'bigHigh',
+        'big',
+        'Big',
+        'state',
+        'State',
+        'extrem',
+        'Extrem'
+        "bullish"
+    ]
+
+    # Créer la liste des colonnes à exclure
+    excluded_columns_category = [
+        col for col in df_init.columns
+        if any(category in col for category in excluded_categories)
+    ]
+
+    print(excluded_columns_category)
+    excluded_columns = excluded_columns_principal + excluded_columns_tradeDirection+excluded_columns_CorrCol+excluded_columns_category
+
+    # ajoute les colonnes pour retraitement ultérieurs
+    df_init = add_session_id(df_init, CUSTOM_SESSIONS)
+    # Sélectionner les colonnes qui ne sont pas dans excluded_columns
+    selected_columns = [col for col in df_init.columns if col not in excluded_columns]
 
     selected_columnsByFiltering = [
-        # Variables actives - non commentées
 
     ]
 
     if selected_columnsByFiltering != []:
         selected_columns = selected_columnsByFiltering  # Assigne les colonnes filtrées à selected_columns
+        config.update({
+            'enable_vif_corr_mi': False})
 
-    print(f"Nb de features après exlusion: {len(selected_columns)}\n")
 
-    # Affichage des informations sur les NaN et zéros dans chaque colonne
-    print(f"\nAnalyses détaillée des features selectionnées:")
-    print("=" * 100)
-    print(f"{'Feature':<50} {'NaN Count':>10} {'NaN%':>8} {'Zeros%':>8} {'NaN+Zeros%':>12}")
-    print("-" * 100)
+    config.update({
+        'excluded_columns_principal':excluded_columns_principal ,
+        'excluded_columns_tradeDirection':excluded_columns_tradeDirection ,
+        'excluded_columns_CorrCol': excluded_columns_CorrCol,
+        'excluded_columns_category': excluded_columns_category,
+        'selected_columns':selected_columns
+    })
 
-    for column in selected_columns:
-        nan_count = df[column].isna().sum()
-        nan_percentage = (nan_count / len(df)) * 100
-
-        try:
-            zeros_count = (df[column] == 0).sum()
-            zeros_percentage = (zeros_count / len(df)) * 100
-        except:
-            zeros_percentage = 0
-
-        total_percentage = nan_percentage + zeros_percentage
-
-        print(f"{column:<50} {nan_count:>10} {nan_percentage:>8.2f} {zeros_percentage:>8.2f} {total_percentage:>12.2f}")
-
-    print("\nRésumé:")
-    print(f"Nombre total de features sélectionnées: {len(selected_columns)}")
-    print(f"Nombre total d'échantillons: {len(df)}")
 
     results = train_and_evaluate_XGBOOST_model(
-        df=df,
-        config=config,  # Pass the config here
-        xgb_param_optuna_range=xgb_param_optuna_range,
-        selected_columns=selected_columns,
-      #  user_input=user_input,
+        df_init=df_init,
+        config=config,
+        modele_param_optuna_range=modele_param_optuna_range,
+        user_input=user_input,
         weight_param=weight_param,
+        CUSTOM_SECTIONS=CUSTOM_SESSIONS
     )
 
     if results is not None:

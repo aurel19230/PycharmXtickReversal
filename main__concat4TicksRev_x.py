@@ -2,8 +2,8 @@ import os
 import csv
 import time
 import pandas as pd
-import standardFunc
-from standardFunc import timestamp_to_date_utc,date_to_timestamp_utc
+import standardFunc_sauv
+from standardFunc_sauv import timestamp_to_date_utc,date_to_timestamp_utc
 # Entrées utilisateur
 folder_path = 'C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/data_simuNew/4_0_4TP_1SL/merge'
 output_file_name = '_4TicksRev.csv'

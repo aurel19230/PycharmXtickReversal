@@ -1,5 +1,5 @@
 import pandas as pd
-from standardFunc import load_data, split_sessions, print_notification
+from standardFunc_sauv import load_data, split_sessions, print_notification
 from decimal import Decimal
 
 def identify_sessions(df):

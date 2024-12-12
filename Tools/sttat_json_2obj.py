@@ -2,7 +2,7 @@ import json
 import os
 import tkinter as tk
 from tkinter import filedialog
-from standardFunc import load_data, train_finalModel_analyse, init_dataSet
+from standardFunc_sauv import load_data, train_finalModel_analyse, init_dataSet
 import xgboost as xgb
 
 

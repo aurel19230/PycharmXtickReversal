@@ -1,4 +1,4 @@
-from standardFunc import load_data, split_sessions, print_notification,calculate_and_display_sessions
+from standardFunc_sauv import load_data, split_sessions, print_notification,calculate_and_display_sessions
 import os
 import pandas as pd
 import numpy as np

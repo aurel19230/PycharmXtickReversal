@@ -3,7 +3,7 @@ import numpy as np
 import os
 import time
 from numba import jit
-from standardFunc import load_data
+from standardFunc_sauv import load_data
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -13,6 +13,9 @@ TIME_PERIODS = {
     'AsieEurope': (80, 800),
     'US': (800, 24 * 60)
 }
+
+# Variable globale pour contrôler l'affichage des plots
+SHOW_PLOTS = False
 
 
 def timestamp_to_date_utc_(timestamp):
@@ -28,14 +31,12 @@ def calculate_trade_stats(trade_dir, trade_result):
     """Calcule les statistiques de trades pour un segment donné"""
     success = 0
     failure = 0
-
     for d, r in zip(trade_dir, trade_result):
         if d == 1:  # Long trades
             if r == 1:
                 success += 1
             elif r == -1:
                 failure += 1
-
     return success, failure
 
 
@@ -46,7 +47,6 @@ def calculate_split_stats(trade_dir, trade_result):
     long_failure = 0
     short_success = 0
     short_failure = 0
-
     for d, r in zip(trade_dir, trade_result):
         if d == 1:  # Long trades
             if r == 1:
@@ -58,7 +58,6 @@ def calculate_split_stats(trade_dir, trade_result):
                 short_success += 1
             elif r == -1:
                 short_failure += 1
-
     return long_success, long_failure, short_success, short_failure
 
 
@@ -75,7 +74,6 @@ def calculate_global_stats(trade_dir, trade_result):
     long_failure = 0
     short_success = 0
     short_failure = 0
-
     for d, r in zip(trade_dir, trade_result):
         if d == 1:  # Long trades
             if r == 1:
@@ -87,10 +85,8 @@ def calculate_global_stats(trade_dir, trade_result):
                 short_success += 1
             elif r == -1:
                 short_failure += 1
-
     long_ratio = float('inf') if long_failure == 0 else long_success / long_failure
     short_ratio = float('inf') if short_failure == 0 else short_success / short_failure
-
     return long_success, long_failure, short_success, short_failure, long_ratio, short_ratio
 
 
@@ -102,129 +98,12 @@ def calculate_winrates(df, trade_type='all'):
         df_filtered = df[df['tradeDir'] == -1]
     else:
         df_filtered = df
-
     df_filtered = df_filtered[df_filtered['tradeResult'] != 99]
     if len(df_filtered) == 0:
         return 0
-
     wins = len(df_filtered[df_filtered['tradeResult'] == 1])
     total = len(df_filtered)
     return (wins / total * 100)
-
-
-def analyze_volume_and_trades_distribution(df, title_prefix=""):
-    """Analyse complète de la distribution des volumes et trades par période"""
-    total_volume = df['volume'].sum()
-    total_trades = len(df[df['tradeResult'] != 99])
-
-    distribution_stats = {
-        'total': {
-            'volume': total_volume,
-            'trades': total_trades,
-            'volume_per_trade': total_volume / total_trades if total_trades > 0 else 0
-        }
-    }
-
-    print(f"\n{title_prefix}Analyse de la distribution des volumes et trades:")
-    print("=" * 80)
-    print(f"Volume total: {total_volume:,.0f}")
-    print(f"Nombre total de trades: {total_trades:,}")
-    print(f"Volume moyen par trade: {(total_volume / total_trades if total_trades > 0 else 0):,.2f}")
-
-    for period_name, (start_time, end_time) in TIME_PERIODS.items():
-        period_df = df[(df['deltaTimestampOpening'] >= start_time) &
-                       (df['deltaTimestampOpening'] < end_time)]
-        period_volume = period_df['volume'].sum()
-        period_trades = len(period_df[period_df['tradeResult'] != 99])
-
-        stats = {
-            'volume': period_volume,
-            'volume_pct': (period_volume / total_volume * 100),
-            'trades': period_trades,
-            'trades_pct': (period_trades / total_trades * 100) if total_trades > 0 else 0,
-            'volume_per_trade': period_volume / period_trades if period_trades > 0 else 0
-        }
-
-        distribution_stats[period_name] = stats
-
-        print(f"\n{period_name}:")
-        print(f"  Volume: {period_volume:,.0f} ({stats['volume_pct']:.2f}%)")
-        print(f"  Trades: {period_trades:,} ({stats['trades_pct']:.2f}%)")
-        print(f"  Volume moyen par trade: {stats['volume_per_trade']:,.2f}")
-
-    create_volume_trade_visualizations(distribution_stats, title_prefix)
-
-    return distribution_stats
-
-
-def create_volume_trade_visualizations(stats, title_prefix=""):
-    """Crée les visualisations pour l'analyse des volumes et trades"""
-    periods = [period for period in stats.keys() if period != 'total']
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
-
-    # Camembert des volumes
-    volume_sizes = [stats[period]['volume_pct'] for period in periods]
-    volume_labels = [f"{period}\n{stats[period]['volume_pct']:.1f}%" for period in periods]
-    ax1.pie(volume_sizes, labels=volume_labels, autopct='%1.1f%%', startangle=90)
-    ax1.set_title(f'{title_prefix}Distribution du Volume par Période')
-
-    # Barres comparatives volumes vs trades
-    x = np.arange(len(periods))
-    width = 0.35
-
-    volume_pcts = [stats[period]['volume_pct'] for period in periods]
-    trade_pcts = [stats[period]['trades_pct'] for period in periods]
-
-    rects1 = ax2.bar(x - width / 2, volume_pcts, width, label='% Volume')
-    rects2 = ax2.bar(x + width / 2, trade_pcts, width, label='% Trades')
-
-    ax2.set_ylabel('Pourcentage')
-    ax2.set_title(f'{title_prefix}Comparaison Volume vs Trades')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(periods)
-    ax2.legend()
-
-    def autolabel(rects):
-        for rect in rects:
-            height = rect.get_height()
-            ax2.annotate(f'{height:.1f}%',
-                         xy=(rect.get_x() + rect.get_width() / 2, height),
-                         xytext=(0, 3),
-                         textcoords="offset points",
-                         ha='center', va='bottom')
-
-    autolabel(rects1)
-    autolabel(rects2)
-
-    plt.tight_layout()
-    plt.show()
-
-
-def create_comparative_volume_analysis(all_stats, split_indices):
-    """Crée une visualisation comparative des volumes entre les splits"""
-    periods = [period for period in all_stats[0].keys() if period != 'total']
-    n_splits = len(all_stats)
-
-    fig, ax = plt.subplots(figsize=(15, 8))
-
-    x = np.arange(len(periods))
-    width = 0.8 / n_splits
-
-    for i, (stats, split_idx) in enumerate(zip(all_stats, split_indices)):
-        volume_pcts = [stats[period]['volume_pct'] for period in periods]
-        offset = width * i - width * (n_splits - 1) / 2
-        bars = ax.bar(x + offset, volume_pcts, width,
-                      label=f'Split {split_idx}')
-
-    ax.set_ylabel('Pourcentage du Volume')
-    ax.set_title('Distribution du Volume par Période et par Split')
-    ax.set_xticks(x)
-    ax.set_xticklabels(periods)
-    ax.legend()
-
-    plt.tight_layout()
-    plt.show()
 
 
 def analyze_period_winrates(df, period_name, start_time, end_time):
@@ -262,10 +141,133 @@ def print_period_stats(stats):
     print(f"PnL moyen: {stats['avg_pnl']:.2f}")
 
 
-def plot_winrates(global_stats, title="Analyse des Winrates"):
-    """Création des visualisations des winrates"""
-    periods = [stat['period'] for stat in global_stats if stat is not None]
+def analyze_volume_and_trades_distribution(df, title_prefix="", show_plots=False):
+    """Analyse complète de la distribution des volumes et trades par période"""
+    total_volume = df['volume'].sum()
+    total_trades = len(df[df['tradeResult'] != 99])
 
+    distribution_stats = {
+        'total': {
+            'volume': total_volume,
+            'trades': total_trades,
+            'volume_per_trade': total_volume / total_trades if total_trades > 0 else 0
+        }
+    }
+
+    print(f"\n{title_prefix}Analyse de la distribution des volumes et trades:")
+    print("=" * 80)
+    print(f"Volume total: {total_volume:,.0f}")
+    print(f"Nombre total de trades: {total_trades:,}")
+    print(f"Volume moyen par trade: {(total_volume / total_trades if total_trades > 0 else 0):,.2f}")
+
+    for period_name, (start_time, end_time) in TIME_PERIODS.items():
+        period_df = df[(df['deltaTimestampOpening'] >= start_time) &
+                       (df['deltaTimestampOpening'] < end_time)]
+        period_volume = period_df['volume'].sum()
+        period_trades = len(period_df[period_df['tradeResult'] != 99])
+
+        stats = {
+            'volume': period_volume,
+            'volume_pct': (period_volume / total_volume * 100),
+            'trades': period_trades,
+            'trades_pct': (period_trades / total_trades * 100) if total_trades > 0 else 0,
+            'volume_per_trade': period_volume / period_trades if period_trades > 0 else 0
+        }
+
+        distribution_stats[period_name] = stats
+
+        #print(f"\n{period_name}:")
+        #print(f"  Volume: {period_volume:,.0f} ({stats['volume_pct']:.2f}%)")
+        #print(f"  Trades: {period_trades:,} ({stats['trades_pct']:.2f}%)")
+        #print(f"  Volume moyen par trade: {stats['volume_per_trade']:,.2f}")
+
+    if SHOW_PLOTS:
+        create_volume_trade_visualizations(distribution_stats, title_prefix)
+
+    return distribution_stats
+
+
+def create_volume_trade_visualizations(stats, title_prefix="", show_plots=False):
+    """Crée les visualisations pour l'analyse des volumes et trades"""
+    if not SHOW_PLOTS:
+        return
+
+    periods = [period for period in stats.keys() if period != 'total']
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+
+    # Camembert des volumes
+    volume_sizes = [stats[period]['volume_pct'] for period in periods]
+    volume_labels = [f"{period}\n{stats[period]['volume_pct']:.1f}%" for period in periods]
+    ax1.pie(volume_sizes, labels=volume_labels, autopct='%1.1f%%', startangle=90)
+    ax1.set_title(f'{title_prefix}Distribution du Volume par Période')
+
+    # Barres comparatives volumes vs trades
+    x = np.arange(len(periods))
+    width = 0.35
+
+    volume_pcts = [stats[period]['volume_pct'] for period in periods]
+    trade_pcts = [stats[period]['trades_pct'] for period in periods]
+
+    rects1 = ax2.bar(x - width / 2, volume_pcts, width, label='% Volume')
+    rects2 = ax2.bar(x + width / 2, trade_pcts, width, label='% Trades')
+
+    ax2.set_ylabel('Pourcentage')
+    ax2.set_title(f'{title_prefix}Comparaison Volume vs Trades')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(periods)
+    ax2.legend()
+
+    def autolabel(rects):
+        for rect in rects:
+            height = rect.get_height()
+            ax2.annotate(f'{height:.1f}%',
+                         xy=(rect.get_x() + rect.get_width() / 2, height),
+                         xytext=(0, 3),
+                         textcoords="offset points",
+                         ha='center', va='bottom')
+
+    autolabel(rects1)
+    autolabel(rects2)
+
+    plt.tight_layout()
+    if SHOW_PLOTS:
+        plt.show()
+
+
+def create_comparative_volume_analysis(all_stats, split_indices, show_plots=False):
+    """Crée une visualisation comparative des volumes entre les splits"""
+    if not SHOW_PLOTS:
+        return
+
+    periods = [period for period in all_stats[0].keys() if period != 'total']
+    n_splits = len(all_stats)
+
+    fig, ax = plt.subplots(figsize=(15, 8))
+    x = np.arange(len(periods))
+    width = 0.8 / n_splits
+
+    for i, (stats, split_idx) in enumerate(zip(all_stats, split_indices)):
+        volume_pcts = [stats[period]['volume_pct'] for period in periods]
+        offset = width * i - width * (n_splits - 1) / 2
+        bars = ax.bar(x + offset, volume_pcts, width, label=f'Split {split_idx}')
+
+    ax.set_ylabel('Pourcentage du Volume')
+    ax.set_title('Distribution du Volume par Période et par Split')
+    ax.set_xticks(x)
+    ax.set_xticklabels(periods)
+    ax.legend()
+
+    plt.tight_layout()
+    if SHOW_PLOTS:
+        plt.show()
+
+
+def plot_winrates(global_stats, title="Analyse des Winrates", show_plots=False):
+    """Création des visualisations des winrates"""
+    if not SHOW_PLOTS:
+        return
+
+    periods = [stat['period'] for stat in global_stats if stat is not None]
     data = {
         'Long': [stat['long_winrate'] for stat in global_stats if stat is not None],
         'Short': [stat['short_winrate'] for stat in global_stats if stat is not None],
@@ -288,22 +290,55 @@ def plot_winrates(global_stats, title="Analyse des Winrates"):
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    if SHOW_PLOTS:
+        plt.show()
 
 
-def analyze_splits(nb_split=10, ratio_up=1.5, ratio_down=0.5):
+def print_split_metrics(split_df, global_long_ratio, global_short_ratio, ratio_up, ratio_down):
+    """Affiche les métriques détaillées d'un split avec les ratios"""
+    # Calcul des limites
+    long_upper_limit = global_long_ratio * ratio_up
+    long_lower_limit = global_long_ratio * ratio_down
+    short_upper_limit = global_short_ratio * ratio_up
+    short_lower_limit = global_short_ratio * ratio_down
+
+    # Calcul des ratios du split
+    trade_dir = split_df['tradeDir'].values
+    trade_result = split_df['tradeResult'].values
+    long_success, long_failure, short_success, short_failure = calculate_split_stats(trade_dir, trade_result)
+
+    long_ratio = calculate_ratios(long_success, long_failure)
+    short_ratio = calculate_ratios(short_success, short_failure)
+
+    print("\nMétriques de trading pour le split:")
+    print("=" * 80)
+    print(f"Long trades:")
+    print(f"  Réussis/Échecs: {long_success}/{long_failure}")
+    print(f"  Ratio: {long_ratio:.2f} (Limites: {long_lower_limit:.2f} - {long_upper_limit:.2f})")
+    print(
+        f"  Status: {'HORS LIMITES' if long_ratio < long_lower_limit or long_ratio > long_upper_limit else 'Dans les limites'}")
+
+    print(f"\nShort trades:")
+    print(f"  Réussis/Échecs: {short_success}/{short_failure}")
+    print(f"  Ratio: {short_ratio:.2f} (Limites: {short_lower_limit:.2f} - {short_upper_limit:.2f})")
+    print(
+        f"  Status: {'HORS LIMITES' if short_ratio < short_lower_limit or short_ratio > short_upper_limit else 'Dans les limites'}")
+
+def analyze_splits(nb_split=500, ratio_up=1.5, ratio_down=0.5, show_plots=False):
     """Analyse principale des splits avec winrates, ratios et volumes"""
-    # Chargement des données
-    FILE_NAME_ = "Step4_4_0_6TP_1SL_080919_141024_extractOnlyFullSession.csv"
-    DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\\4_0_6TP_1SL\merge"
-    file_path = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
+    # Configuration et chargement des données
+    FILE_NAME = "Step1_270324_281124_4TicksRev_6.csv"
+    DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
+    file_path = os.path.join(DIRECTORY_PATH, FILE_NAME)
+
+    print("Chargement des données...")
     initial_df = load_data(file_path)
     print("Taille initiale du DataFrame:", len(initial_df))
 
     # Analyse globale
     print("\nAnalyse globale:")
     print("=" * 80)
-    global_volume_stats = analyze_volume_and_trades_distribution(initial_df, "Global - ")
+    global_volume_stats = analyze_volume_and_trades_distribution(initial_df, "Global - ", show_plots)
 
     # Suppression des lignes où tradeResult = 99 pour les autres analyses
     df = initial_df[initial_df['tradeResult'] != 99].copy()
@@ -350,10 +385,10 @@ def analyze_splits(nb_split=10, ratio_up=1.5, ratio_down=0.5):
     for period_name, (start_time, end_time) in TIME_PERIODS.items():
         period_stats = analyze_period_winrates(df, period_name, start_time, end_time)
         global_period_stats.append(period_stats)
-        print_period_stats(period_stats)
+        #print_period_stats(period_stats)
 
     # Visualisation des winrates globaux
-    plot_winrates(global_period_stats, "Winrates Globaux par Période")
+    plot_winrates(global_period_stats, "Winrates Globaux par Période", show_plots)
 
     # Analyse par split
     print(f"\nAnalyse détaillée par {nb_split} splits:")
@@ -377,9 +412,20 @@ def analyze_splits(nb_split=10, ratio_up=1.5, ratio_down=0.5):
         print("-" * 80)
 
         # Analyse des volumes pour ce split
-        split_volume_stats = analyze_volume_and_trades_distribution(split_df, f"Split {i + 1} - ")
+        split_volume_stats = analyze_volume_and_trades_distribution(split_df, f"Split {i + 1} - ", show_plots)
         all_split_volume_stats.append(split_volume_stats)
         split_indices.append(i + 1)
+
+        # Analyse des winrates par période pour ce split
+        print("\nWinrates par période pour ce split:")
+        split_period_stats = []
+        for period_name, (start_time, end_time) in TIME_PERIODS.items():
+            period_stats = analyze_period_winrates(split_df, period_name, start_time, end_time)
+            split_period_stats.append(period_stats)
+            #print_period_stats(period_stats)
+
+        # AJOUT ICI - après l'analyse des winrates et avant la vérification des limites
+        print_split_metrics(split_df, global_long_ratio, global_short_ratio, ratio_up, ratio_down)
 
         # Statistiques classiques du split
         trade_dir = split_df['tradeDir'].values
@@ -424,13 +470,13 @@ def analyze_splits(nb_split=10, ratio_up=1.5, ratio_down=0.5):
         for period_name, (start_time, end_time) in TIME_PERIODS.items():
             period_stats = analyze_period_winrates(split_df, period_name, start_time, end_time)
             split_period_stats.append(period_stats)
-            print_period_stats(period_stats)
+            #print_period_stats(period_stats)
 
         if any(stat is not None for stat in split_period_stats):
-            plot_winrates(split_period_stats, f"Winrates du Split {i + 1}")
+            plot_winrates(split_period_stats, f"Winrates du Split {i + 1}", show_plots)
 
     # Création du graphique comparatif des volumes entre splits
-    create_comparative_volume_analysis(all_split_volume_stats, split_indices)
+    create_comparative_volume_analysis(all_split_volume_stats, split_indices, show_plots)
 
     # Synthèse des splits hors limites
     print("\nSynthèse des splits hors limites:")
@@ -449,4 +495,12 @@ def analyze_splits(nb_split=10, ratio_up=1.5, ratio_down=0.5):
 
 
 if __name__ == "__main__":
-    analyze_splits(10, ratio_up=1.5, ratio_down=0.6)
+    # Demande à l'utilisateur s'il veut voir les graphiques
+    user_input = input(
+        "Appuyez sur 'b' + Entrée pour afficher les graphiques, ou juste Entrée pour continuer sans graphiques: ").strip()
+    show_plots = user_input.lower() == 'b'
+
+    print(f"Mode graphique: {'activé' if show_plots else 'désactivé'}")
+
+    # Lancement de l'analyse avec le paramètre
+    analyze_splits(100, ratio_up=1.5, ratio_down=0.6, show_plots=show_plots)

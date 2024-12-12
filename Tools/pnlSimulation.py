@@ -12,10 +12,10 @@ def calculate_breakeven_point(win_ticks, loss_ticks):
     return loss_ticks / (win_ticks + loss_ticks)
 
 def main():
-    num_trades = 6
-    win_ticks = 4  # Nombre de ticks gagnés sur un trade gagnant
-    loss_ticks = 5  # Nombre de ticks perdus sur un trade perdant
-    win_rates = [i/100 for i in range(50, 101, 5)]  # De 50% à 100% par pas de 5%
+    num_trades = 3091
+    win_ticks = 6  # Nombre de ticks gagnés sur un trade gagnant
+    loss_ticks = 4.5  # Nombre de ticks perdus sur un trade perdant
+    win_rates = [i/100 for i in range(40, 101, 5)]  # De 50% à 100% par pas de 5%
 
     breakeven_point = calculate_breakeven_point(win_ticks, loss_ticks)
 

@@ -1,7 +1,7 @@
 # import pandas for data wrangling
 import pandas as pd
 from sklearn.metrics import roc_auc_score, classification_report
-from standardFunc import plot_feature_histograms_by_class
+from standardFunc_sauv import plot_feature_histograms_by_class
 import matplotlib.pyplot as plt
 
 # import numpy for Scientific computations

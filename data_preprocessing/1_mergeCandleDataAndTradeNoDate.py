@@ -1,12 +1,12 @@
-import standardFunc
-from standardFunc import convert_to_unix_timestamp, convert_from_unix_timestamp, timestamp_to_date_utc, \
+import standardFunc_sauv
+from standardFunc_sauv import convert_to_unix_timestamp, convert_from_unix_timestamp, timestamp_to_date_utc, \
     date_to_timestamp_utc
 import os
 import csv
 from datetime import datetime
 import numpy as np
 from numba import njit, prange
-from standardFunc import print_notification
+from standardFunc_sauv import print_notification
 
 
 @njit(parallel=True)
@@ -179,7 +179,7 @@ def main():
         "Voulez-vous ajouter une colonne 'date' ? (Appuyez sur Entrée pour non, ou tapez 'd' pour oui) : ")
 
     # Répertoires
-    directory = "C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_6TP_1SL/mai_spare/"
+    directory = ("C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB")
 
     if os.path.exists(directory):
         if os.path.isdir(directory):
