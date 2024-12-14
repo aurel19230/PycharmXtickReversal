@@ -859,9 +859,8 @@ if __name__ == "__main__":
 
     # Définir les paramètres supplémentaires
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-    if ENV == 'pycharm':
-        print(f"\nOpening: {FILE_PATH}\n")
-        df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
+
+    df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
 
 
 
