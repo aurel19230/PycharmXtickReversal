@@ -67,54 +67,26 @@ from definition import *
 ENV = detect_environment()
 
 # Import des fonctions selon l'environnement
-if ENV == 'colab':
-    BASE_PATH = "/content/drive/MyDrive/..."
-    print("le code s'éxécute sur collab")
 
-    try:
-        from IPython import get_ipython
+from func_standard import (load_data, split_sessions, print_notification,
+                           plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
+                           optuna_doubleMetrics,
+                           timestamp_to_date_utc, calculate_and_display_sessions,
+                           calculate_and_display_sessions, callback_optuna,
+                           calculate_weighted_adjusted_score_custom, sigmoidCustom,
+                           custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
+                           xgb_metric, scalerChoice, ScalerMode, modeleType,
+                           train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
+                           sessions_selection, calculate_normalized_objectives,
+                           run_cross_validation, setup_metric_dict,
+                           process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
+                           initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
+                           load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
+                           check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
 
-        ipython = get_ipython()
-        if ipython is not None:
-            print("le code s'éxécute sur collab1")
-            ipython.run_line_magic('run', '/content/drive/MyDrive/Colab_Notebooks/xtickReversal/standardFunc.ipynb')
-    except Exception as e:
-        print(f"Erreur lors de l'exécution du notebook: {str(e)}")
 
-elif ENV == 'pycharm':
-    BASE_PATH = "C:/Users/aulac/OneDrive/..."
-    from func_standard import (load_data, split_sessions, print_notification,
-                               plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
-                               optuna_doubleMetrics,
-                               timestamp_to_date_utc, calculate_and_display_sessions,
-                               calculate_and_display_sessions, callback_optuna,
-                               calculate_weighted_adjusted_score_custom, sigmoidCustom,
-                               custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
-                               xgb_metric, scalerChoice, ScalerMode, modeleType,
-                               train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
-                               sessions_selection, calculate_normalized_objectives,
-                               run_cross_validation, setup_metric_dict,
-                               process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
-                               initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
-                               load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
-                               check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
 
-    import keyboard
 
-    print("le code s'éxécute sur pycharm")
-
-    # Exécution du notebook après l'installation des packages
-    try:
-        from IPython import get_ipython
-
-        ipython = get_ipython()
-        if ipython is not None:
-            print("le code s'éxécute sur collab1")
-            ipython.run_line_magic('run', '/content/drive/MyDrive/Colab_Notebooks/xtickReversal/standardFunc.ipynb')
-    except Exception as e:
-        print(f"Erreur lors de l'exécution du notebook: {str(e)}")
-
-    print("le code s'éxécute sur pycharm")
 
 # Après le redémarrage, on peut importer les packages
 from colorama import Fore, Style, init
