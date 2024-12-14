@@ -6101,12 +6101,10 @@ def load_features_and_sections(file_path):
     try:
         print('0: Starting the function')
 
-        # Vérifiez si le fichier existe
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         print(f"File exists: {file_path}")
 
-        # Vérifier la taille du fichier
         file_size = os.path.getsize(file_path)
         print(f"File size: {file_size / (1024 * 1024):.2f} MB")
 
@@ -6130,21 +6128,31 @@ def load_features_and_sections(file_path):
 
         if start_index is None or end_index is None:
             print('2: Markers not found, reading the entire file as DataFrame')
-            features_df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1', low_memory=False)
+            chunks = []
+            for chunk in pd.read_csv(file_path, sep=';', encoding='iso-8859-1',
+                                     chunksize=100000, low_memory=False):
+                chunks.append(chunk)
+                print(f"Processed chunk of size {len(chunk)}")
+            features_df = pd.concat(chunks, ignore_index=True)
             custom_sections = {}
             print('3: Entire file read into DataFrame')
             return features_df, custom_sections
 
         print(f'2: Markers found - start: {start_index}, end: {end_index}')
 
-        # Lire les données principales avec pandas directement jusqu'au marqueur
+        # Lire les données principales en chunks jusqu'au marqueur
         print('3: Reading main data section')
-        features_df = pd.read_csv(file_path,
-                                  sep=';',
-                                  encoding='iso-8859-1',
-                                  nrows=start_index,
-                                  low_memory=False)
+        chunks = []
+        for chunk in pd.read_csv(file_path,
+                                 sep=';',
+                                 encoding='iso-8859-1',
+                                 nrows=start_index,
+                                 chunksize=100000,
+                                 low_memory=False):
+            chunks.append(chunk)
+            print(f"Processed chunk of size {len(chunk)}")
 
+        features_df = pd.concat(chunks, ignore_index=True)
         print('4: Main data loaded into DataFrame')
 
         # Lire les sections personnalisées
@@ -6159,11 +6167,10 @@ def load_features_and_sections(file_path):
                 if '###CUSTOM_SECTIONS_END###' in line:
                     break
 
-                if line.strip():  # Vérifier si la ligne n'est pas vide
+                if line.strip():
                     parts = line.strip().split(';')
                     if len(parts) >= 6:
                         section, start, end, type_idx, selected, description = parts[:6]
-                        # Si la description contient des points-virgules, les regrouper
                         if len(parts) > 6:
                             description = ';'.join(parts[5:])
                         custom_sections[section] = {
@@ -6176,7 +6183,7 @@ def load_features_and_sections(file_path):
 
         print(f'5: Custom sections parsed - {len(custom_sections)} sections found')
 
-        # Conversion sécurisée de 'deltaTimestampOpening' si elle existe
+        # Conversion sécurisée de 'deltaTimestampOpening'
         if 'deltaTimestampOpening' in features_df.columns:
             print('6: Converting deltaTimestampOpening column')
             features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
@@ -6188,7 +6195,6 @@ def load_features_and_sections(file_path):
     except Exception as e:
         print(f"Error: {e}")
         raise e
-
 def compare_dataframes_train_test(X_train, X_test):
     """
     Compare les colonnes entre X_train et X_test.
