@@ -4,8 +4,10 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import make_scorer
 from functools import partial
 from typing import Dict, List, Tuple
+from datetime import datetime
 
 import time
+from definition import *
 
 from sklearn.utils.class_weight import compute_sample_weight
 import os
@@ -39,30 +41,6 @@ pd.set_option('display.width', None)
 pd.set_option('display.max_rows', 1000)
 pd.set_option('display.expand_frame_repr', False)
 
-class rfe_param(Enum):
-    NO_RFE = 0
-    RFE_WITH_OPTUNA = 1
-    RFE_AUTO = 2
-
-
-import os
-
-
-def detect_environment():
-    """
-    Détecte l'environnement d'exécution
-    Returns: 'colab', 'pycharm', ou 'other'
-    """
-    # Vérification pour Google Colab
-    try:
-        from google.colab import drive
-        return 'colab'
-    except ImportError:
-        # Vérification pour PyCharm
-        if 'PYCHARM_HOSTED' in os.environ or 'PYCHARM_MATPLOTLIB_PORT' in os.environ:
-            return 'pycharm'
-        return 'other'
-
 
 def install_and_import_packages(packages, ENV=None):
     """
@@ -83,6 +61,7 @@ def install_and_import_packages(packages, ENV=None):
 # Import des packages communs
 import optuna
 from colorama import Fore, Style, init
+from func_standard import detect_environment
 
 # Utilisation
 ENV = detect_environment()
@@ -99,26 +78,27 @@ if ENV == 'colab':
         if ipython is not None:
             print("le code s'éxécute sur collab1")
             ipython.run_line_magic('run', '/content/drive/MyDrive/Colab_Notebooks/xtickReversal/standardFunc.ipynb')
-            from standardFunc_sauv import *  # Import après l'exécution du notebook
     except Exception as e:
         print(f"Erreur lors de l'exécution du notebook: {str(e)}")
 
 elif ENV == 'pycharm':
     BASE_PATH = "C:/Users/aulac/OneDrive/..."
-    from standardFunc import (load_data, split_sessions, print_notification,
-                              plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
-                              optuna_doubleMetrics,
-                              timestamp_to_date_utc, calculate_and_display_sessions,
-                              calculate_and_display_sessions, callback_optuna,
-                              calculate_weighted_adjusted_score_custom, sigmoidCustom,
-                              custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
-                              xgb_metric, scalerChoice,ScalerMode,modeleType,
-                              train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
-                              sessions_selection, calculate_normalized_objectives,
-                              run_cross_validation, setup_metric_dict,
-                              process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
-                              initialize_metrics_dict, setup_model_params, cv_config,displaytNan_vifMiCorrFiltering,
-                              load_features_and_sections,apply_scaling)
+    from func_standard import (load_data, split_sessions, print_notification,
+                               plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
+                               optuna_doubleMetrics,
+                               timestamp_to_date_utc, calculate_and_display_sessions,
+                               calculate_and_display_sessions, callback_optuna,
+                               calculate_weighted_adjusted_score_custom, sigmoidCustom,
+                               custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
+                               xgb_metric, scalerChoice, ScalerMode, modeleType,
+                               train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
+                               sessions_selection, calculate_normalized_objectives,
+                               run_cross_validation, setup_metric_dict,
+                               process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
+                               initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
+                               load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
+                               check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
+
     import keyboard
 
     print("le code s'éxécute sur pycharm")
@@ -248,251 +228,6 @@ import numpy as np
 from typing import Iterator, Optional, Tuple, Union
 from numbers import Integral
 
-"""
-class NonAnchoredWalkForwardCV(BaseCrossValidator):
-
-
-    def __init__(self, n_splits, r=1.0):
-        self.n_splits = n_splits
-        self.r = r
-
-    def get_n_splits(self, X=None, y=None, groups=None):
-        return self.n_splits
-
-    def split(self, X, y=None, groups=None):
-        N = len(X)
-        nb_split_tscv = self.n_splits
-        r = self.r
-
-        # Calcul du train_size de base
-        # Equation : train_size * (1 + nb_split_tscv * r) <= N
-        train_size = N // (1 + nb_split_tscv * r)
-        val_size = int(train_size * r)
-
-        required_size = train_size + nb_split_tscv * val_size
-        leftover = N - required_size
-        if leftover < 0:
-            raise ValueError("Pas assez de données pour le nombre de splits et le ratio demandé.")
-
-        train_size_first = train_size + leftover
-
-        # Premier split
-        current_index = 0
-        train_indices = np.arange(current_index, current_index + train_size_first)
-        current_index += train_size_first
-        val_indices = np.arange(current_index, current_index + val_size)
-        current_index += val_size
-
-        yield train_indices, val_indices
-
-        # Splits suivants
-        for _ in range(1, nb_split_tscv):
-            train_indices = val_indices
-            val_indices = np.arange(current_index, current_index + val_size)
-            current_index += val_size
-
-            yield train_indices, val_indices
-"""
-class NonAnchoredWalkForwardCV(BaseCrossValidator):
-    """
-    Validation croisée Non-Anchored Walk-Forward avec ratio stable.
-
-    - Le ratio r = val_size / train_size est maintenu constant à partir du second fold.
-    - Le leftover est ajouté au premier train pour utiliser au mieux toutes les données.
-    - Chaque split est déterminé à l'avance en fonction du ratio, puis on avance dans les données.
-    """
-
-    def __init__(self, n_splits, r=1.0):
-        self.n_splits = n_splits
-        self.r = r
-
-    def get_n_splits(self, X=None, y=None, groups=None):
-        return self.n_splits
-
-    def split(self, X, y=None, groups=None):
-        N = len(X)
-        nb_split_tscv = self.n_splits
-        r = self.r
-
-        # Calcul du train_size maximum
-        # On veut (train_size + val_size)*nb_split_tscv <= N
-        # val_size = r * train_size => (1 + r)*train_size * nb_split_tscv <= N
-        # train_size <= N / (nb_split_tscv*(1+r))
-        train_size = int(N // (nb_split_tscv * (1 + r)))
-        val_size = int(train_size * r)
-
-        required_size = nb_split_tscv * (train_size + val_size)
-        leftover = N - required_size
-
-        # Ajout du leftover au premier train
-        train_size_first = train_size + leftover
-
-        # Fold 1
-        current_index = 0
-        train_indices = np.arange(current_index, current_index + train_size_first)
-        current_index += train_size_first
-        val_indices = np.arange(current_index, current_index + val_size)
-        current_index += val_size
-
-        yield train_indices, val_indices
-
-        # Folds suivants
-        for i in range(1, nb_split_tscv):
-            train_indices = np.arange(current_index, current_index + train_size)
-            current_index += train_size
-            val_indices = np.arange(current_index, current_index + val_size)
-            current_index += val_size
-
-            yield train_indices, val_indices
-def convert_metrics_to_numpy(metrics_dict):
-    """
-    Convertit de manière sûre les métriques GPU en arrays NumPy
-
-    Args:
-        metrics_dict: Dictionnaire contenant les métriques CuPy
-    Returns:
-        Dict avec les mêmes métriques en NumPy
-    """
-    numpy_metrics = {}
-    for key, value in metrics_dict.items():
-        if isinstance(value, cp.ndarray):
-            numpy_metrics[key] = cp.asnumpy(value)
-        else:
-            numpy_metrics[key] = value
-    return numpy_metrics
-
-
-def calculate_time_difference(start_date_str, end_date_str):
-    date_format = "%Y-%m-%d %H:%M:%S"
-    start_date = datetime.strptime(start_date_str, date_format)
-    end_date = datetime.strptime(end_date_str, date_format)
-    diff = relativedelta(end_date, start_date)
-    return diff
-
-
-from sklearn.model_selection import BaseCrossValidator
-import numpy as np
-
-
-class CustomSessionTimeSeriesSplit_byID(BaseCrossValidator):
-    def __init__(self, session_ids, n_splits=5):
-        self.session_ids = np.array(session_ids)
-        self.n_splits = n_splits
-        # Trier les sessions uniques pour garantir l'ordre chronologique
-        self.unique_sessions = np.sort(np.unique(self.session_ids))
-
-    def split(self, X, y=None, groups=None):
-        n_sessions = len(self.unique_sessions)
-        print("____CustomSessionTimeSeriesSplit_byID____")
-        if self.n_splits >= n_sessions:
-            raise ValueError(
-                f"Le nombre de splits ({self.n_splits}) doit être inférieur au nombre de sessions uniques ({n_sessions}).")
-
-        # Calculer la taille minimale pour chaque fold
-        min_sessions_per_fold = n_sessions // (self.n_splits + 1)
-
-        for fold in range(self.n_splits):
-            # Calculer les indices pour ce fold
-            train_end = min_sessions_per_fold * (fold + 1)
-            val_start = train_end
-            val_end = val_start + min_sessions_per_fold
-
-            # Sélectionner les sessions
-            train_sessions = self.unique_sessions[:train_end]
-            val_sessions = self.unique_sessions[val_start:val_end]
-
-            # Obtenir les indices correspondants
-            train_mask = np.isin(self.session_ids, train_sessions)
-            val_mask = np.isin(self.session_ids, val_sessions)
-
-            train_indices = np.where(train_mask)[0]
-            val_indices = np.where(val_mask)[0]
-            """
-            # Vérifications et logs
-            print(f"\nFold {fold + 1}:")
-            print(f"Sessions train: {len(train_sessions)} ({train_sessions[0]} à {train_sessions[-1]})")
-            print(f"Sessions val: {len(val_sessions)} ({val_sessions[0]} à {val_sessions[-1]})")
-            print(f"Indices train: {len(train_indices)}")
-            print(f"Indices val: {len(val_indices)}")
-            """
-            yield train_indices, val_indices
-
-    def get_n_splits(self, X=None, y=None, groups=None):
-        return self.n_splits
-
-
-def setup_cv_method(df_init=None,X_train=None,y_train_label=None,cv_method=None, nb_split_tscv=None, config=None):
-    # D'abord, vérifier si la colonne existe dans df_init
-    if 'timeStampOpening' not in df_init.columns:
-        raise ValueError("La colonne 'timeStampOpening' est absente de df_init.")
-
-    """Configure la méthode de validation croisée"""
-    if cv_method == cv_config.TIME_SERIE_SPLIT:
-        return TimeSeriesSplit(n_splits=nb_split_tscv)
-    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
-        r = config.get('non_acnhored_val_ratio', 1)
-
-        cv=NonAnchoredWalkForwardCV(n_splits=nb_split_tscv, r=r)
-        return cv
-
-    elif cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
-        # Ensuite, appliquer la logique en fonction de cv_method
-        # On garde une trace des colonnes originales
-        X_train_ = X_train.copy()
-
-        original_columns = set(X_train_.columns)
-
-        # Ajout des colonnes nécessaires si elles n'existent pas déjà
-        if 'timeStampOpening' not in X_train_.columns:
-            X_train_['timeStampOpening'] = df_init.loc[X_train_.index, 'timeStampOpening']
-
-        if 'session_type_index' not in X_train_.columns:
-            X_train_['session_type_index'] = df_init.loc[X_train_.index, 'session_type_index']
-
-        # Vérification des valeurs
-        columns_to_check = ['timeStampOpening']
-        comparison_results = X_train_[columns_to_check].eq(df_init.loc[X_train_.index, columns_to_check])
-        discrepancies = comparison_results[~comparison_results.all(axis=1)]
-
-        if not discrepancies.empty:
-            print("\nDétails des divergences :")
-            print(discrepancies)
-            raise ValueError("divergence df_init X_train_")
-
-
-        # Création d'une colonne temporaire session_type_index_utc
-        X_train_['session_type_index_utc'] = timestamp_to_date_utc(X_train_['timeStampOpening']).str[:10] + '_' + X_train_[
-            'session_type_index'].astype(str)
-
-        session_ids = X_train_['session_type_index_utc'].values
-
-        # Suppression de la colonne temporaire
-
-        cv = CustomSessionTimeSeriesSplit_byID(session_ids=session_ids, n_splits=nb_split_tscv)
-
-
-        return cv
-    elif cv_method == cv_config.K_FOLD:
-        return KFold(n_splits=nb_split_tscv, shuffle=False)
-    elif cv_method == cv_config.K_FOLD_SHUFFLE:
-        return KFold(n_splits=nb_split_tscv, shuffle=True, random_state=42)
-    else:
-        raise ValueError(f"Unknown cv_method: {cv_method}")
-
-def select_features_ifRfe(X_train, y_train_label, trial, config, params, weight_param, metric_dict,    use_of_rfe_in_optuna=None):
-    """Sélection des features avec RFE"""
-    if use_of_rfe_in_optuna == rfe_param.RFE_WITH_OPTUNA:
-        n_features_to_select = trial.suggest_int("n_features_to_select", 1, X_train.shape[1])
-    elif use_of_rfe_in_optuna == rfe_param.RFE_AUTO:
-        n_features_to_select = config.get('min_features_if_RFE_AUTO', 5)
-
-    selected_feature_names = process_RFE_filteringg(params, trial, weight_param, metric_dict,
-                                                    selected_columns, n_features_to_select,
-                                                    X_train, y_train_label)
-    X_train_selected = X_train[selected_feature_names]
-
-    return X_train_selected, selected_feature_names
-
 
 def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
                      X_train_full=None,
@@ -512,26 +247,24 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         np.random.seed(random_state_seed_)
         n_trials_optuna = config.get('n_trials_optuna', 4)
 
-        params, num_boost_round = setup_model_params(trial, modele_param_optuna_range, random_state_seed_, device)
+
+        params, num_boost_round = setup_model_params(trial, config['model_type'], random_state_seed_, device)
 
         metric_dict = setup_metric_dict(trial, weight_param, optima_score,metric_dict)
 
         cv = setup_cv_method(df_init=df_init,X_train=X_train, y_train_label=y_train_label,cv_method=cv_method,
                              nb_split_tscv=nb_split_tscv,config=config)
 
-        use_of_rfe_in_optuna = config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE)
+        X_train, selected_feature_names = manage_rfe_selection(X_train=X_train,
+            y_train_label=y_train_label,
+            config=config,
+            trial=trial,
+            params=params,
+            weight_param=weight_param,
+            metric_dict=metric_dict
+        )
 
-        if use_of_rfe_in_optuna!=rfe_param.NO_RFE:
-            print(f"\n------- RFE activé activé:")
-            X_train, selected_feature_names = select_features_ifRfe(
-                X_train, y_train_label, trial, config, params, weight_param, metric_dict,use_of_rfe_in_optuna=use_of_rfe_in_optuna
-            )
-            print(f"              - Features sélectionnées avec rfe: {len(selected_feature_names)}")
-        else :
-            selected_feature_names=X_train.columns.tolist()
-
-        cv_results = run_cross_validation(
-            X_train=X_train, X_train_full=X_train_full,
+        cv_results = run_cross_validation(X_train=X_train, X_train_full=X_train_full,
             y_train_label=y_train_label,
             trial=trial,
             params=params,
@@ -545,7 +278,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             is_log_enabled=is_log_enabled,
             framework='xgboost'
         )
-
+        """
         # 8. Sauvegarde de l'état
         state = {
             'iteration': objective_optuna.iteration_counter,
@@ -557,6 +290,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             'metrics': {k: float(v) for k, v in cv_results['metrics'].items()},
             'memory_usage': cp.get_default_memory_pool().used_bytes() / 1024 ** 2
         }
+        """
         """
         print(f"\n{'=' * 50}")
         print(f"Fin itération Optuna #{objective_optuna.iteration_counter}")
@@ -604,63 +338,9 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     total_tn_train = float(cv_results['metrics']['total_tn_train'])
     total_fn_train = float(cv_results['metrics']['total_fn_train'])
 
-    def display_metrics(cv_results):
-        """
-        Affiche toutes les métriques de manière organisée
-        """
-        # Métriques par fold
-        # print("\n=== Métriques par Fold ===")
-        winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
-        nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
-        scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
-        tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
-        fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
-        tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
-        fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
-        scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+    if is_log_enabled:
+        display_metrics(cv_results)
 
-        # print("\nWinrates par fold      :", winrates_by_fold_cpu)
-        # print("Nombre trades par fold :", nb_trades_by_fold_cpu)
-        # print("\nScores Train par fold  :", scores_train_by_fold_cpu)
-        # print("TP Train par fold      :", tp_train_by_fold_cpu)
-        # print("FP Train par fold      :", fp_train_by_fold_cpu)
-        # print("\nTP Val par fold        :", tp_val_by_fold_cpu)
-        # print("FP Val par fold        :", fp_val_by_fold_cpu)
-        # print("Scores Val par fold    :", scores_val_by_fold_cpu)
-
-        # Totaux validation
-        # print("\n=== Totaux Validation ===")
-        total_tp_val = float(cv_results['metrics']['total_tp_val'])
-        total_fp_val = float(cv_results['metrics']['total_fp_val'])
-        total_tn_val = float(cv_results['metrics']['total_tn_val'])
-        total_fn_val = float(cv_results['metrics']['total_fn_val'])
-
-        # print(f"Total TP : {total_tp_val}")
-        # print(f"Total FP : {total_fp_val}")
-        # print(f"Total TN : {total_tn_val}")
-        # print(f"Total FN : {total_fn_val}")
-
-        # Totaux entraînement
-        # print("\n=== Totaux Entraînement ===")
-        total_tp_train = float(cv_results['metrics']['total_tp_train'])
-        total_fp_train = float(cv_results['metrics']['total_fp_train'])
-        total_tn_train = float(cv_results['metrics']['total_tn_train'])
-        total_fn_train = float(cv_results['metrics']['total_fn_train'])
-
-        # print(f"Total TP : {total_tp_train}")
-        # print(f"Total FP : {total_fp_train}")
-        # print(f"Total TN : {total_tn_train}")
-        # print(f"Total FN : {total_fn_train}")
-
-        # Statistiques supplémentaires
-        # print("\n=== Statistiques Globales ===")
-        # print(f"Taux de succès validation : {(total_tp_val / (total_tp_val + total_fp_val)) * 100:.2f}%" if (
-        #                                                                                                               total_tp_val + total_fp_val) > 0 else "N/A")
-        # print(f"Taux de succès entraînement : {(total_tp_train / (total_tp_train + total_fp_train)) * 100:.2f}%" if (
-        #                                                                                                                       total_tp_train + total_fp_train) > 0 else "N/A")
-
-    # Utilisation :
-    # display_metrics(cv_results)
     # Conversion des fold_stats
     fold_stats = {}
     for fold_num, stats in cv_results['fold_stats'].items():
@@ -718,9 +398,6 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_train > 0 else 0
 
     pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
-    # print(f"PnL par trade - Train: {train_pnl_perTrades:.2f}")
-    # print(f"PnL par trade - Validation: {val_pnl_perTrades:.2f}")
-    # print(f"Différence absolue: {abs(val_pnl_perTrades - train_pnl_perTrades):.2f}")
 
     # Suggestions des paramètres finaux
     weight_split = trial.suggest_float('weight_split', weight_param['weight_split']['min'],
@@ -844,20 +521,17 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
 def train_and_evaluate_XGBOOST_model(
         df_init=None,
         config=None,  # Add config parameter here
-        modele_param_optuna_range=None,
-        user_input=None,
-        weight_param=None,
-        CUSTOM_SECTIONS=None
+        weight_param=None
 ):
-    xgb_metric_method = config.get('xgb_metric_method', xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED)
+    xgb_metric_custom = config.get('xgb_metric_custom', xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED)
     device = config.get('device_', 'cuda')
     n_trials_optimization = config.get('n_trials_optuna', 4)
     nb_split_tscv = config.get('nb_split_tscv_', 10)
     nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
     random_state_seed = config.get('random_state_seed', 30)
-    early_stopping_rounds = config.get('early_stopping_rounds', 70)
+    #early_stopping_rounds = config.get('early_stopping_rounds', 70)
     cv_method = config.get('cv_method', cv_config.K_FOLD)
-    optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
+    #optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
     selected_columns= config.get('selected_columns', None)
 
@@ -874,8 +548,6 @@ def train_and_evaluate_XGBOOST_model(
         init_dataSet(df_init=df_init, nanvalue_to_newval=nanvalue_to_newval,
                      config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
 
-    print(X_train)
-    print(X_train_full)
     print(
         f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
 
@@ -893,36 +565,76 @@ def train_and_evaluate_XGBOOST_model(
 
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
     if (chosen_scaler!=scalerChoice.SCALER_DISABLE):
-        # Calculer le nombre de lignes initiales
-        initial_count = len(X_train)
+        # Nettoyage sur X_train
+        initial_count_train = len(X_train)
+        mask_train = ~X_train.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
 
-        # Garder les indices des lignes à conserver (celles sans inf ou nan)
-        mask = ~X_train.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
+        X_train = X_train[mask_train]
+        y_train_label = y_train_label[mask_train]
 
-        # Appliquer le même masque à X_train et y_train_label pour maintenir l'homogénéité
-        X_train = X_train[mask]
-        y_train_label = y_train_label[mask]
+        final_count_train = len(X_train)
+        lines_removed_train = initial_count_train - final_count_train
+        percentage_removed_train = (lines_removed_train / initial_count_train) * 100
 
-        # Calculer le nombre de lignes après nettoyage
-        final_count = len(X_train)
+        print(f"Nombre initial de trades (train) : {initial_count_train}")
+        print(f"Nombre de trades supprimés (train) après nettoyage : {lines_removed_train}")
+        print(f"Pourcentage de trades supprimés (train) : {percentage_removed_train:.2f}%")
 
-        # Calculer le nombre de lignes supprimées
-        lines_removed = initial_count - final_count
+        # Application de la même logique sur X_test
+        initial_count_test = len(X_test)
+        mask_test = ~X_test.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
 
-        # Calculer le pourcentage de lignes supprimées
-        percentage_removed = (lines_removed / initial_count) * 100
+        X_test = X_test[mask_test]
+        y_test_label = y_test_label[mask_test]
 
-        # Afficher les résultats
-        print(f"Nombre initial de trades : {initial_count}")
-        print(f"Nombre de trades supprimés après nettoyage des inf et nan : {lines_removed}")
-        print(f"Pourcentage de trades supprimés : {percentage_removed:.2f}%")
+        # Si vous avez des labels pour le test, appliquez le même masque (facultatif)
+        # y_test_label = y_test_label[mask_test]
+
+        final_count_test = len(X_test)
+        lines_removed_test = initial_count_test - final_count_test
+        percentage_removed_test = (lines_removed_test / initial_count_test) * 100
+
+        print(f"Nombre initial de trades (test) : {initial_count_test}")
+        print(f"Nombre de trades supprimés (test) après nettoyage : {lines_removed_test}")
+        print(f"Pourcentage de trades supprimés (test) : {percentage_removed_test:.2f}%")
 
         save_sacler_dir = os.path.join(results_directory, 'optuna_results')
-        # Pour les données d'entraînement
+
+        is_coherence_ranges_problem=False
+        # Vérifier la cohérence des distributions
+        diff_features = check_distribution_coherence(X_train, X_test)
+        if diff_features:
+            #is_coherence_ranges_problem = True
+            print("Avertissement : certaines features ont des distributions très différentes entre X_train et X_test :")
+            for f, stats in diff_features.items():
+                print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
+
+        # Vérifier les bornes
+        oob = check_value_ranges(X_train, X_test)
+        if oob:
+            #is_coherence_ranges_problem = True
+            print(
+                "Avertissement : certaines features contiennent des valeurs en dehors des bornes observées dans X_train :")
+            for f, vals in oob.items():
+                print(f"\nFeature: {f}")
+                print(f"Valeurs sous le min ({vals['train_min']}): {vals['below_min_count']}")
+                if vals['below_min_count'] > 0:
+                    print(f"Liste des valeurs sous le min: {vals['below_min_values']}")
+                print(f"Valeurs au-dessus du max ({vals['train_max']}): {vals['above_max_count']}")
+                if vals['above_max_count'] > 0:
+                    print(f"Liste des valeurs au-dessus du max: {vals['above_max_values']}")
+
+        if is_coherence_ranges_problem:
+            raise ValueError("Un problème de valeurs hors bornes ou de distribution détecté")
+
+
+        # Ensuite, vous pouvez appliquer votre scaler sur les X_train et X_test nettoyés
+        # par exemple :
         X_train, X_test, scaler, scaler_params = apply_scaling(
             X_train,
             X_test,
-            save_path=save_sacler_dir,chosen_scaler=chosen_scaler
+            save_path=save_sacler_dir,
+            chosen_scaler=chosen_scaler
         )
         print("\nSacler actif\n")
     else :
@@ -994,10 +706,10 @@ def train_and_evaluate_XGBOOST_model(
                                                                     y_train_label=y_train_label,
                                                                     X_train_full=X_train_full,
                                                                     device=device,
-                                                                    modele_param_optuna_range=modele_param_optuna_range,
                                                                     config=config, nb_split_tscv=nb_split_tscv,
-                                                                    optima_score=xgb_metric_method,
-                                                                    metric_dict=metric_dict, weight_param=weight_param,
+                                                                    optima_score=xgb_metric_custom,
+                                                                    metric_dict=metric_dict,
+                                                                    weight_param=weight_param,
                                                                     random_state_seed_=random_state_seed,
                                                                     is_log_enabled=is_log_enabled,
                                                                     cv_method=cv_method,
@@ -1032,39 +744,9 @@ def train_and_evaluate_XGBOOST_model(
 
         def create_constraints_func():
             def constraints_func(trial):
-                """
-                Contraintes:
-                1. écart train-val <= seuil
-                2. nombre minimal de trades par fold >= 20
-                """
-                ecart_train_val = trial.user_attrs.get('ecart_train_val', float('inf'))
-                nb_trades_by_fold_list = trial.user_attrs.get('nb_trades_by_fold', [float('inf')])
-                constraint_min_trades_threshold_by_Fold = trial.user_attrs.get('constraint_min_trades_threshold_by_Fold', [float('inf')])  # Seuil minimal de trades par fold
-                constraint_ecart_train_val = trial.user_attrs.get('constraint_ecart_train_val', float('inf'))
-                winrates_by_fold = trial.user_attrs.get('winrates_by_fold', None)
-                constraint_winrates_by_fold = trial.user_attrs.get('constraint_winrates_by_fold', None)
-
-                # Contrainte sur l'écart train-val
-
-                constraint_ecart = max(0, ecart_train_val - constraint_ecart_train_val)
-
-                # Contrainte sur le nombre minimal de trades par fold
-                min_trades = min(nb_trades_by_fold_list) if isinstance(nb_trades_by_fold_list, list) else float('inf')
-                min_winrate = min(winrates_by_fold) if isinstance(winrates_by_fold, list) else float('inf')
-
-                constraint_min_trades = max(0, constraint_min_trades_threshold_by_Fold - min_trades)
-                constraint_winrates_by_fold = max(0, constraint_winrates_by_fold - min_winrate)
-
-
-                constraints = [
-                    constraint_ecart,  # Contrainte 1: écart train-val
-                    constraint_min_trades,  # Contrainte 2: nombre minimal de trades
-                    constraint_winrates_by_fold,  # Contrainte 3: min min_winrate
-
-                ]
+                constraints=calculate_constraints_optuna(trial=trial,config=config)
 
                 return constraints
-
             return constraints_func
         sampler = optuna.samplers.TPESampler(
             seed=42,
@@ -1084,8 +766,9 @@ def train_and_evaluate_XGBOOST_model(
         )
 
     # Créer une fonction wrapper pour le callback qui inclut optuna
+
     def callback_wrapper(study, trial):
-        return callback_optuna(study, trial, optuna, study_xgb, rfe_param, config, modele_param_optuna_range,
+        return callback_optuna(study, trial, optuna, study_xgb, rfe_param, config,
                                results_directory)
 
 
@@ -1165,181 +848,49 @@ def train_and_evaluate_XGBOOST_model(
                              y_test_label=y_test_label,
                              dtrain=dtrain, dtest=dtest,
                              nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
-                             best_params=best_params, config=config, weight_param=weight_param,
-                             user_input=user_input)
+                             best_params=best_params, config=config)
 
 
 ############### main######################
 if __name__ == "__main__":
     # Demander à l'utilisateur s'il souhaite afficher les graphiques
     check_gpu_availability()
-
-    if ENV == 'pycharm':
-        FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorized_oldclean.csv"
-        FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-        # FILE_NAME_ = "Step5_4_0_6TP_1SL_080919_141024_extractOnlyFullSession_OnlyShort_feat_winsorizedScaledWithNanVal.csv"
-        #FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
-        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-        FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-
-        DIRECTORY_PATH_ = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
-
-    FILE_PATH_ = os.path.join(DIRECTORY_PATH_, FILE_NAME_)
-    directories = DIRECTORY_PATH_.split(os.path.sep)
+    from parameters import get_path, get_weight_param,get_config
+    DIRECTORY_PATH,FILE_PATH, base_results_path=get_path()
+    weight_param=get_weight_param()
+    config=get_config()
+    directories = DIRECTORY_PATH.split(os.path.sep)
     target_directory = directories[-2]
-    from datetime import datetime
+    results_directory=os.path.join(base_results_path, target_directory),
 
     # Obtenir l'heure et la date actuelles
     now = datetime.now()
-
     # Formater l'heure et la date au format souhaité
     time_suffix = now.strftime("_%H_%M_%d%m%y")
-
     # Ajouter le suffixe à target_directory
     target_directory += time_suffix
 
+    config.update({
+        'target_directory': target_directory})
+
+    config.update({
+        'results_directory': os.path.join(base_results_path, target_directory)})
+
     # Exemple d'utilisation
     print(f"Le répertoire cible est : {target_directory}")
-    # Extraire le répertoire contenant la chaîne "4_0_4TP_1SL"
-
-    # Création du dictionnaire de config
-    # Définir le chemin de base selon l'environnement
-    if ENV == 'colab':
-        base_results_path = r"/content/drive/MyDrive/Colab_Notebooks/xtickReversal/results_optim/"
-    else:  # pycharm ou autre
-        base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
-
-    # Configuration
-    config = {
-        'target_directory': target_directory,
-        'xgb_metric_method': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED,
-        'device_': 'cuda',
-        'n_trials_optuna': 3000,
-        'nb_split_tscv_': 6,
-        'test_size_ratio':0.15,
-        'nanvalue_to_newval_': np.nan,
-        'random_state_seed': 35,
-        'early_stopping_rounds': 60,
-        #'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
-        'results_directory': os.path.join(base_results_path, target_directory),
-        'cv_method': cv_config.TIME_SERIE_SPLIT,  # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED
-        'non_acnhored_val_ratio':0.5,
-        'weightPareto_pnl_val': 0.4,
-        'weightPareto_pnl_diff': 0.6,
-        'use_of_rfe_in_optuna': rfe_param.NO_RFE,
-        'min_features_if_RFE_AUTO': 3,
-        'optuna_objective_type': optuna_doubleMetrics.DISABLE, #USE_DIST_TO_IDEAL,
-        'use_optuna_constraints_func':True,
-        'constraint_min_trades_threshold_by_Fold': 25,
-        'constraint_ecart_train_val': 0.25,
-        'constraint_winrates_by_fold':0.53,
-        'use_imbalance_penalty': False,
-        'is_log_enabled': False,
-        'enable_vif_corr_mi':False,
-        'vif_threshold' : 15,
-        'corr_threshold' : 1,
-        'mi_threshold': 0.001,
-        'scaler_choice': scalerChoice.SCALER_DISABLE,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD
-        'modele_type': modeleType.XGB
-    }
-
-    if (config['use_optuna_constraints_func'] == True and
-            config['optuna_objective_type'] != optuna_doubleMetrics.DISABLE):
-        raise ValueError(
-            "Configuration invalide : Impossible d'utiliser à la fois les contraintes Optuna "
-            "et l'optimisation multi-objectif. "
-            "Si use_optuna_constraints_func=True, alors optuna_objective_type "
-            "doit être optuna_doubleMetrics.DISABLE"
-        )
 
     results_directory = config.get('results_directory', None)
-    user_input = ''
-    """
-
-    user_input = input(
-        f"Pour afficher les graphiques, appuyez sur 'd',\n "
-        f"Repertoire d'enregistrrepentt des resultat par défaut:\n {results_directory}\n pour le modifier taper 'r'\n"
-        "Sinon, appuyez sur 'Entrée' pour les enregistrer sans les afficher: ")
-
-    print(f"Les résultats seront saugardés dans : {results_directory}")
-
-    if user_input.lower() == 'r':
-        new_output_dir = input("Entrez le nouveau répertoire de sortie des résultats : ")
-        results_directory = new_output_dir
-
-    if results_directory == None:
-        exit(35)
-    """
 
     # Créer le répertoire s'il n'existe pas
     os.makedirs(results_directory, exist_ok=True)
 
-    # Vérifier si le répertoire existe déjà
-    """
-    if os.path.exists(results_directory):
-        overwrite = input(
-            f"Le répertoire '{results_directory}'  \n existe déjà. Voulez-vous le supprimer et continuer ? (Appuyez sur Entrée pour continuer, ou tapez une autre touche pour arrêter le programme) ")
-        if overwrite == "":
-            shutil.rmtree(results_directory)
-        else:
-            print("Le programme a été arrêté.")
-            exit()
-    """
-
     # Définir les paramètres supplémentaires
-
-    weight_param = {
-        'threshold': {'min': 0.50, 'max': 0.65},  # total_trades_val = tp + fp
-        'w_p': {'min': 0.8, 'max': 2},  # poid pour la class 1 dans objective
-        'w_n': {'min': 0.7, 'max': 1.5},  # poid pour la class 0 dans objective
-        'profit_per_tp': {'min': 1.25, 'max': 1.25},  # fixe, dépend des profits par trade
-        'loss_per_fp': {'min': -1.25, 'max': -1.25},  # fixe, dépend des pertes par trade
-        'penalty_per_fn': {'min': 0, 'max': 0},
-        'weight_split': {'min': 0.65, 'max': 0.65},
-        'nb_split_weight': {'min': 0, 'max': 0},  # si 0, pas d'utilisation de weight_split
-        'std_penalty_factor': {'min': 0, 'max': 0}
-
-    }
-
-    # 'profit_ratio_weight': {'min': 0.4, 'max': 0.4},  # profit_ratio = (tp - fp) / total_trades_val
-    # 'win_rate_weight': {'min': 0.45, 'max': 0.45},  # win_rate = tp / total_trades_val if total_trades_val
-    # 'selectivity_weight': {'min': 0.075, 'max': 0.075},  # selectivity = total_trades_val / total_samples
-
-    modele_param_optuna_range = {
-        'num_boost_round': {'min': 500, 'max': 1000},  # Étendre vers le haut
-
-        'max_depth': {'min': 6, 'max': 10},  # Étendre vers le haut
-
-        'learning_rate': {'min': 0.001, 'max': 0.009,  # Resserrer autour de 0.025
-                          'log': True},
-
-        'min_child_weight': {'min': 1, 'max': 4},  # Resserrer vers le bas
-
-        'subsample': {'min': 0.45, 'max': 0.75},  # Resserrer autour de 0.57
-
-        'colsample_bytree': {'min': 0.6, 'max': 0.80},  # Resserrer vers le haut
-
-        'colsample_bylevel': {'min': 0.4, 'max': 0.6},  # Étendre vers le bas
-
-        'colsample_bynode': {'min': 0.65, 'max': 0.95},  # Resserrer vers le haut
-
-        'gamma': {'min': 5, 'max': 13},  # Resserrer autour de 4.18
-
-        'reg_alpha': {'min': 1, 'max': 2,  # Resserrer vers le bas
-                      'log': True},
-
-        'reg_lambda': {'min': 0.1, 'max': 0.9,  # Resserrer vers le bas
-                       'log': True}
-    }
-
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
-    file_path = FILE_PATH_
     if ENV == 'pycharm':
-        #df_init = load_data(file_path)
-        df_init, CUSTOM_SESSIONS = load_features_and_sections(file_path)
+        print(f"\nOpening: {FILE_PATH}\n")
+        df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
+
+
 
     print("\nContenu de CUSTOM_SESSIONS (format tabulé) :")
     print(f"{'Section':<15} {'Start':>6} {'End':>6} {'Type':>6} {'Selected':>8} {'Description':<20}")
@@ -1384,9 +935,9 @@ if __name__ == "__main__":
         'total_count_blw',
         'staked00_high',
         'staked00_low',
-       # 'bear_imbalance_high_3', ## 4.8 % de NAN
-        #'bull_imbalance_high_0', #7.8%
-        #'bearish_absorption_ratio' #2.8nan,
+        'bear_imbalance_high_3', ## 4.8 % de NAN
+        'bull_imbalance_high_0', #7.8%
+        'bearish_absorption_ratio' #2.8nan,
 
 
     ]
@@ -1415,7 +966,7 @@ if __name__ == "__main__":
         'bullish_absorption_score',
         'bullish_market_context_score',
         'bullish_combined_pressure',
-      # 'naked_poc_dist_above',
+       'naked_poc_dist_above',
         'bull_imbalance_low_1',
         'bull_imbalance_low_2',
         'bull_imbalance_low_3',
@@ -1478,10 +1029,7 @@ if __name__ == "__main__":
     results = train_and_evaluate_XGBOOST_model(
         df_init=df_init,
         config=config,
-        modele_param_optuna_range=modele_param_optuna_range,
-        user_input=user_input,
-        weight_param=weight_param,
-        CUSTOM_SECTIONS=CUSTOM_SESSIONS
+        weight_param=weight_param
     )
 
     if results is not None:
