@@ -6110,42 +6110,71 @@ def load_features_and_sections(file_path):
         file_size = os.path.getsize(file_path)
         print(f"File size: {file_size / (1024 * 1024):.2f} MB")
 
-        # Lire le fichier par morceaux si volumineux
-        lines = []
+        # Première passe : trouver les marqueurs
+        start_index = None
+        end_index = None
+        line_count = 0
+
         with open(file_path, 'r', encoding='iso-8859-1') as f:
             for i, line in enumerate(f):
-                lines.append(line.strip())
-                if i % 100000 == 0:  # Afficher une progression tous les 100,000 lignes
+                if '###CUSTOM_SECTIONS_START###' in line.strip():
+                    start_index = i
+                elif '###CUSTOM_SECTIONS_END###' in line.strip():
+                    end_index = i
+                    break
+                if i % 100000 == 0:
                     print(f"{i} lines read...")
-        print('1: File read successfully')
+                line_count = i
 
-        start_marker = '###CUSTOM_SECTIONS_START###'
-        end_marker = '###CUSTOM_SECTIONS_END###'
-        print('2: Start and end markers defined')
+        print('1: First pass completed - marker search')
 
-        # Trouver les indices des marqueurs de début et de fin
-        try:
-            start_index = lines.index(start_marker)
-            end_index = lines.index(end_marker, start_index)
-            print(f'3: Markers found - start: {start_index}, end: {end_index}')
-        except ValueError:
-            print('3: Markers not found, reading the entire file as DataFrame')
-            data = '\n'.join(lines)
-            features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
+        if start_index is None or end_index is None:
+            print('2: Markers not found, reading the entire file as DataFrame')
+            features_df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1', low_memory=False)
             custom_sections = {}
-            print('4: Entire file read into DataFrame')
+            print('3: Entire file read into DataFrame')
             return features_df, custom_sections
 
-        # Extraire les lignes de données et les sections personnalisées
-        data_lines = lines[:start_index]
-        custom_section_lines = lines[start_index + 1:end_index]
-        print(
-            f'4: Data lines and custom section lines extracted - data lines: {len(data_lines)}, custom section lines: {len(custom_section_lines)}')
+        print(f'2: Markers found - start: {start_index}, end: {end_index}')
 
-        # Convertir les lignes de données en DataFrame
-        data = '\n'.join(data_lines)
-        features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
-        print('5: Data lines converted to DataFrame')
+        # Lire les données principales avec pandas directement jusqu'au marqueur
+        print('3: Reading main data section')
+        features_df = pd.read_csv(file_path,
+                                  sep=';',
+                                  encoding='iso-8859-1',
+                                  nrows=start_index,
+                                  low_memory=False)
+
+        print('4: Main data loaded into DataFrame')
+
+        # Lire les sections personnalisées
+        custom_sections = {}
+        with open(file_path, 'r', encoding='iso-8859-1') as f:
+            # Sauter jusqu'au début des sections personnalisées
+            for _ in range(start_index + 1):
+                next(f)
+
+            # Lire les sections personnalisées
+            for line in f:
+                if '###CUSTOM_SECTIONS_END###' in line:
+                    break
+
+                if line.strip():  # Vérifier si la ligne n'est pas vide
+                    parts = line.strip().split(';')
+                    if len(parts) >= 6:
+                        section, start, end, type_idx, selected, description = parts[:6]
+                        # Si la description contient des points-virgules, les regrouper
+                        if len(parts) > 6:
+                            description = ';'.join(parts[5:])
+                        custom_sections[section] = {
+                            'start': int(start),
+                            'end': int(end),
+                            'session_type_index': int(type_idx),
+                            'selected': selected.lower() == 'true',
+                            'description': description
+                        }
+
+        print(f'5: Custom sections parsed - {len(custom_sections)} sections found')
 
         # Conversion sécurisée de 'deltaTimestampOpening' si elle existe
         if 'deltaTimestampOpening' in features_df.columns:
@@ -6153,25 +6182,6 @@ def load_features_and_sections(file_path):
             features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
                                                                  errors='coerce').fillna(0).astype(int)
             print('6: deltaTimestampOpening column converted')
-
-        # Analyser les sections personnalisées
-        custom_sections = {}
-        for line in custom_section_lines:
-            if line.strip():  # Vérifier si la ligne n'est pas vide
-                parts = line.strip().split(';')
-                if len(parts) >= 6:
-                    section, start, end, type_idx, selected, description = parts[:6]
-                    # Si la description contient des points-virgules, les regrouper
-                    if len(parts) > 6:
-                        description = ';'.join(parts[5:])
-                    custom_sections[section] = {
-                        'start': int(start),
-                        'end': int(end),
-                        'session_type_index': int(type_idx),
-                        'selected': selected.lower() == 'true',
-                        'description': description
-                    }
-        print(f'7: Custom sections parsed - {len(custom_sections)} sections found')
 
         return features_df, custom_sections
 
