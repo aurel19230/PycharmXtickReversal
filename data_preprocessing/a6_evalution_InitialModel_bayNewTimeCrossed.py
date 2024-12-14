@@ -61,6 +61,7 @@ def install_and_import_packages(packages, ENV=None):
 import optuna
 from colorama import Fore, Style, init
 from func_standard import detect_environment
+from definition import *
 
 # Utilisation
 ENV = detect_environment()
@@ -97,7 +98,6 @@ elif ENV == 'pycharm':
                                initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
                                load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
                                check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
-    from definition import *
 
     import keyboard
 
