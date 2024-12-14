@@ -7,7 +7,6 @@ from typing import Dict, List, Tuple
 from datetime import datetime
 
 import time
-from definition import *
 
 from sklearn.utils.class_weight import compute_sample_weight
 import os
@@ -98,6 +97,7 @@ elif ENV == 'pycharm':
                                initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
                                load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
                                check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
+    from definition import *
 
     import keyboard
 
