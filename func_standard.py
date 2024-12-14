@@ -6106,9 +6106,17 @@ def load_features_and_sections(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         print(f"File exists: {file_path}")
 
-        # Lire toutes les lignes du fichier
+        # Vérifier la taille du fichier
+        file_size = os.path.getsize(file_path)
+        print(f"File size: {file_size / (1024 * 1024):.2f} MB")
+
+        # Lire le fichier par morceaux si volumineux
+        lines = []
         with open(file_path, 'r', encoding='iso-8859-1') as f:
-            lines = f.read().splitlines()
+            for i, line in enumerate(f):
+                lines.append(line.strip())
+                if i % 100000 == 0:  # Afficher une progression tous les 100,000 lignes
+                    print(f"{i} lines read...")
         print('1: File read successfully')
 
         start_marker = '###CUSTOM_SECTIONS_START###'
