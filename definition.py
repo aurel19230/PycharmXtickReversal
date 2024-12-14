@@ -16,7 +16,10 @@ class optuna_doubleMetrics(Enum):
     USE_DIST_TO_IDEAL = 1
     USE_WEIGHTED_AVG = 2
 
-
+class rfe_param(Enum):
+    NO_RFE = 0
+    RFE_WITH_OPTUNA = 1
+    RFE_AUTO = 2
 
 class xgb_metric(Enum):
     XGB_METRIC_ROCAUC = 1
