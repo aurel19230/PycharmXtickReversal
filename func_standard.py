@@ -6098,58 +6098,78 @@ from io import StringIO
 
 
 def load_features_and_sections(file_path):
-    # Read all lines from the file
-    print('0')
-    with open(file_path, 'r', encoding='iso-8859-1') as f:
-        lines = f.read().splitlines()
-    print('1')
-    start_marker = '###CUSTOM_SECTIONS_START###'
-    end_marker = '###CUSTOM_SECTIONS_END###'
-    print('2')
     try:
-        # Find the indices of the start and end markers
-        start_index = lines.index(start_marker)
-        end_index = lines.index(end_marker, start_index)
-    except ValueError:
-        # If markers are not found, read the entire file as DataFrame
-        data = '\n'.join(lines)
+        print('0: Starting the function')
+
+        # Vérifiez si le fichier existe
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        print(f"File exists: {file_path}")
+
+        # Lire toutes les lignes du fichier
+        with open(file_path, 'r', encoding='iso-8859-1') as f:
+            lines = f.read().splitlines()
+        print('1: File read successfully')
+
+        start_marker = '###CUSTOM_SECTIONS_START###'
+        end_marker = '###CUSTOM_SECTIONS_END###'
+        print('2: Start and end markers defined')
+
+        # Trouver les indices des marqueurs de début et de fin
+        try:
+            start_index = lines.index(start_marker)
+            end_index = lines.index(end_marker, start_index)
+            print(f'3: Markers found - start: {start_index}, end: {end_index}')
+        except ValueError:
+            print('3: Markers not found, reading the entire file as DataFrame')
+            data = '\n'.join(lines)
+            features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
+            custom_sections = {}
+            print('4: Entire file read into DataFrame')
+            return features_df, custom_sections
+
+        # Extraire les lignes de données et les sections personnalisées
+        data_lines = lines[:start_index]
+        custom_section_lines = lines[start_index + 1:end_index]
+        print(
+            f'4: Data lines and custom section lines extracted - data lines: {len(data_lines)}, custom section lines: {len(custom_section_lines)}')
+
+        # Convertir les lignes de données en DataFrame
+        data = '\n'.join(data_lines)
         features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
+        print('5: Data lines converted to DataFrame')
+
+        # Conversion sécurisée de 'deltaTimestampOpening' si elle existe
+        if 'deltaTimestampOpening' in features_df.columns:
+            print('6: Converting deltaTimestampOpening column')
+            features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
+                                                                 errors='coerce').fillna(0).astype(int)
+            print('6: deltaTimestampOpening column converted')
+
+        # Analyser les sections personnalisées
         custom_sections = {}
+        for line in custom_section_lines:
+            if line.strip():  # Vérifier si la ligne n'est pas vide
+                parts = line.strip().split(';')
+                if len(parts) >= 6:
+                    section, start, end, type_idx, selected, description = parts[:6]
+                    # Si la description contient des points-virgules, les regrouper
+                    if len(parts) > 6:
+                        description = ';'.join(parts[5:])
+                    custom_sections[section] = {
+                        'start': int(start),
+                        'end': int(end),
+                        'session_type_index': int(type_idx),
+                        'selected': selected.lower() == 'true',
+                        'description': description
+                    }
+        print(f'7: Custom sections parsed - {len(custom_sections)} sections found')
+
         return features_df, custom_sections
-    print('3')
-    # Extract data lines and custom sections lines
-    data_lines = lines[:start_index]
-    custom_section_lines = lines[start_index + 1:end_index]
-    print('4')
-    # Join data lines into a single string and read into DataFrame
-    data = '\n'.join(data_lines)
-    features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
-    print('5')
-    # Safely convert 'deltaTimestampOpening' if it exists
-    if 'deltaTimestampOpening' in features_df.columns:
-        features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
-                                                             errors='coerce').fillna(0).astype(int)
-    print('6')
-    # Parse custom sections
-    custom_sections = {}
-    for line in custom_section_lines:
-        if line.strip():  # Ensure the line is not empty
-            parts = line.strip().split(';')
-            if len(parts) >= 6:
-                section, start, end, type_idx, selected, description = parts[:6]
-                # If description contains semicolons, join them back
-                if len(parts) > 6:
-                    description = ';'.join(parts[5:])
-                custom_sections[section] = {
-                    'start': int(start),
-                    'end': int(end),
-                    'session_type_index': int(type_idx),
-                    'selected': selected.lower() == 'true',
-                    'description': description
-                }
 
-    return features_df, custom_sections
-
+    except Exception as e:
+        print(f"Error: {e}")
+        raise e
 
 def compare_dataframes_train_test(X_train, X_test):
     """
