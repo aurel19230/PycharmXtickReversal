@@ -83,7 +83,8 @@ from func_standard import (load_data, split_sessions, print_notification,
                            initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
                            load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
                            check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
-import keyboard
+if ENV == 'pycharm':
+    import keyboard
 
 
 
