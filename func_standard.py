@@ -6099,12 +6099,13 @@ from io import StringIO
 
 def load_features_and_sections(file_path):
     # Read all lines from the file
+    print('0')
     with open(file_path, 'r', encoding='iso-8859-1') as f:
         lines = f.read().splitlines()
-
+    print('1')
     start_marker = '###CUSTOM_SECTIONS_START###'
     end_marker = '###CUSTOM_SECTIONS_END###'
-
+    print('2')
     try:
         # Find the indices of the start and end markers
         start_index = lines.index(start_marker)
@@ -6115,20 +6116,20 @@ def load_features_and_sections(file_path):
         features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
         custom_sections = {}
         return features_df, custom_sections
-
+    print('3')
     # Extract data lines and custom sections lines
     data_lines = lines[:start_index]
     custom_section_lines = lines[start_index + 1:end_index]
-
+    print('4')
     # Join data lines into a single string and read into DataFrame
     data = '\n'.join(data_lines)
     features_df = pd.read_csv(StringIO(data), sep=';', encoding='iso-8859-1', low_memory=False)
-
+    print('5')
     # Safely convert 'deltaTimestampOpening' if it exists
     if 'deltaTimestampOpening' in features_df.columns:
         features_df['deltaTimestampOpening'] = pd.to_numeric(features_df['deltaTimestampOpening'],
                                                              errors='coerce').fillna(0).astype(int)
-
+    print('6')
     # Parse custom sections
     custom_sections = {}
     for line in custom_section_lines:
