@@ -199,7 +199,7 @@ def get_config():
         'use_optuna_constraints_func': True,
         'constraint_min_trades_threshold_by_Fold': 100,
         'constraint_ecart_train_val': 0.20,
-        'constraint_winrates_by_fold': 0.56,
+        'constraint_winrates_by_fold': 0.55,
         'use_imbalance_penalty': False,
         'is_log_enabled': False,
         'enable_vif_corr_mi': False,
