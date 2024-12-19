@@ -4211,7 +4211,7 @@ def handle_exception(e):
     traceback.print_exc()
 
 
-def cleanup_gpu_memory(data_gpu):
+def cleanup_gpu_memory(data):
     """
     Nettoie la mémoire GPU.
 
@@ -4221,10 +4221,10 @@ def cleanup_gpu_memory(data_gpu):
     print("\nNettoyage de la mémoire GPU")
 
     # Nettoyage des données GPU
-    if isinstance(data_gpu, dict):
-        for key in data_gpu:
-            if isinstance(data_gpu[key], cp.ndarray):
-                data_gpu[key] = None
+    if isinstance(data, dict):
+        for key in data:
+            if isinstance(data[key], cp.ndarray):
+                data[key] = None
 
     # Libération des blocs de mémoire
     cp.get_default_memory_pool().free_all_blocks()
@@ -4356,7 +4356,7 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
         metrics_dict = initialize_metrics_dict(nb_split_tscv)
 
         # Préparation données GPU - Interface commune
-        data_gpu = prepare_gpu_data(X_train, y_train_label)
+        data = prepare_data(X_train, y_train_label,config)
 
         # Sélection du processor de fold selon le framework
         fold_processor = select_fold_processor(model)
@@ -4382,7 +4382,7 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
                 train_pos=train_pos,  # Ajouté
                 val_pos=val_pos,  # Ajouté
                 params=params,
-                data_gpu=data_gpu,
+                data=data,
                 model_weight_optuna=model_weight_optuna,
                 is_log_enabled=is_log_enabled,
                 config=config,
@@ -4401,15 +4401,34 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
         handle_exception(e)
         raise
     finally:
-        cleanup_gpu_memory(data_gpu)
+        if config['device_'] != 'cpu' and data is not None:
+            cleanup_gpu_memory(data)
 
 
-def prepare_gpu_data(X_train, y_train_label):
-    """Interface commune pour la préparation des données GPU"""
+def prepare_data(X_train, y_train_label, config):
+    """Prépare les données pour l'entraînement sur CPU ou GPU.
+
+    Args:
+        X_train: DataFrame contenant les features
+        y_train_label: Series ou array contenant les labels
+        config: dict contenant la configuration avec la clé 'device_'
+
+    Returns:
+        dict: Dictionnaire contenant les données préparées avec les clés
+             'X_train_no99_fullRange' et 'y_train_no99_fullRange'
+    """
+    if config['device_'] == 'cpu':
+        X_processed = X_train.values
+        y_processed = y_train_label.values
+    else:
+        X_processed = cp.asarray(X_train.values, dtype=cp.float32)
+        # Vérifie le type de y_train_label avant conversion
+        y_values = y_train_label.values if isinstance(y_train_label, pd.Series) else y_train_label
+        y_processed = cp.asarray(y_values, dtype=cp.int32)
+
     return {
-        'X_train_no99_fullRange': cp.asarray(X_train.values, dtype=cp.float32),
-        'y_train_no99_fullRange': cp.asarray(y_train_label.values if isinstance(y_train_label, pd.Series)
-                                             else y_train_label, dtype=cp.int32)
+        'X_train_no99_fullRange': X_processed,
+        'y_train_no99_fullRange': y_processed
     }
 
 
@@ -4425,7 +4444,7 @@ def select_fold_processor(model: None):
     return processors[model]
 
 def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=None, train_pos=None, val_pos=None, params=None,
-                             data_gpu=None, model_weight_optuna=None,
+                             data=None, model_weight_optuna=None,
                              is_log_enabled=False, config=None):
     """
     Process a cross-validation fold for LightGBM training and evaluation.
@@ -4434,10 +4453,10 @@ def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=None, tra
     """
     try:
         # Extract fold data
-        X_train_cv = data_gpu['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
-        Y_train_cv = data_gpu['y_train_no99_fullRange'][train_pos].reshape(-1)
-        X_val_cv = data_gpu['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
-        y_val_cv = data_gpu['y_train_no99_fullRange'][val_pos].reshape(-1)
+        X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
+        Y_train_cv = data['y_train_no99_fullRange'][train_pos].reshape(-1)
+        X_val_cv = data['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
+        y_val_cv = data['y_train_no99_fullRange'][val_pos].reshape(-1)
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -4582,7 +4601,7 @@ def process_cv_fold_xgboost(X_train=None, X_train_full=None, fold_num=None, trai
         # Même processus pour l'entraînement
         train_pred_proba = model.predict(dtrain, iteration_range=(0, best_iteration))
         train_pred_proba = cp.asarray(train_pred_proba, dtype=cp.float32)
-        train_pred_proba, train_pred = predict_and_process(train_pred_proba, model_weight_optuna['threshold'])
+        train_pred_proba, train_pred = predict_and_process(train_pred_proba, model_weight_optuna['threshold'],config)
 
         tn_train, fp_train, fn_train, tp_train = compute_confusion_matrix_cupy(Y_train_cv, train_pred)
 

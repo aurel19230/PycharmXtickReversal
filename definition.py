@@ -67,11 +67,28 @@ def sigmoidCustom(x):
 def sigmoidCustom_cpu(x):
     """Custom sigmoid function."""
     return 1 / (1 + np.exp(-x))
-def predict_and_process(pred_proba, threshold):
-    # Supposons que pred_proba est déjà un tableau CuPy
-    pred_proba = sigmoidCustom(pred_proba)
-    pred_proba = cp.clip(pred_proba, 0.0, 1.0)
-    pred = (pred_proba > threshold).astype(cp.int32)
+
+
+def predict_and_process(pred_proba, threshold, config):
+    """Applique la sigmoid et le seuillage sur les prédictions.
+
+    Args:
+        pred_proba: array de probabilités brutes
+        threshold: seuil de classification
+        config: dict contenant la configuration avec la clé 'device_'
+
+    Returns:
+        tuple: (probabilités après sigmoid, prédictions binaires)
+    """
+    if config['device_'] == 'cpu':
+        pred_proba = sigmoidCustom_cpu(pred_proba)
+        pred_proba = np.clip(pred_proba, 0.0, 1.0)
+        pred = (pred_proba > threshold).astype(np.int32)
+    else:
+        pred_proba = sigmoidCustom(pred_proba)
+        pred_proba = cp.clip(pred_proba, 0.0, 1.0)
+        pred = (pred_proba > threshold).astype(cp.int32)
+
     return pred_proba, pred
 
 
@@ -82,6 +99,30 @@ def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
     fn = cp.sum((y_true_gpu == 1) & (y_pred_gpu == 0))
     return tn, fp, fn, tp
 
+
+def compute_confusion_matrix_cpu(y_true, y_pred, config):
+    """Calcule la matrice de confusion.
+
+    Args:
+        y_true: Labels réels
+        y_pred: Prédictions
+        config: dict contenant la configuration avec la clé 'device_'
+
+    Returns:
+        tuple: (TN, FP, FN, TP) - éléments de la matrice de confusion
+    """
+    if config['device_'] == 'cpu':
+        TP = np.sum((y_true == 1) & (y_pred == 1))
+        TN = np.sum((y_true == 0) & (y_pred == 0))
+        FP = np.sum((y_true == 0) & (y_pred == 1))
+        FN = np.sum((y_true == 1) & (y_pred == 0))
+    else:
+        TP = cp.sum((y_true == 1) & (y_pred == 1))
+        TN = cp.sum((y_true == 0) & (y_pred == 0))
+        FP = cp.sum((y_true == 0) & (y_pred == 1))
+        FN = cp.sum((y_true == 1) & (y_pred == 0))
+
+    return TN, FP, FN, TP
 
 def log_cv_fold_metrics(X_train_full, X_train, val_pos, Y_train_cv, y_val_cv, tp_train, fp_train,
                         tn_train, fn_train, tp_val, fp_val, tn_val, fn_val):
