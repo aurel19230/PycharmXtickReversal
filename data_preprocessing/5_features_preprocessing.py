@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
-from standardFunc_sauv import print_notification
-from standardFunc_sauv import load_data,calculate_naked_poc_distances,CUSTOM_SESSIONS,save_features_with_sessions
+from func_standard import print_notification, load_data,calculate_naked_poc_distances,CUSTOM_SESSIONS,save_features_with_sessions
 import math
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
@@ -2076,6 +2075,8 @@ def create_composite_features(df, features_df):
     # === NEUTRAL FEATURES (2) ===
 
     df['deltaTimestampOpeningSession5min']=features_df['deltaTimestampOpeningSession5min']
+    df['deltaTimestampOpeningSession1min']=features_df['deltaTimestampOpeningSession1min']
+
     df['deltaCustomSessionIndex']=features_df['deltaCustomSessionIndex']
     df['total_count_abv']=features_df['total_count_abv']
     df['total_count_blw']=features_df['total_count_blw']
@@ -2084,11 +2085,9 @@ def create_composite_features(df, features_df):
     df['bearish_dsc_ask_bid_delta_imbalance'] = features_df['bearish_dsc_ask_bid_delta_imbalance']
     df['bullish_dsc_ask_bid_delta_imbalance'] = features_df['bullish_dsc_ask_bid_delta_imbalance']
 
-
-
-
     # 1. Volume-Volatility Score
-    features_df['vol_volatility_score'] = np.where(
+    # Version 5min
+    features_df['vol_volatility_score_5min'] = np.where(
         df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean') == 0,
         valueY,
         np.where(
@@ -2099,21 +2098,44 @@ def create_composite_features(df, features_df):
         )
     )
 
+    # Version 1min
+    features_df['vol_volatility_score_1min'] = np.where(
+        df.groupby('deltaTimestampOpeningSession1min')['volume'].transform('mean') == 0,
+        valueY,
+        np.where(
+            df.groupby('deltaTimestampOpeningSession1min')['atr'].transform('mean') == 0,
+            valueY,
+            (df['volume'] / df.groupby('deltaTimestampOpeningSession1min')['volume'].transform('mean')) *
+            (df['atr'] / df.groupby('deltaTimestampOpeningSession1min')['atr'].transform('mean'))
+        )
+    )
+
     # 2. Price-Volume Dynamic
     vol_ratio_5min = np.where(
         df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean') == 0,
         valueY,
         df['volume'] / df.groupby('deltaTimestampOpeningSession5min')['volume'].transform('mean')
     )
+    vol_ratio_1min = np.where(
+        df.groupby('deltaTimestampOpeningSession1min')['volume'].transform('mean') == 0,
+        valueY,
+        df['volume'] / df.groupby('deltaTimestampOpeningSession1min')['volume'].transform('mean')
+    )
     vol_ratio_session = np.where(
         df.groupby('deltaCustomSessionIndex')['volume'].transform('mean') == 0,
         valueY,
         df['volume'] / df.groupby('deltaCustomSessionIndex')['volume'].transform('mean')
     )
-    features_df['price_volume_dynamic'] = np.where(
+    features_df['price_volume_dynamic_5min'] = np.where(
         (vol_ratio_5min == 0) | (vol_ratio_session == 0),
         valueY,
         0.7 * ((df['close'] - df['VWAP']) / df['VWAP']) * vol_ratio_5min +
+        0.3 * ((df['close'] - df['VWAP']) / df['VWAP']) * vol_ratio_session
+    )
+    features_df['price_volume_dynamic_1min'] = np.where(
+        (vol_ratio_1min == 0) | (vol_ratio_session == 0),
+        valueY,
+        0.7 * ((df['close'] - df['VWAP']) / df['VWAP']) * vol_ratio_1min +
         0.3 * ((df['close'] - df['VWAP']) / df['VWAP']) * vol_ratio_session
     )
 
@@ -2121,41 +2143,77 @@ def create_composite_features(df, features_df):
 
 
     # 3. Absorption Score
-    features_df['bearish_absorption_score'] = np.where(
+    features_df['bearish_absorption_score_5min'] = np.where(
         df['VolAbv'] == 0,
         valueY,
         features_df['bearish_absorption_intensity_repeat_count'] * vol_ratio_5min
     )
 
-    features_df['bullish_absorption_score'] = np.where(
+    features_df['bullish_absorption_score_5min'] = np.where(
         df['VolBlw'] == 0,
         valueY,
         features_df['bullish_absorption_intensity_repeat_count'] * vol_ratio_5min
     )
+    features_df['bearish_absorption_score_1min'] = np.where(
+        df['VolAbv'] == 0,
+        valueY,
+        features_df['bearish_absorption_intensity_repeat_count'] * vol_ratio_1min
+    )
+
+    features_df['bullish_absorption_score_1min'] = np.where(
+        df['VolBlw'] == 0,
+        valueY,
+        features_df['bullish_absorption_intensity_repeat_count'] * vol_ratio_1min
+    )
+
 
     # 4. Market Context Score
-    def create_market_context_score(imbalance_col):
+    def create_market_context_score(imbalance_col,vol_ratio):
         return np.where(
-            vol_ratio_5min == 0,
+
+            vol_ratio == 0,
             valueY,
-            df['perctBB'] * vol_ratio_5min * df[imbalance_col]
+            df['perctBB'] * vol_ratio * df[imbalance_col]
         )
 
-    features_df['bearish_market_context_score'] = create_market_context_score('bearish_dsc_ask_bid_delta_imbalance')
-    features_df['bullish_market_context_score'] = create_market_context_score('bullish_dsc_ask_bid_delta_imbalance')
+    features_df['bearish_market_context_score_5min'] = create_market_context_score('bearish_dsc_ask_bid_delta_imbalance',vol_ratio_5min)
+    features_df['bullish_market_context_score_5min'] = create_market_context_score('bullish_dsc_ask_bid_delta_imbalance',vol_ratio_5min)
+    features_df['bearish_market_context_score_1min'] = create_market_context_score(
+        'bearish_dsc_ask_bid_delta_imbalance', vol_ratio_1min)
+    features_df['bullish_market_context_score_1min'] = create_market_context_score(
+        'bullish_dsc_ask_bid_delta_imbalance', vol_ratio_1min)
 
     # 5. Combined Pressure
-    def create_combined_pressure(absorption_score, imbalance_col):
+    def create_combined_pressure(absorption_score, imbalance_col, price_vol_dynamic):
         return np.where(
             (features_df[absorption_score] == 0) | (df[imbalance_col] == 0),
             valueY,
-            features_df[absorption_score] * df[imbalance_col] * np.sign(features_df['price_volume_dynamic'])
+            features_df[absorption_score] * df[imbalance_col] * np.sign(features_df[price_vol_dynamic])
         )
 
-    features_df['bearish_combined_pressure'] = create_combined_pressure('bearish_absorption_score',
-                                                                        'bearish_dsc_ask_bid_delta_imbalance')
-    features_df['bullish_combined_pressure'] = create_combined_pressure('bullish_absorption_score',
-                                                                        'bullish_dsc_ask_bid_delta_imbalance')
+    # Version 5min
+    features_df['bearish_combined_pressure_5min'] = create_combined_pressure(
+        'bearish_absorption_score_5min',
+        'bearish_dsc_ask_bid_delta_imbalance',
+        'price_volume_dynamic_5min'
+    )
+    features_df['bullish_combined_pressure_5min'] = create_combined_pressure(
+        'bullish_absorption_score_5min',
+        'bullish_dsc_ask_bid_delta_imbalance',
+        'price_volume_dynamic_5min'
+    )
+
+    # Version 1min
+    features_df['bearish_combined_pressure_1min'] = create_combined_pressure(
+        'bearish_absorption_score_1min',
+        'bearish_dsc_ask_bid_delta_imbalance',
+        'price_volume_dynamic_1min'
+    )
+    features_df['bullish_combined_pressure_1min'] = create_combined_pressure(
+        'bullish_absorption_score_1min',
+        'bullish_dsc_ask_bid_delta_imbalance',
+        'price_volume_dynamic_1min'
+    )
 
     return features_df
 
@@ -2489,22 +2547,37 @@ column_settings = {
     'bearish_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),
     'bullish_ticks_imbalance_6Tick': (True, True, 0.5, 99.9,toBeDisplayed_if_s(user_choice, False)),
     # Neutral features
-    'vol_volatility_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'price_volume_dynamic': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'vol_volatility_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'vol_volatility_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'price_volume_dynamic_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'price_volume_dynamic_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
 
 
     # Features d'absorption
-    'bearish_absorption_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_absorption_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bearish_absorption_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bearish_absorption_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_absorption_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_absorption_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'bearish_absorption_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_absorption_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Features de contexte de marché
-    'bearish_market_context_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_market_context_score': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bearish_market_context_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bearish_market_context_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'bullish_market_context_score_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_market_context_score_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'bearish_combined_pressure_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bearish_combined_pressure_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Features de pression combinée
-    'bearish_combined_pressure': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'bullish_combined_pressure': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_combined_pressure_1min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_combined_pressure_5min': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+
     'naked_poc_dist_above': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'naked_poc_dist_below': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'linear_slope_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),

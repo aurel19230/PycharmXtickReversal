@@ -68,21 +68,19 @@ ENV = detect_environment()
 
 # Import des fonctions selon l'environnement
 
-from func_standard import (load_data, split_sessions, print_notification,
-                           plot_calibrationCurve_distrib, plot_fp_tp_rates, check_gpu_availability,
+from func_standard import (print_notification,
+                           check_gpu_availability,
                            optuna_doubleMetrics,
-                           timestamp_to_date_utc, calculate_and_display_sessions,
-                           calculate_and_display_sessions, callback_optuna,
-                           calculate_weighted_adjusted_score_custom, sigmoidCustom,
-                           custom_metric_ProfitBased_gpu, create_weighted_logistic_obj_gpu,
-                           xgb_metric, scalerChoice, ScalerMode, modeleType,
-                           train_finalModel_analyse, init_dataSet, compute_confusion_matrix_cupy,
-                           sessions_selection, calculate_normalized_objectives,
-                           run_cross_validation, setup_metric_dict,
-                           process_RFE_filteringg, calculate_fold_stats, add_session_id, update_fold_metrics,
-                           initialize_metrics_dict, setup_model_params, cv_config, displaytNan_vifMiCorrFiltering,
+                           callback_optuna,
+                           calculate_weighted_adjusted_score_custom,
+                           model_customMetric, scalerChoice,
+                           train_finalModel_analyse, init_dataSet,
+                           calculate_normalized_objectives,
+                           run_cross_validation,
+                           setup_model_params_optuna, setup_model_weight_optuna,cv_config, displaytNan_vifMiCorrFiltering,
                            load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
-                           check_distribution_coherence, check_value_ranges, setup_cv_method, calculate_constraints_optuna)
+                           check_distribution_coherence, check_value_ranges, setup_cv_method,
+                           calculate_constraints_optuna,remove_nan_inf,add_session_id)
 if ENV == 'pycharm':
     import keyboard
 
@@ -205,8 +203,10 @@ from numbers import Integral
 def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
                      X_train_full=None,
                      device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
-                     optima_score=None, metric_dict=None, weight_param=None,
-                     random_state_seed_=None, is_log_enabled=None, cv_method=cv_config.K_FOLD, selected_columns=None):
+                     model_weight_optuna=None, weight_param=None,
+                     random_state_seed_=None, is_log_enabled=None, cv_method=cv_config.K_FOLD,
+                     selected_columns=None,model=None,
+                     ):
     try:
         # État de l'itération
         if not hasattr(objective_optuna, 'iteration_counter'):
@@ -221,9 +221,9 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         n_trials_optuna = config.get('n_trials_optuna', 4)
 
 
-        params, num_boost_round = setup_model_params(trial, config['model_type'], random_state_seed_, device)
+        params_optuna = setup_model_params_optuna(trial, config['model_type'], random_state_seed_, device)
 
-        metric_dict = setup_metric_dict(trial, weight_param, optima_score,metric_dict)
+        model_weight_optuna = setup_model_weight_optuna(trial, weight_param, config)
 
         cv = setup_cv_method(df_init=df_init,X_train=X_train, y_train_label=y_train_label,cv_method=cv_method,
                              nb_split_tscv=nb_split_tscv,config=config)
@@ -232,24 +232,20 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             y_train_label=y_train_label,
             config=config,
             trial=trial,
-            params=params,
-            weight_param=weight_param,
-            metric_dict=metric_dict
+            params=params_optuna,
+            model_weight_optuna=model_weight_optuna
         )
 
         cv_results = run_cross_validation(X_train=X_train, X_train_full=X_train_full,
             y_train_label=y_train_label,
             trial=trial,
-            params=params,
-            num_boost_round=num_boost_round,
-            metric_dict=metric_dict,
+            params=params_optuna,
+            model_weight_optuna=model_weight_optuna,
             cv=cv,
             nb_split_tscv=nb_split_tscv,
-            weight_param=weight_param,
-            optima_score=optima_score,
-            xgb_metric=xgb_metric,
             is_log_enabled=is_log_enabled,
-            framework='xgboost'
+            model=model,
+            config=config
         )
         """
         # 8. Sauvegarde de l'état
@@ -257,7 +253,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             'iteration': objective_optuna.iteration_counter,
             'trial_number': trial.number,
             'params': params,
-            'threshold': metric_dict['threshold'],
+            'threshold': model_weight_optuna['threshold'],
             'mean_score': cv_results['mean_val_score'],
             'std_score': cv_results['std_val_score'],
             'metrics': {k: float(v) for k, v in cv_results['metrics'].items()},
@@ -282,7 +278,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     # print_notification("fin de la CV")
 
     if ENV == 'pycharm':
-        if keyboard.is_pressed('q'):  # Nécessite le package 'keyboard'
+        if keyboard.is_pressed('x'):  # Nécessite le package 'keyboard'
             study.stop()
     else:
         if os.path.exists('stop_optimization.txt'):
@@ -401,6 +397,9 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     # print(f"cummulative_pnl_val: {cummulative_pnl_val}")
 
     # Mise à jour des attributs du trial
+    trial.set_user_attr('params_optuna', params_optuna)
+    trial.set_user_attr('model_weight_optuna', model_weight_optuna)
+
     trial.set_user_attr('total_tp_val', total_tp_val)
     trial.set_user_attr('total_fp_val', total_fp_val)
     trial.set_user_attr('total_tn_val', total_tn_val)
@@ -496,7 +495,6 @@ def train_and_evaluate_XGBOOST_model(
         config=None,  # Add config parameter here
         weight_param=None
 ):
-    xgb_metric_custom = config.get('xgb_metric_custom', xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED)
     device = config.get('device_', 'cuda')
     n_trials_optimization = config.get('n_trials_optuna', 4)
     nb_split_tscv = config.get('nb_split_tscv_', 10)
@@ -507,6 +505,8 @@ def train_and_evaluate_XGBOOST_model(
     #optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
     selected_columns= config.get('selected_columns', None)
+    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+    model = config.get('model_type', modelType.XGB)
 
     zeros = (df_init['class_binaire'] == 0).sum()
     ones = (df_init['class_binaire'] == 1).sum()
@@ -536,56 +536,31 @@ def train_and_evaluate_XGBOOST_model(
     displaytNan_vifMiCorrFiltering(X=X_train, selected_columns=selected_columns, name="X_train",
                                    config=config)
 
-    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
-    if (chosen_scaler!=scalerChoice.SCALER_DISABLE):
-        # Nettoyage sur X_train
-        initial_count_train = len(X_train)
-        mask_train = ~X_train.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
 
-        X_train = X_train[mask_train]
-        y_train_label = y_train_label[mask_train]
+    if chosen_scaler != scalerChoice.SCALER_DISABLE:
+        # Sauvegarde des données originales pour réinsertion potentielle
+        X_train_original = X_train
+        X_test_original = X_test
+        y_train_label_original = y_train_label
+        y_test_label_original = y_test_label
 
-        final_count_train = len(X_train)
-        lines_removed_train = initial_count_train - final_count_train
-        percentage_removed_train = (lines_removed_train / initial_count_train) * 100
-
-        print(f"Nombre initial de trades (train) : {initial_count_train}")
-        print(f"Nombre de trades supprimés (train) après nettoyage : {lines_removed_train}")
-        print(f"Pourcentage de trades supprimés (train) : {percentage_removed_train:.2f}%")
-
-        # Application de la même logique sur X_test
-        initial_count_test = len(X_test)
-        mask_test = ~X_test.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
-
-        X_test = X_test[mask_test]
-        y_test_label = y_test_label[mask_test]
-
-        # Si vous avez des labels pour le test, appliquez le même masque (facultatif)
-        # y_test_label = y_test_label[mask_test]
-
-        final_count_test = len(X_test)
-        lines_removed_test = initial_count_test - final_count_test
-        percentage_removed_test = (lines_removed_test / initial_count_test) * 100
-
-        print(f"Nombre initial de trades (test) : {initial_count_test}")
-        print(f"Nombre de trades supprimés (test) après nettoyage : {lines_removed_test}")
-        print(f"Pourcentage de trades supprimés (test) : {percentage_removed_test:.2f}%")
+        # Nettoyage des NaN et Inf
+        X_train, y_train_label, mask_train = remove_nan_inf(X_train, y_train_label, "train")
+        X_test, y_test_label, mask_test = remove_nan_inf(X_test, y_test_label, "test")
 
         save_sacler_dir = os.path.join(results_directory, 'optuna_results')
 
-        is_coherence_ranges_problem=False
-        # Vérifier la cohérence des distributions
+        is_coherence_ranges_problem = False
+        # Vérification de la cohérence des distributions
         diff_features = check_distribution_coherence(X_train, X_test)
         if diff_features:
-            #is_coherence_ranges_problem = True
             print("Avertissement : certaines features ont des distributions très différentes entre X_train et X_test :")
             for f, stats in diff_features.items():
                 print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
 
-        # Vérifier les bornes
+        # Vérification des bornes
         oob = check_value_ranges(X_train, X_test)
         if oob:
-            #is_coherence_ranges_problem = True
             print(
                 "Avertissement : certaines features contiennent des valeurs en dehors des bornes observées dans X_train :")
             for f, vals in oob.items():
@@ -600,23 +575,48 @@ def train_and_evaluate_XGBOOST_model(
         if is_coherence_ranges_problem:
             raise ValueError("Un problème de valeurs hors bornes ou de distribution détecté")
 
-
-        # Ensuite, vous pouvez appliquer votre scaler sur les X_train et X_test nettoyés
-        # par exemple :
-        X_train, X_test, scaler, scaler_params = apply_scaling(
+        # Application du scaling
+        X_train_scaled, X_test_scaled, scaler, scaler_params = apply_scaling(
             X_train,
             X_test,
             save_path=save_sacler_dir,
             chosen_scaler=chosen_scaler
         )
-        print("\nSacler actif\n")
-    else :
-        print("\nPas de sacler actif\n")
+        print("\nScaler actif\n")
 
-    print("X_train:")
+        # Réinsertion des valeurs NaN et Inf si demandé
+        reinsert_nan_inf_afterScaling = config.get('reinsert_nan_inf_afterScaling', False)
+
+        if reinsert_nan_inf_afterScaling:
+            X_train = X_train_original.copy()
+            X_test = X_test_original.copy()
+            y_train_label = y_train_label_original
+            y_test_label = y_test_label_original
+
+            # Mise à jour uniquement des valeurs valides avec les données scalées
+            X_train[mask_train] = X_train_scaled
+            X_test[mask_test] = X_test_scaled
+
+            print("\nRéinsertion des valeurs NaN et Inf effectuée")
+            print(f"Train : {(~mask_train).sum()} lignes réinsérées")
+            print(f"Test : {(~mask_test).sum()} lignes réinsérées")
+        else:
+            X_train = X_train_scaled
+            X_test = X_test_scaled
+    else:
+        print("\nPas de scaler actif\n")
+
+    if len(X_train) != len(y_train_label):
+        raise ValueError(f"Mismatch des tailles (pas de scaler): "
+                         f"X_train ({len(X_train)}) et y_train_label ({len(y_train_label)})")
+    if len(X_test) != len(y_test_label):
+        raise ValueError(f"Mismatch des tailles (pas de scaler): "
+                         f"X_test ({len(X_test)}) et y_test_label ({len(y_test_label)})")
+    print("X_train")
     print(X_train)
-    print("X_test:")
+    print("X_test")
     print(X_test)
+
 
     enable_vif_corr_mi = config.get('enable_vif_corr_mi', None)
     if enable_vif_corr_mi:
@@ -671,7 +671,7 @@ def train_and_evaluate_XGBOOST_model(
     assert X_test.shape[0] == y_test_label.shape[0], "X_test et y_test_label doivent avoir le même nombre de lignes"
 
     # Adjust the objective wrapper function
-    def objective_wrapper(trial, study, metric_dict):
+    def objective_wrapper(trial, study, model_weight_optuna):
         # Call your original objective function
         score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(df_init=df_init,
                                                                     trial=trial, study=study, X_train=X_train,
@@ -680,13 +680,13 @@ def train_and_evaluate_XGBOOST_model(
                                                                     X_train_full=X_train_full,
                                                                     device=device,
                                                                     config=config, nb_split_tscv=nb_split_tscv,
-                                                                    optima_score=xgb_metric_custom,
-                                                                    metric_dict=metric_dict,
+                                                                    model_weight_optuna=model_weight_optuna,
                                                                     weight_param=weight_param,
                                                                     random_state_seed_=random_state_seed,
                                                                     is_log_enabled=is_log_enabled,
                                                                     cv_method=cv_method,
-                                                                    selected_columns=selected_columns
+                                                                    selected_columns=selected_columns,
+                                                                    model=model
                                                                     )
 
         if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) == optuna_doubleMetrics.DISABLE:
@@ -696,7 +696,7 @@ def train_and_evaluate_XGBOOST_model(
             # Return both objectives
             return score_adjustedStd_val, pnl_perTrade_diff
 
-    metric_dict = {}
+    model_weight_optuna = {}
 
     weightPareto_pnl_val = config.get('weightPareto_pnl_val', 0.6)
     weightPareto_pnl_diff = config.get('weightPareto_pnl_diff', 0.4)
@@ -725,14 +725,14 @@ def train_and_evaluate_XGBOOST_model(
             seed=42,
             constraints_func=create_constraints_func() if config.get('use_optuna_constraints_func', False) else None
         )
-        study_xgb = optuna.create_study(
+        study_optuna = optuna.create_study(
             direction="maximize",
             sampler=sampler,
             pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)
         )
     else:
         # Create a multi-objective study
-        study_xgb = optuna.create_study(
+        study_optuna = optuna.create_study(
             directions=["maximize", "minimize"],
             sampler=optuna.samplers.NSGAIISampler(seed=42),
             pruner=optuna.pruners.MedianPruner(n_warmup_steps=5)
@@ -741,37 +741,42 @@ def train_and_evaluate_XGBOOST_model(
     # Créer une fonction wrapper pour le callback qui inclut optuna
 
     def callback_wrapper(study, trial):
-        return callback_optuna(study, trial, optuna, study_xgb, rfe_param, config,
+        return callback_optuna(study, trial, optuna, study_optuna, rfe_param, config,
                                results_directory)
 
 
     # Lancer l'optimisation avec le wrapper
 
-    # Lancer l'optimisation
-    study_xgb.optimize(
-        lambda trial: objective_wrapper(trial, study_xgb, metric_dict),
+    # Lancer l'optimisationxxxxxx
+    study_optuna.optimize(
+        lambda trial: objective_wrapper(trial, study_optuna, model_weight_optuna),
         n_trials=n_trials_optimization,
         callbacks=[callback_wrapper],
     )
 
-    bestResult_dict = study_xgb.user_attrs['bestResult_dict']
+    bestResult_dict = study_optuna.user_attrs['bestResult_dict']
+
+
+
 
     # Après l'optimisation
-    best_params = bestResult_dict["best_params"]
+    #best_params = bestResult_dict["best_params"]
+    params_optuna = bestResult_dict["params_optuna"]
+    model_weight_optuna = bestResult_dict["model_weight_optuna"]
+
+    optimal_threshold = model_weight_optuna['threshold']
+
+
     selected_feature_names = bestResult_dict["selected_feature_names"]
     rfe_param_value = bestResult_dict["use_of_rfe_in_optuna"]
     print("#################################")
     print("#################################")
     print(
-        f"## Optimisation Optuna terminée avec distance euclidienne. Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
-    print(f"## Meilleurs hyperparamètres trouvés: ", best_params)
-    #if (rfe_param_value != rfe_param.NO_RFE):
-       # feature_names = selected_feature_names
-    #     print(
-    #       f"## Nb des features lectionnées par RFECE({len(selected_feature_names)}) : {list(selected_feature_names)}")
-   # print(f"##       - Rappel avant RFECE nombre de feature: {len(X_train.columns)}")
+        f"## Optimisation Optuna terminée Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
+    print(f"## Meilleurs hyperparamètres trouvés pour params_optuna: ", params_optuna)
+    print(f"## Meilleurs hyperparamètres trouvés pour model_weight_optuna: ", model_weight_optuna)
 
-    optimal_threshold = best_params['threshold']
+
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])
     if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) != optuna_doubleMetrics.DISABLE:
@@ -784,44 +789,15 @@ def train_and_evaluate_XGBOOST_model(
 
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
 
-    """
-    if cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
-        if 'session_type_index' not in selected_columns:
-            feature_names.remove('session_type_index')
-            # Vérification pour session_type_index
-            if 'session_type_index' in X_train.columns and 'session_type_index' in X_test.columns:
-                X_train.drop('session_type_index', axis=1, inplace=True)
-                X_test.drop('session_type_index', axis=1, inplace=True)
-
-    # Vérifie si les colonnes sont identiques
-    if not set(X_train.columns) == set(selected_columns) or not set(X_test.columns) == set(selected_columns):
-        raise ValueError(
-            f"Les colonnes ne correspondent pas:\nColonnes attendues: {sorted(selected_columns)}\nColonnes X_train: {sorted(X_train.columns)}\nColonnes X_test: {sorted(X_test.columns)}")
-    """
-
-    # Réduire X_train à seulement les colonnes sélectionnées
-    use_of_rfe_in_optuna = config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE)
-
-    #if (use_of_rfe_in_optuna!=rfe_param.NO_RFE): # retrive best parameter form optuma ussing RFE
     print(selected_feature_names)
     X_train = X_train[selected_feature_names]
     X_test = X_test[selected_feature_names]
 
-    # Créer les DMatrix pour l'entraînement
-    sample_weights_train = compute_sample_weight('balanced', y=y_train_label)
-    print(X_train)
-    dtrain = xgb.DMatrix(X_train, label=y_train_label, weight=sample_weights_train)
-
-    # Créer les DMatrix pour le test
-    dtest = xgb.DMatrix(X_test, label=y_test_label)
-
     train_finalModel_analyse(xgb=xgb,
                              X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
-                             y_train_label=y_train_label,
-                             y_test_label=y_test_label,
-                             dtrain=dtrain, dtest=dtest,
+                             y_train_label=y_train_label,y_test_label=y_test_label,
                              nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
-                             best_params=best_params, config=config)
+                             config=config,weight_param=weight_param,bestResult_dict=bestResult_dict)
 
 
 ############### main######################
@@ -961,8 +937,8 @@ if __name__ == "__main__":
         'state',
         'State',
         'extrem',
-        'Extrem'
-        "bullish"
+        'Extrem',
+        "bullish",
     ]
 
     # Créer la liste des colonnes à exclure
