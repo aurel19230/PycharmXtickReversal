@@ -375,37 +375,47 @@ from sklearn.metrics import brier_score_loss
 
 def check_gpu_availability():
     torch_available = torch.cuda.is_available()
-    cupy_available = cp.cuda.is_available()
+    if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+        cupy_available = cp.cuda.is_available()
+    else:
+        print("CuPy ne sera pas utilisé sur macOS.")
 
-    if not (torch_available and cupy_available):
-        print("Erreur : GPU n'est pas disponible pour PyTorch et/ou CuPy. Le programme va s'arrêter.")
-        if not torch_available:
-            print("PyTorch ne détecte pas de GPU.")
-        if not cupy_available:
-            print("CuPy ne détecte pas de GPU.")
-        exit(1)
+    if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+        import cupy as cp
 
-    print("GPU est disponible. Utilisation de CUDA pour les calculs.")
-    print(f"GPU détecté par PyTorch : {torch.cuda.get_device_name(0)}")
-    print(f"GPU détecté par CuPy : {cp.cuda.runtime.getDeviceProperties(cp.cuda.Device())['name'].decode()}")
+        if not (torch_available and cupy_available):
+            print("Erreur : GPU n'est pas disponible pour PyTorch et/ou CuPy. Le programme va s'arrêter.")
+            if not torch_available:
+                print("PyTorch ne détecte pas de GPU.")
+            if not cupy_available:
+                print("CuPy ne détecte pas de GPU.")
+            exit(1)
+        print("GPU est disponible. Utilisation de CUDA pour les calculs.")
+        print(f"GPU détecté par PyTorch : {torch.cuda.get_device_name(0)}")
+        print(f"GPU détecté par CuPy : {cp.cuda.runtime.getDeviceProperties(cp.cuda.Device())['name'].decode()}")
+        # Affichage de la mémoire GPU disponible
+        torch_memory = torch.cuda.get_device_properties(0).total_memory
+        cupy_memory = cp.cuda.runtime.memGetInfo()[1]
 
-    # Vérification de la version CUDA
-    torch_cuda_version = torch.version.cuda
-    cupy_cuda_version = cp.cuda.runtime.runtimeGetVersion()
+        print(f"Mémoire GPU totale (PyTorch) : {torch_memory / 1e9:.2f} GB")
+        print(f"Mémoire GPU totale (CuPy) : {cupy_memory / 1e9:.2f} GB")
+        # Vérification de la version CUDA
+        torch_cuda_version = torch.version.cuda
+        cupy_cuda_version = cp.cuda.runtime.runtimeGetVersion()
 
-    print(f"Version CUDA pour PyTorch : {torch_cuda_version}")
-    print(f"Version CUDA pour CuPy : {cupy_cuda_version}")
+        print(f"Version CUDA pour PyTorch : {torch_cuda_version}")
+        print(f"Version CUDA pour CuPy : {cupy_cuda_version}")
 
-    if torch_cuda_version != cupy_cuda_version:
-        print("Attention : Les versions CUDA pour PyTorch et CuPy sont différentes.")
-        print("Cela pourrait causer des problèmes de compatibilité.")
+        if torch_cuda_version != cupy_cuda_version:
+            print("Attention : Les versions CUDA pour PyTorch et CuPy sont différentes.")
+            print("Cela pourrait causer des problèmes de compatibilité.")
 
-    # Affichage de la mémoire GPU disponible
-    torch_memory = torch.cuda.get_device_properties(0).total_memory
-    cupy_memory = cp.cuda.runtime.memGetInfo()[1]
+    else:
+        print("CuPy et Torcn ne seront pas importés sur macOS.")
 
-    print(f"Mémoire GPU totale (PyTorch) : {torch_memory / 1e9:.2f} GB")
-    print(f"Mémoire GPU totale (CuPy) : {cupy_memory / 1e9:.2f} GB")
+
+
+
 
 
 def plot_calibrationCurve_distrib(y_true, y_pred_proba, n_bins=200, strategy='uniform',
@@ -511,7 +521,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
-import cupy as cp  # Assurez-vous que cupy est installé si vous utilisez des arrays CuPy
 
 
 def to_numpy(array):
@@ -3741,7 +3750,6 @@ def manage_rfe_selection(X_train, y_train_label, config, trial, params, model_we
     return X_train, selected_feature_names
 
 
-import cupy as cp
 import numpy as np
 import xgboost as xgb
 from typing import Dict, List, Any, Tuple

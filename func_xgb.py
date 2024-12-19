@@ -1,4 +1,3 @@
-import cupy as cp
 import numpy as np
 import xgboost as xgb
 import warnings

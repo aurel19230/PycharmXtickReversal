@@ -1,6 +1,12 @@
 from enum import Enum
 import numpy as np
-import cupy as cp
+import platform
+
+if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+    import cupy as cp
+else:
+    print("CuPy ne sera pas importé sur macOS.")
+
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from datetime import datetime, timedelta
@@ -57,7 +63,6 @@ class ScalerMode(Enum):
     TRANSFORM = 1
      # Pour le test : transform uniquement
 
-import cupy as cp
 import numpy as np
 
 
