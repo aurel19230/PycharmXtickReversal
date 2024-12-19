@@ -17,7 +17,13 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
-import cupy as cp
+import platform
+
+if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+    import cupy as cp
+else:
+    print("CuPy ne sera pas importé sur macOS.")
+
 from sklearn.model_selection import KFold, TimeSeriesSplit
 import sys
 
