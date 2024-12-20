@@ -275,7 +275,9 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         raise
     finally:
         # Nettoyage
-        cp.get_default_memory_pool().free_all_blocks()
+        if config['device_'] == 'cuda':
+            import cupy as cp
+            cp.get_default_memory_pool().free_all_blocks()
     # print_notification("fin de la CV")
 
     if ENV == 'pycharm':
@@ -286,15 +288,131 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             study.stop()
     # Calculs finaux et métriques
 
-    # Conversion des métriques par fold
-    winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
-    nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
-    scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
-    tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
-    fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
-    tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
-    fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
-    scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+    if config['device_'] == 'cuda':
+        import cupy as cp
+
+        winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
+        nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
+        scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
+        tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
+        fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
+        tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
+        fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
+        scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+
+        # Nettoyage mémoire GPU
+        cp.get_default_memory_pool().free_all_blocks()
+    else:
+        # Utilisation directe sur CPU avec NumPy ou Python natif
+        winrates_by_fold_cpu = np.array(cv_results['winrates_by_fold']) if isinstance(cv_results['winrates_by_fold'],
+                                                                                      list) else cv_results[
+            'winrates_by_fold']
+        nb_trades_by_fold_cpu = np.array(cv_results['nb_trades_by_fold']) if isinstance(cv_results['nb_trades_by_fold'],
+                                                                                        list) else cv_results[
+            'nb_trades_by_fold']
+        scores_train_by_fold_cpu = np.array(cv_results['scores_train_by_fold']) if isinstance(
+            cv_results['scores_train_by_fold'], list) else cv_results['scores_train_by_fold']
+        tp_train_by_fold_cpu = np.array(cv_results['tp_train_by_fold']) if isinstance(cv_results['tp_train_by_fold'],
+                                                                                      list) else cv_results[
+            'tp_train_by_fold']
+        fp_train_by_fold_cpu = np.array(cv_results['fp_train_by_fold']) if isinstance(cv_results['fp_train_by_fold'],
+                                                                                      list) else cv_results[
+            'fp_train_by_fold']
+        tp_val_by_fold_cpu = np.array(cv_results['tp_val_by_fold']) if isinstance(cv_results['tp_val_by_fold'],
+                                                                                  list) else cv_results[
+            'tp_val_by_fold']
+        fp_val_by_fold_cpu = np.array(cv_results['fp_val_by_fold']) if isinstance(cv_results['fp_val_by_fold'],
+                                                                                  list) else cv_results[
+            'fp_val_by_fold']
+        scores_val_by_fold_cpu = np.array(cv_results['scores_val_by_fold']) if isinstance(
+            cv_results['scores_val_by_fold'], list) else cv_results['scores_val_by_fold']
+
+    if is_log_enabled:
+        display_metrics(cv_results)
+
+    # Conversion des fold_stats
+    fold_stats = {}
+    if config['device_'] == 'cuda':
+        import cupy as cp
+        for fold_num, stats in cv_results['fold_stats'].items():
+            fold_stats[fold_num] = {
+                'train_n_trades': float(cp.asnumpy(stats['train_n_trades'])) if isinstance(stats['train_n_trades'],
+                                                                                           cp.ndarray) else stats[
+                    'train_n_trades'],
+                'train_n_class_1': float(cp.asnumpy(stats['train_n_class_1'])) if isinstance(stats['train_n_class_1'],
+                                                                                             cp.ndarray) else stats[
+                    'train_n_class_1'],
+                'train_n_class_0': float(cp.asnumpy(stats['train_n_class_0'])) if isinstance(stats['train_n_class_0'],
+                                                                                             cp.ndarray) else stats[
+                    'train_n_class_0'],
+                'train_class_ratio': float(cp.asnumpy(stats['train_class_ratio'])) if isinstance(
+                    stats['train_class_ratio'],
+                    cp.ndarray) else stats[
+                    'train_class_ratio'],
+                'train_success_rate': float(cp.asnumpy(stats['train_success_rate'])) if isinstance(
+                    stats['train_success_rate'], cp.ndarray) else stats['train_success_rate'],
+                'val_n_trades': float(cp.asnumpy(stats['val_n_trades'])) if isinstance(stats['val_n_trades'],
+                                                                                       cp.ndarray) else stats[
+                    'val_n_trades'],
+                'val_n_class_1': float(cp.asnumpy(stats['val_n_class_1'])) if isinstance(stats['val_n_class_1'],
+                                                                                         cp.ndarray) else stats[
+                    'val_n_class_1'],
+                'val_n_class_0': float(cp.asnumpy(stats['val_n_class_0'])) if isinstance(stats['val_n_class_0'],
+                                                                                         cp.ndarray) else stats[
+                    'val_n_class_0'],
+                'val_class_ratio': float(cp.asnumpy(stats['val_class_ratio'])) if isinstance(stats['val_class_ratio'],
+                                                                                             cp.ndarray) else stats[
+                    'val_class_ratio'],
+                'val_success_rate': float(cp.asnumpy(stats['val_success_rate'])) if isinstance(
+                    stats['val_success_rate'],
+                    cp.ndarray) else stats[
+                    'val_success_rate'],
+                'fold_num': stats['fold_num'],
+                'train_size': stats['train_size'],
+                'val_size': stats['val_size'],
+                'best_iteration': stats['best_iteration'],
+                'val_score': stats['val_score'],
+                'train_score': stats['train_score']
+            }
+
+        # Nettoyage mémoire GPU
+        cp.get_default_memory_pool().free_all_blocks()
+    else:
+        for fold_num, stats in cv_results['fold_stats'].items():
+            fold_stats[fold_num] = {
+                'train_n_trades': float(stats['train_n_trades']) if isinstance(stats['train_n_trades'], np.ndarray) else
+                stats['train_n_trades'],
+                'train_n_class_1': float(stats['train_n_class_1']) if isinstance(stats['train_n_class_1'],
+                                                                                 np.ndarray) else stats[
+                    'train_n_class_1'],
+                'train_n_class_0': float(stats['train_n_class_0']) if isinstance(stats['train_n_class_0'],
+                                                                                 np.ndarray) else stats[
+                    'train_n_class_0'],
+                'train_class_ratio': float(stats['train_class_ratio']) if isinstance(stats['train_class_ratio'],
+                                                                                     np.ndarray) else stats[
+                    'train_class_ratio'],
+                'train_success_rate': float(stats['train_success_rate']) if isinstance(stats['train_success_rate'],
+                                                                                       np.ndarray) else stats[
+                    'train_success_rate'],
+                'val_n_trades': float(stats['val_n_trades']) if isinstance(stats['val_n_trades'], np.ndarray) else
+                stats['val_n_trades'],
+                'val_n_class_1': float(stats['val_n_class_1']) if isinstance(stats['val_n_class_1'], np.ndarray) else
+                stats['val_n_class_1'],
+                'val_n_class_0': float(stats['val_n_class_0']) if isinstance(stats['val_n_class_0'], np.ndarray) else
+                stats['val_n_class_0'],
+                'val_class_ratio': float(stats['val_class_ratio']) if isinstance(stats['val_class_ratio'],
+                                                                                 np.ndarray) else stats[
+                    'val_class_ratio'],
+                'val_success_rate': float(stats['val_success_rate']) if isinstance(stats['val_success_rate'],
+                                                                                   np.ndarray) else stats[
+                    'val_success_rate'],
+                'fold_num': stats['fold_num'],
+                'train_size': stats['train_size'],
+                'val_size': stats['val_size'],
+                'best_iteration': stats['best_iteration'],
+                'val_score': stats['val_score'],
+                'train_score': stats['train_score']
+            }
 
     # Conversion des totaux validation
     total_tp_val = float(cv_results['metrics']['total_tp_val'])  # Déjà en NumPy
@@ -307,53 +425,6 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     total_fp_train = float(cv_results['metrics']['total_fp_train'])
     total_tn_train = float(cv_results['metrics']['total_tn_train'])
     total_fn_train = float(cv_results['metrics']['total_fn_train'])
-
-    if is_log_enabled:
-        display_metrics(cv_results)
-
-    # Conversion des fold_stats
-    fold_stats = {}
-    for fold_num, stats in cv_results['fold_stats'].items():
-        fold_stats[fold_num] = {
-            'train_n_trades': float(cp.asnumpy(stats['train_n_trades'])) if isinstance(stats['train_n_trades'],
-                                                                                       cp.ndarray) else stats[
-                'train_n_trades'],
-            'train_n_class_1': float(cp.asnumpy(stats['train_n_class_1'])) if isinstance(stats['train_n_class_1'],
-                                                                                         cp.ndarray) else stats[
-                'train_n_class_1'],
-            'train_n_class_0': float(cp.asnumpy(stats['train_n_class_0'])) if isinstance(stats['train_n_class_0'],
-                                                                                         cp.ndarray) else stats[
-                'train_n_class_0'],
-            'train_class_ratio': float(cp.asnumpy(stats['train_class_ratio'])) if isinstance(stats['train_class_ratio'],
-                                                                                             cp.ndarray) else stats[
-                'train_class_ratio'],
-            'train_success_rate': float(cp.asnumpy(stats['train_success_rate'])) if isinstance(
-                stats['train_success_rate'], cp.ndarray) else stats['train_success_rate'],
-            'val_n_trades': float(cp.asnumpy(stats['val_n_trades'])) if isinstance(stats['val_n_trades'],
-                                                                                   cp.ndarray) else stats[
-                'val_n_trades'],
-            'val_n_class_1': float(cp.asnumpy(stats['val_n_class_1'])) if isinstance(stats['val_n_class_1'],
-                                                                                     cp.ndarray) else stats[
-                'val_n_class_1'],
-            'val_n_class_0': float(cp.asnumpy(stats['val_n_class_0'])) if isinstance(stats['val_n_class_0'],
-                                                                                     cp.ndarray) else stats[
-                'val_n_class_0'],
-            'val_class_ratio': float(cp.asnumpy(stats['val_class_ratio'])) if isinstance(stats['val_class_ratio'],
-                                                                                         cp.ndarray) else stats[
-                'val_class_ratio'],
-            'val_success_rate': float(cp.asnumpy(stats['val_success_rate'])) if isinstance(stats['val_success_rate'],
-                                                                                           cp.ndarray) else stats[
-                'val_success_rate'],
-            'fold_num': stats['fold_num'],
-            'train_size': stats['train_size'],
-            'val_size': stats['val_size'],
-            'best_iteration': stats['best_iteration'],
-            'val_score': stats['val_score'],
-            'train_score': stats['train_score']
-        }
-
-    # Nettoyage mémoire GPU
-    cp.get_default_memory_pool().free_all_blocks()
 
     # Calculs des métriques finales
     total_samples_val = total_tp_val + total_fp_val + total_tn_val + total_fn_val
@@ -831,7 +902,7 @@ if __name__ == "__main__":
     print(f"Le répertoire cible est : {target_directory}")
 
     results_directory = config.get('results_directory', None)
-
+    print(results_directory)
     # Créer le répertoire s'il n'existe pas
     os.makedirs(results_directory, exist_ok=True)
 
