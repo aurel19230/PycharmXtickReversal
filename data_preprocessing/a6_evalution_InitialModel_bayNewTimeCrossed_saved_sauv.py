@@ -5,7 +5,10 @@ from sklearn.metrics import make_scorer
 from functools import partial
 from typing import Dict, List, Tuple
 from datetime import datetime
-
+import optuna
+from colorama import Fore, Style, init
+from func_standard import detect_environment
+from definition import *
 import time
 
 from sklearn.utils.class_weight import compute_sample_weight
@@ -17,12 +20,7 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
-import platform
 
-if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
-    import cupy as cp
-else:
-    print("CuPy ne sera pas importé sur macOS.")
 
 from sklearn.model_selection import KFold, TimeSeriesSplit
 import sys
@@ -64,10 +62,7 @@ def install_and_import_packages(packages, ENV=None):
 
 
 # Import des packages communs
-import optuna
-from colorama import Fore, Style, init
-from func_standard import detect_environment
-from definition import *
+
 
 # Utilisation
 ENV = detect_environment()
@@ -815,6 +810,7 @@ if __name__ == "__main__":
     weight_param=get_weight_param()
     config=get_config()
     directories = DIRECTORY_PATH.split(os.path.sep)
+    print(directories)
     target_directory = directories[-2]
     results_directory=os.path.join(base_results_path, target_directory),
 

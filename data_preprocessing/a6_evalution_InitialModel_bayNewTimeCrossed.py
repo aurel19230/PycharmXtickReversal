@@ -412,7 +412,9 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
                 'best_iteration': stats['best_iteration'],
                 'val_score': stats['val_score'],
                 'train_score': stats['train_score']
+
             }
+        #exit(547)
 
     # Conversion des totaux validation
     total_tp_val = float(cv_results['metrics']['total_tp_val'])  # Déjà en NumPy

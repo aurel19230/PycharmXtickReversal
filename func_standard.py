@@ -371,11 +371,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
-
+if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+    import cupy as cp
+else:
+    print("CuPy ne sera pas importé sur macOS.")
 
 def check_gpu_availability():
     torch_available = torch.cuda.is_available()
     if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
+        import cupy as cp
         cupy_available = cp.cuda.is_available()
     else:
         print("CuPy ne sera pas utilisé sur macOS.")
@@ -636,15 +640,29 @@ def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weig
     Calcule le score ajusté pondéré avec gestion spéciale du cas nb_split_weight=0
 
     Args:
-        scores: Liste des scores PNL pour chaque split
+        scores: Liste des scores PNL pour chaque split (Peut être NumPy, liste Python, ou CuPy)
         weight_split: Poids à appliquer aux splits les plus anciens
         nb_split_weight: Nombre de splits auxquels appliquer le poids spécifique
         std_penalty_factor: Facteur de pénalité pour l'écart-type
     """
-    if nb_split_weight > len(scores):
-        raise ValueError("nb_split_weight ne peut pas être supérieur au nombre de scores.")
+    # Import numpy ici si ce n'est pas déjà fait plus haut dans le code
+    import numpy as np
+
+    # Si `scores` est un tableau CuPy, convertissez-le en NumPy
+    # Vérification par hasattr:
+    if hasattr(scores, 'get'):
+        scores = scores.get()  # Convertit un tableau CuPy en tableau NumPy
+
+    # Si `scores` est une liste de tableaux CuPy, convertissez chaque élément
+    # dans le cas où `scores` est une liste.
+    # Cela dépend de la structure de `scores`. Si c'est directement un Cupy array,
+    # la conversion ci-dessus suffit. Sinon, vous pouvez faire:
+    # scores = [s.get() if hasattr(s, 'get') else s for s in scores]
 
     scores = np.array(scores)
+
+    if nb_split_weight > len(scores):
+        raise ValueError("nb_split_weight ne peut pas être supérieur au nombre de scores.")
 
     if nb_split_weight == 0:
         # Cas sans pondération : calcul traditionnel
@@ -6441,46 +6459,104 @@ def setup_cv_method(df_init=None, X_train=None, y_train_label=None, cv_method=No
     else:
         raise ValueError(f"Unknown cv_method: {cv_method}")
 
-
-def calculate_constraints_optuna(trial=None, config=None):
+def check_variable(value, name):
     """
-    Calcule les contraintes pour un modèle d'optimisation en utilisant trial et config.
+    Vérifie si une variable contient des valeurs invalides.
+
+    Args:
+        value: La valeur à vérifier (peut être une liste ou une valeur scalaire).
+        name: Le nom de la variable (pour les messages d'erreur).
+
+    Raises:
+        ValueError: Si la variable contient des valeurs invalides.
+    """
+    if value is None:
+        raise ValueError(f"La variable '{name}' est None et doit être définie.")
+    if isinstance(value, (list, tuple)):
+        if any(v is None or v == float('inf') or v == float('-inf') for v in value):
+            raise ValueError(f"La variable '{name}' contient des valeurs invalides: {value}")
+    else:
+        if value == float('inf') or value == float('-inf'):
+            raise ValueError(f"La variable '{name}' est infinie: {value}")
+        if value is None:
+            raise ValueError(f"La variable '{name}' est None et doit être définie.")
+def calculate_constraints_optuna(trial=None, config=None, debug=True):
+    """
+    Calcule les contraintes pour un modèle d'optimisation en utilisant trial et config,
+    avec gestion de CuPy ou NumPy selon la configuration. Affiche les contraintes si debug est activé.
 
     Args:
         trial: Instance Optuna trial pour récupérer les user_attrs.
         config (dict): Configuration contenant les seuils de contraintes.
+        debug (bool): Si True, affiche les contraintes pour le débogage.
 
     Returns:
-        list: Contraintes calculées.
+        list: Contraintes calculées, toujours retournées sous forme de liste de floats.
     """
+    # Déterminer si on utilise CuPy ou NumPy
+    use_cuda = config is not None and config.get('device_') == 'cuda'
+    if use_cuda:
+        import cupy as cp
+        backend = cp
+    else:
+        import numpy as np
+        backend = np
+
     # Récupération des valeurs depuis trial
     ecart_train_val = trial.user_attrs.get('ecart_train_val', float('inf'))
     nb_trades_by_fold_list = trial.user_attrs.get('nb_trades_by_fold', [float('inf')])
     winrates_by_fold = trial.user_attrs.get('winrates_by_fold', None)
 
+    # Vérification des données récupérées
+    def validate_variable(var, name):
+        if var is None or (isinstance(var, (list, tuple)) and any(v is None or v == float('inf') for v in var)):
+            raise ValueError(f"La variable '{name}' contient des valeurs invalides: {var}")
+
+    validate_variable(ecart_train_val, "ecart_train_val")
+    validate_variable(nb_trades_by_fold_list, "nb_trades_by_fold_list")
+    validate_variable(winrates_by_fold, "winrates_by_fold")
+
     # Récupération des seuils depuis config
     constraint_min_trades_threshold_by_Fold = config.get('constraint_min_trades_threshold_by_Fold', float('inf'))
     constraint_ecart_train_val = config.get('constraint_ecart_train_val', float('inf'))
-    constraint_winrates_by_fold = config.get('constraint_winrates_by_fold', None)
+    constraint_winrates_by_fold = config.get('constraint_winrates_by_fold', float('inf'))
 
-    # Calcul des valeurs minimales dans les listes, avec vérification
-    min_trades = min(nb_trades_by_fold_list) if isinstance(nb_trades_by_fold_list,
-                                                           list) and nb_trades_by_fold_list else float('inf')
-    min_winrate = min(winrates_by_fold) if isinstance(winrates_by_fold, list) and winrates_by_fold else float('inf')
+    # Calcul des contraintes avec backend
+    # Ces calculs renvoient des tenseurs 0-D (scalaires encapsulés dans un tableau)
+    constraint_ecart = backend.maximum(0, ecart_train_val - constraint_ecart_train_val)
+    min_trades = min(nb_trades_by_fold_list) if nb_trades_by_fold_list else float('inf')
+    constraint_min_trades = backend.maximum(0, constraint_min_trades_threshold_by_Fold - min_trades)
+    min_winrate = min(winrates_by_fold) if winrates_by_fold else float('inf')
+    constraint_winrates = backend.maximum(0, constraint_winrates_by_fold - min_winrate)
 
-    # Calcul des contraintes
-    constraint_ecart = max(0, ecart_train_val - constraint_ecart_train_val)
-    constraint_min_trades = max(0, constraint_min_trades_threshold_by_Fold - min_trades)
-    constraint_winrates = max(0, constraint_winrates_by_fold - min_winrate)
+    # Convertir en scalaires Python
+    # Si on est sur GPU, on utilise .item() après un .get()
+    # Si on est sur CPU (NumPy), .item() suffit.
+    def to_float(x):
+        if use_cuda:
+            return float(x.get().item()) if hasattr(x, 'get') else float(x)
+        else:
+            return float(x.item()) if hasattr(x, 'item') else float(x)
 
-    # Regroupement des contraintes
-    constraints = [
-        constraint_ecart,  # Contrainte sur l'écart train-val
-        constraint_min_trades,  # Contrainte sur le nombre minimal de trades
-        constraint_winrates  # Contrainte sur le winrate minimal
-    ]
+    constraint_ecart = to_float(constraint_ecart)
+    constraint_min_trades = to_float(constraint_min_trades)
+    constraint_winrates = to_float(constraint_winrates)
 
+    # Créer la liste finale des contraintes (de simples floats)
+    constraints = [constraint_ecart, constraint_min_trades, constraint_winrates]
+
+    # Affichage des contraintes pour le débogage
+    if debug:
+        print("\n--- DEBUG: Contraintes Calculées ---")
+        print(f"constraint_ecart: {constraint_ecart}")
+        print(f"constraint_min_trades: {constraint_min_trades}")
+        print(f"constraint_winrates: {constraint_winrates}")
+        print(f"Constraints (final): {constraints}")
+        print("----------------------------------\n")
+
+    # Retourne toujours une liste Python (compatible avec Optuna)
     return constraints
+
 
 
 def analyze_thresholds(

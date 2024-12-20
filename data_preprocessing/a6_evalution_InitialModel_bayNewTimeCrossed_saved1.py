@@ -5,7 +5,10 @@ from sklearn.metrics import make_scorer
 from functools import partial
 from typing import Dict, List, Tuple
 from datetime import datetime
-
+import optuna
+from colorama import Fore, Style, init
+from func_standard import detect_environment
+from definition import *
 import time
 
 from sklearn.utils.class_weight import compute_sample_weight
@@ -17,7 +20,8 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
-import cupy as cp
+
+
 from sklearn.model_selection import KFold, TimeSeriesSplit
 import sys
 
@@ -58,10 +62,7 @@ def install_and_import_packages(packages, ENV=None):
 
 
 # Import des packages communs
-import optuna
-from colorama import Fore, Style, init
-from func_standard import detect_environment
-from definition import *
+
 
 # Utilisation
 ENV = detect_environment()
@@ -278,7 +279,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     # print_notification("fin de la CV")
 
     if ENV == 'pycharm':
-        if keyboard.is_pressed('q'):  # Nécessite le package 'keyboard'
+        if keyboard.is_pressed('x'):  # Nécessite le package 'keyboard'
             study.stop()
     else:
         if os.path.exists('stop_optimization.txt'):
@@ -747,7 +748,7 @@ def train_and_evaluate_XGBOOST_model(
 
     # Lancer l'optimisation avec le wrapper
 
-    # Lancer l'optimisation
+    # Lancer l'optimisationxxxxxx
     study_optuna.optimize(
         lambda trial: objective_wrapper(trial, study_optuna, model_weight_optuna),
         n_trials=n_trials_optimization,
@@ -755,13 +756,12 @@ def train_and_evaluate_XGBOOST_model(
     )
 
     bestResult_dict = study_optuna.user_attrs['bestResult_dict']
-    #trial.set_user_attr('params_optuna', params_optuna)
-    #trial.set_user_attr('model_weight_optuna', model_weight_optuna)
+
 
 
 
     # Après l'optimisation
-    best_params = bestResult_dict["best_params"]
+    #best_params = bestResult_dict["best_params"]
     params_optuna = bestResult_dict["params_optuna"]
     model_weight_optuna = bestResult_dict["model_weight_optuna"]
 
@@ -774,7 +774,9 @@ def train_and_evaluate_XGBOOST_model(
     print("#################################")
     print(
         f"## Optimisation Optuna terminée Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
-    print(f"## Meilleurs hyperparamètres trouvés: ", best_params)
+    print(f"## Meilleurs hyperparamètres trouvés pour params_optuna: ", params_optuna)
+    print(f"## Meilleurs hyperparamètres trouvés pour model_weight_optuna: ", model_weight_optuna)
+
 
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])
@@ -796,8 +798,7 @@ def train_and_evaluate_XGBOOST_model(
                              X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
                              y_train_label=y_train_label,y_test_label=y_test_label,
                              nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
-                             best_params=best_params, config=config,
-                             weight_param=weight_param,bestResult_dict=bestResult_dict,is_log_enabled=is_log_enabled)
+                             config=config,weight_param=weight_param,bestResult_dict=bestResult_dict)
 
 
 ############### main######################
@@ -809,6 +810,7 @@ if __name__ == "__main__":
     weight_param=get_weight_param()
     config=get_config()
     directories = DIRECTORY_PATH.split(os.path.sep)
+    print(directories)
     target_directory = directories[-2]
     results_directory=os.path.join(base_results_path, target_directory),
 

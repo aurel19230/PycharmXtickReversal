@@ -201,14 +201,14 @@ def get_config():
         'min_features_if_RFE_AUTO': 3,
         'optuna_objective_type': optuna_doubleMetrics.DISABLE,  # USE_DIST_TO_IDEAL,
         'use_optuna_constraints_func': True,
-        'constraint_min_trades_threshold_by_Fold': 100,
+        'constraint_min_trades_threshold_by_Fold': 50,
         'constraint_ecart_train_val': 0.20,
         'constraint_winrates_by_fold': 0.55,
         'use_imbalance_penalty': False,
         'is_log_enabled': False,
         'enable_vif_corr_mi': False,
         'vif_threshold': 18,
-        'corr_threshold': 1,
+        'corr_threshold': 0.5,
         'mi_threshold': 0.001,
         'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
