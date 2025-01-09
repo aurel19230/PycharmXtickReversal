@@ -11,6 +11,8 @@ from func_standard import detect_environment
 from definition import *
 import time
 
+STOP_OPTIMIZATION = False
+
 from sklearn.utils.class_weight import compute_sample_weight
 import os
 from numba import njit
@@ -67,6 +69,7 @@ def install_and_import_packages(packages, ENV=None):
 # Utilisation
 ENV = detect_environment()
 
+
 # Import des fonctions selon l'environnement
 
 from func_standard import (print_notification,
@@ -81,9 +84,8 @@ from func_standard import (print_notification,
                            setup_model_params_optuna, setup_model_weight_optuna,cv_config, displaytNan_vifMiCorrFiltering,
                            load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
                            check_distribution_coherence, check_value_ranges, setup_cv_method,
-                           calculate_constraints_optuna,remove_nan_inf,add_session_id)
-if ENV == 'pycharm':
-    import keyboard
+                           calculate_constraints_optuna,remove_nan_inf,add_session_id,process_cv_results)
+
 
 
 
@@ -202,14 +204,17 @@ from numbers import Integral
 
 
 def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
-                     X_train_full=None,
-                     device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
-                     model_weight_optuna=None, weight_param=None,
-                     random_state_seed_=None, is_log_enabled=None, cv_method=cv_config.K_FOLD,
-                     selected_columns=None,model=None,
-                     ):
+                     X_train_full=None, device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
+                     model_weight_optuna=None, weight_param=None, random_state_seed_=None, is_log_enabled=None,
+                     cv_method=cv_config.K_FOLD, selected_columns=None, model=None, ENV='pycharm'):
+    """
+    Fonction d'objectif pour Optuna, incluant l’exécution d’une cross-validation,
+    la conversion GPU/CPU, l’extraction des métriques et le calcul des objectifs finaux.
+    Conserve tous les appels initiaux à trial.set_user_attr.
+    """
+
     try:
-        # État de l'itération
+        # 1) Incrémente un compteur d'itération statique
         if not hasattr(objective_optuna, 'iteration_counter'):
             objective_optuna.iteration_counter = 0
         objective_optuna.iteration_counter += 1
@@ -221,15 +226,25 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         np.random.seed(random_state_seed_)
         n_trials_optuna = config.get('n_trials_optuna', 4)
 
-
+        # 2) Configuration des hyperparamètres du modèle via Optuna
         params_optuna = setup_model_params_optuna(trial, config['model_type'], random_state_seed_, device)
 
+        # 3) Configuration du poids du modèle (class weight, etc.)
         model_weight_optuna = setup_model_weight_optuna(trial, weight_param, config)
 
-        cv = setup_cv_method(df_init=df_init,X_train=X_train, y_train_label=y_train_label,cv_method=cv_method,
-                             nb_split_tscv=nb_split_tscv,config=config)
+        # 4) Configuration de la méthode de cross-validation
+        cv = setup_cv_method(
+            df_init=df_init,
+            X_train=X_train,
+            y_train_label=y_train_label,
+            cv_method=cv_method,
+            nb_split_tscv=nb_split_tscv,
+            config=config
+        )
 
-        X_train, selected_feature_names = manage_rfe_selection(X_train=X_train,
+        # 5) Gestion éventuelle de la RFE (feature selection)
+        X_train, selected_feature_names = manage_rfe_selection(
+            X_train=X_train,
             y_train_label=y_train_label,
             config=config,
             trial=trial,
@@ -237,7 +252,10 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             model_weight_optuna=model_weight_optuna
         )
 
-        cv_results = run_cross_validation(X_train=X_train, X_train_full=X_train_full,
+        # 6) Lancement de la cross-validation
+        cv_results = run_cross_validation(
+            X_train=X_train,
+            X_train_full=X_train_full,
             y_train_label=y_train_label,
             trial=trial,
             params=params_optuna,
@@ -248,24 +266,6 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             model=model,
             config=config
         )
-        """
-        # 8. Sauvegarde de l'état
-        state = {
-            'iteration': objective_optuna.iteration_counter,
-            'trial_number': trial.number,
-            'params': params,
-            'threshold': model_weight_optuna['threshold'],
-            'mean_score': cv_results['mean_val_score'],
-            'std_score': cv_results['std_val_score'],
-            'metrics': {k: float(v) for k, v in cv_results['metrics'].items()},
-            'memory_usage': cp.get_default_memory_pool().used_bytes() / 1024 ** 2
-        }
-        """
-        """
-        print(f"\n{'=' * 50}")
-        print(f"Fin itération Optuna #{objective_optuna.iteration_counter}")
-        print(f"{'=' * 50}")
-         """
 
     except Exception as e:
         print(f"\n{'!' * 50}")
@@ -273,213 +273,148 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         print(str(e))
         print(f"{'!' * 50}")
         raise
+
     finally:
-        # Nettoyage
+        # Nettoyage mémoire GPU si nécessaire
         if config['device_'] == 'cuda':
             import cupy as cp
             cp.get_default_memory_pool().free_all_blocks()
-    # print_notification("fin de la CV")
 
-    if ENV == 'pycharm':
-        if keyboard.is_pressed('x'):  # Nécessite le package 'keyboard'
-            study.stop()
-    else:
-        if os.path.exists('stop_optimization.txt'):
-            study.stop()
-    # Calculs finaux et métriques
+    # 7) Conversion des résultats et gestion de l’environnement
+    processed_results = process_cv_results(cv_results=cv_results, config=config, ENV=ENV, study=study)
+    # -> Retourne un dict :
+    #    {
+    #      'winrates_by_fold', 'nb_trades_val_by_fold', 'scores_train_by_fold',
+    #      'tp_train_by_fold', 'fp_train_by_fold', 'tp_val_by_fold', 'fp_val_by_fold',
+    #      'scores_val_by_fold', 'fold_stats', 'metrics'
+    #    }
 
-    if config['device_'] == 'cuda':
-        import cupy as cp
+    # Validation metrics
+    winrates_val_by_fold = processed_results['winrates_val_by_fold']
+    nb_trades_val_by_fold = processed_results['nb_trades_val_by_fold']
+    nb_samples_val_by_fold = processed_results['nb_samples_val_by_fold']
+    tp_val_by_fold = processed_results['tp_val_by_fold']
+    fp_val_by_fold = processed_results['fp_val_by_fold']
+    scores_val_by_fold = processed_results['scores_val_by_fold']
 
-        winrates_by_fold_cpu = cp.asnumpy(cv_results['winrates_by_fold'])
-        nb_trades_by_fold_cpu = cp.asnumpy(cv_results['nb_trades_by_fold'])
-        scores_train_by_fold_cpu = cp.asnumpy(cv_results['scores_train_by_fold'])
-        tp_train_by_fold_cpu = cp.asnumpy(cv_results['tp_train_by_fold'])
-        fp_train_by_fold_cpu = cp.asnumpy(cv_results['fp_train_by_fold'])
-        tp_val_by_fold_cpu = cp.asnumpy(cv_results['tp_val_by_fold'])
-        fp_val_by_fold_cpu = cp.asnumpy(cv_results['fp_val_by_fold'])
-        scores_val_by_fold_cpu = cp.asnumpy(cv_results['scores_val_by_fold'])
+    # Training metrics
+    winrates_train_by_fold = processed_results['winrates_train_by_fold']
+    nb_trades_train_by_fold = processed_results['nb_trades_train_by_fold']
+    nb_samples_train_by_fold = processed_results['nb_samples_train_by_fold']
+    tp_train_by_fold = processed_results['tp_train_by_fold']
+    fp_train_by_fold = processed_results['fp_train_by_fold']
+    scores_train_by_fold = processed_results['scores_train_by_fold']
 
-        # Nettoyage mémoire GPU
-        cp.get_default_memory_pool().free_all_blocks()
-    else:
-        # Utilisation directe sur CPU avec NumPy ou Python natif
-        winrates_by_fold_cpu = np.array(cv_results['winrates_by_fold']) if isinstance(cv_results['winrates_by_fold'],
-                                                                                      list) else cv_results[
-            'winrates_by_fold']
-        nb_trades_by_fold_cpu = np.array(cv_results['nb_trades_by_fold']) if isinstance(cv_results['nb_trades_by_fold'],
-                                                                                        list) else cv_results[
-            'nb_trades_by_fold']
-        scores_train_by_fold_cpu = np.array(cv_results['scores_train_by_fold']) if isinstance(
-            cv_results['scores_train_by_fold'], list) else cv_results['scores_train_by_fold']
-        tp_train_by_fold_cpu = np.array(cv_results['tp_train_by_fold']) if isinstance(cv_results['tp_train_by_fold'],
-                                                                                      list) else cv_results[
-            'tp_train_by_fold']
-        fp_train_by_fold_cpu = np.array(cv_results['fp_train_by_fold']) if isinstance(cv_results['fp_train_by_fold'],
-                                                                                      list) else cv_results[
-            'fp_train_by_fold']
-        tp_val_by_fold_cpu = np.array(cv_results['tp_val_by_fold']) if isinstance(cv_results['tp_val_by_fold'],
-                                                                                  list) else cv_results[
-            'tp_val_by_fold']
-        fp_val_by_fold_cpu = np.array(cv_results['fp_val_by_fold']) if isinstance(cv_results['fp_val_by_fold'],
-                                                                                  list) else cv_results[
-            'fp_val_by_fold']
-        scores_val_by_fold_cpu = np.array(cv_results['scores_val_by_fold']) if isinstance(
-            cv_results['scores_val_by_fold'], list) else cv_results['scores_val_by_fold']
+    fold_stats           = processed_results['fold_stats']
+    metrics_dict         = processed_results['metrics']  # total_tp_val, total_fp_val, etc.
 
-    if is_log_enabled:
-        display_metrics(cv_results)
+    # Extraction des totaux
+    total_tp_val   = metrics_dict['total_tp_val']
+    total_fp_val   = metrics_dict['total_fp_val']
+    total_tn_val   = metrics_dict['total_tn_val']
+    total_fn_val   = metrics_dict['total_fn_val']
+    total_tp_train = metrics_dict['total_tp_train']
+    total_fp_train = metrics_dict['total_fp_train']
+    total_tn_train = metrics_dict['total_tn_train']
+    total_fn_train = metrics_dict['total_fn_train']
 
-    # Conversion des fold_stats
-    fold_stats = {}
-    if config['device_'] == 'cuda':
-        import cupy as cp
-        for fold_num, stats in cv_results['fold_stats'].items():
-            fold_stats[fold_num] = {
-                'train_n_trades': float(cp.asnumpy(stats['train_n_trades'])) if isinstance(stats['train_n_trades'],
-                                                                                           cp.ndarray) else stats[
-                    'train_n_trades'],
-                'train_n_class_1': float(cp.asnumpy(stats['train_n_class_1'])) if isinstance(stats['train_n_class_1'],
-                                                                                             cp.ndarray) else stats[
-                    'train_n_class_1'],
-                'train_n_class_0': float(cp.asnumpy(stats['train_n_class_0'])) if isinstance(stats['train_n_class_0'],
-                                                                                             cp.ndarray) else stats[
-                    'train_n_class_0'],
-                'train_class_ratio': float(cp.asnumpy(stats['train_class_ratio'])) if isinstance(
-                    stats['train_class_ratio'],
-                    cp.ndarray) else stats[
-                    'train_class_ratio'],
-                'train_success_rate': float(cp.asnumpy(stats['train_success_rate'])) if isinstance(
-                    stats['train_success_rate'], cp.ndarray) else stats['train_success_rate'],
-                'val_n_trades': float(cp.asnumpy(stats['val_n_trades'])) if isinstance(stats['val_n_trades'],
-                                                                                       cp.ndarray) else stats[
-                    'val_n_trades'],
-                'val_n_class_1': float(cp.asnumpy(stats['val_n_class_1'])) if isinstance(stats['val_n_class_1'],
-                                                                                         cp.ndarray) else stats[
-                    'val_n_class_1'],
-                'val_n_class_0': float(cp.asnumpy(stats['val_n_class_0'])) if isinstance(stats['val_n_class_0'],
-                                                                                         cp.ndarray) else stats[
-                    'val_n_class_0'],
-                'val_class_ratio': float(cp.asnumpy(stats['val_class_ratio'])) if isinstance(stats['val_class_ratio'],
-                                                                                             cp.ndarray) else stats[
-                    'val_class_ratio'],
-                'val_success_rate': float(cp.asnumpy(stats['val_success_rate'])) if isinstance(
-                    stats['val_success_rate'],
-                    cp.ndarray) else stats[
-                    'val_success_rate'],
-                'fold_num': stats['fold_num'],
-                'train_size': stats['train_size'],
-                'val_size': stats['val_size'],
-                'best_iteration': stats['best_iteration'],
-                'val_score': stats['val_score'],
-                'train_score': stats['train_score']
-            }
-
-        # Nettoyage mémoire GPU
-        cp.get_default_memory_pool().free_all_blocks()
-    else:
-        for fold_num, stats in cv_results['fold_stats'].items():
-            fold_stats[fold_num] = {
-                'train_n_trades': float(stats['train_n_trades']) if isinstance(stats['train_n_trades'], np.ndarray) else
-                stats['train_n_trades'],
-                'train_n_class_1': float(stats['train_n_class_1']) if isinstance(stats['train_n_class_1'],
-                                                                                 np.ndarray) else stats[
-                    'train_n_class_1'],
-                'train_n_class_0': float(stats['train_n_class_0']) if isinstance(stats['train_n_class_0'],
-                                                                                 np.ndarray) else stats[
-                    'train_n_class_0'],
-                'train_class_ratio': float(stats['train_class_ratio']) if isinstance(stats['train_class_ratio'],
-                                                                                     np.ndarray) else stats[
-                    'train_class_ratio'],
-                'train_success_rate': float(stats['train_success_rate']) if isinstance(stats['train_success_rate'],
-                                                                                       np.ndarray) else stats[
-                    'train_success_rate'],
-                'val_n_trades': float(stats['val_n_trades']) if isinstance(stats['val_n_trades'], np.ndarray) else
-                stats['val_n_trades'],
-                'val_n_class_1': float(stats['val_n_class_1']) if isinstance(stats['val_n_class_1'], np.ndarray) else
-                stats['val_n_class_1'],
-                'val_n_class_0': float(stats['val_n_class_0']) if isinstance(stats['val_n_class_0'], np.ndarray) else
-                stats['val_n_class_0'],
-                'val_class_ratio': float(stats['val_class_ratio']) if isinstance(stats['val_class_ratio'],
-                                                                                 np.ndarray) else stats[
-                    'val_class_ratio'],
-                'val_success_rate': float(stats['val_success_rate']) if isinstance(stats['val_success_rate'],
-                                                                                   np.ndarray) else stats[
-                    'val_success_rate'],
-                'fold_num': stats['fold_num'],
-                'train_size': stats['train_size'],
-                'val_size': stats['val_size'],
-                'best_iteration': stats['best_iteration'],
-                'val_score': stats['val_score'],
-                'train_score': stats['train_score']
-
-            }
-        #exit(547)
-
-    # Conversion des totaux validation
-    total_tp_val = float(cv_results['metrics']['total_tp_val'])  # Déjà en NumPy
-    total_fp_val = float(cv_results['metrics']['total_fp_val'])
-    total_tn_val = float(cv_results['metrics']['total_tn_val'])
-    total_fn_val = float(cv_results['metrics']['total_fn_val'])
-
-    # Conversion des totaux entraînement
-    total_tp_train = float(cv_results['metrics']['total_tp_train'])
-    total_fp_train = float(cv_results['metrics']['total_fp_train'])
-    total_tn_train = float(cv_results['metrics']['total_tn_train'])
-    total_fn_train = float(cv_results['metrics']['total_fn_train'])
-
-    # Calculs des métriques finales
-    total_samples_val = total_tp_val + total_fp_val + total_tn_val + total_fn_val
+    # 8) Calculs de métriques finales
+    total_samples_val   = total_tp_val + total_fp_val + total_tn_val + total_fn_val
     total_samples_train = total_tp_train + total_fp_train + total_tn_train + total_fn_train
-    total_trades_val = total_tp_val + total_fp_val
-    total_trades_train = total_tp_train + total_fp_train
+    total_trades_val    = total_tp_val + total_fp_val
+    total_trades_train  = total_tp_train + total_fp_train
 
-    total_pnl_val = sum(scores_val_by_fold_cpu)
-    total_pnl_train = sum(scores_train_by_fold_cpu)
+    total_pnl_val   = sum(scores_val_by_fold)
+    total_pnl_train = sum(scores_train_by_fold)
 
-    val_pnl_perTrades = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
+    val_pnl_perTrades   = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
     train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_train > 0 else 0
+    pnl_perTrade_diff   = abs(val_pnl_perTrades - train_pnl_perTrades)
 
-    pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
+    # 9) Paramètres additionnels via Optuna
+    weight_split = trial.suggest_float(
+        'weight_split',
+        weight_param['weight_split']['min'],
+        weight_param['weight_split']['max']
+    )
+    nb_split_weight = trial.suggest_int(
+        'nb_split_weight',
+        weight_param['nb_split_weight']['min'],
+        weight_param['nb_split_weight']['max']
+    )
+    std_penalty_factor = trial.suggest_float(
+        'std_penalty_factor',
+        weight_param['std_penalty_factor']['min'],
+        weight_param['std_penalty_factor']['max']
+    )
 
-    # Suggestions des paramètres finaux
-    weight_split = trial.suggest_float('weight_split', weight_param['weight_split']['min'],
-                                       weight_param['weight_split']['max'])
-    nb_split_weight = trial.suggest_int('nb_split_weight', weight_param['nb_split_weight']['min'],
-                                        weight_param['nb_split_weight']['max'])
-    std_penalty_factor = trial.suggest_float('std_penalty_factor', weight_param['std_penalty_factor']['min'],
-                                             weight_param['std_penalty_factor']['max'])
-
-    # Calcul du score final ajusté
+    # 10) Calcul du score final ajusté
     score_adjustedStd_val, mean_cv_score, std_dev_score = calculate_weighted_adjusted_score_custom(
-        scores_val_by_fold_cpu,
+        scores_val_by_fold,
         weight_split=weight_split,
         nb_split_weight=nb_split_weight,
-        std_penalty_factor=std_penalty_factor)
+        std_penalty_factor=std_penalty_factor
+    )
 
-    # Calculs des métriques finales
-    if total_samples_val > 0:
-        tp_percentage = (total_tp_val / total_samples_val) * 100
-    else:
-        tp_percentage = 0
-
-    win_rate = total_tp_val / total_trades_val * 100 if total_trades_val > 0 else 0
+    # Quelques métriques supplémentaires pour validation
+    tp_fp_percentage_val = ((total_tp_val + total_fp_val) / total_samples_val * 100) if total_samples_val > 0 else 0
+    win_rate_val = (total_tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
     tp_fp_diff_val = total_tp_val - total_fp_val
-    cummulative_pnl_val = total_tp_val * weight_param['profit_per_tp']['min'] + total_fp_val * \
-                          weight_param['loss_per_fp']['max']
+    cummulative_pnl_val = (total_tp_val * weight_param['profit_per_tp']['min']
+                           + total_fp_val * weight_param['loss_per_fp']['max'])
 
-    # print(f"cummulative_pnl_val: {cummulative_pnl_val}")
+    # Quelques métriques supplémentaires pour entraînement
+    tp_fp_percentage_train = (
+                (total_tp_train + total_fp_train) / total_samples_train * 100) if total_samples_train > 0 else 0
+    win_rate_train = (total_tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
+    tp_fp_diff_train = total_tp_train - total_fp_train
+    cummulative_pnl_train = (total_tp_train * weight_param['profit_per_tp']['min']
+                             + total_fp_train * weight_param['loss_per_fp']['max'])
 
-    # Mise à jour des attributs du trial
-    trial.set_user_attr('params_optuna', params_optuna)
-    trial.set_user_attr('model_weight_optuna', model_weight_optuna)
-
+    # 11) Mise à jour de tous les attributs du trial pour validation
+    # Mise à jour des attributs du trial pour validation
     trial.set_user_attr('total_tp_val', total_tp_val)
     trial.set_user_attr('total_fp_val', total_fp_val)
     trial.set_user_attr('total_tn_val', total_tn_val)
     trial.set_user_attr('total_fn_val', total_fn_val)
+
+    # Mise à jour des attributs du trial pour entraînement
+    trial.set_user_attr('total_tp_train', total_tp_train)
+    trial.set_user_attr('total_fp_train', total_fp_train)
+    trial.set_user_attr('total_tn_train', total_tn_train)
+    trial.set_user_attr('total_fn_train', total_fn_train)
+
+    # Mise à jour des attributs du trial pour validation
+    trial.set_user_attr('tp_fp_percentage_val', tp_fp_percentage_val)
+    trial.set_user_attr('win_rate_val', win_rate_val)
+    trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
+    trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
+
+    # Mise à jour des attributs du trial pour entraînement
+    trial.set_user_attr('tp_fp_percentage_train', tp_fp_percentage_train)
+    trial.set_user_attr('win_rate_train', win_rate_train)
+    trial.set_user_attr('tp_fp_diff_train', tp_fp_diff_train)
+    trial.set_user_attr('cummulative_pnl_train', cummulative_pnl_train)
+
+    # Mise à jour de tous les attributs du trial pour entraînement
+    trial.set_user_attr('total_tp_train', total_tp_train)
+    trial.set_user_attr('total_fp_train', total_fp_train)
+    trial.set_user_attr('total_tn_train', total_tn_train)
+    trial.set_user_attr('total_fn_train', total_fn_train)
+    trial.set_user_attr('tp_fp_percentage_train', tp_fp_percentage_train)
+    trial.set_user_attr('win_rate_train', win_rate_train)
+    trial.set_user_attr('tp_fp_diff_train', tp_fp_diff_train)
+    trial.set_user_attr('cummulative_pnl_train', cummulative_pnl_train)
+
+    trial.set_user_attr('params_optuna', params_optuna)
+    trial.set_user_attr('model_weight_optuna', model_weight_optuna)
     trial.set_user_attr('weight_param', weight_param)
-    trial.set_user_attr('scores_ens_val_list', scores_val_by_fold_cpu.tolist())
+
+    # scores_ens_val_list
+    trial.set_user_attr('scores_ens_val_list', scores_val_by_fold.tolist())
+    trial.set_user_attr('scores_ens_train_list', scores_train_by_fold.tolist())
+
+
     trial.set_user_attr('nb_split_tscv', nb_split_tscv)
     trial.set_user_attr('mean_cv_score', mean_cv_score)
     trial.set_user_attr('std_dev_score', std_dev_score)
@@ -490,73 +425,72 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     trial.set_user_attr('pnl_perTrade_diff', pnl_perTrade_diff)
     trial.set_user_attr('total_samples_val', total_samples_val)
     trial.set_user_attr('n_trials_optuna', n_trials_optuna)
-    trial.set_user_attr('tp_percentage', tp_percentage)
-    trial.set_user_attr('win_rate', win_rate)
+    trial.set_user_attr('tp_fp_percentage_val', tp_fp_percentage_val)
+    trial.set_user_attr('win_rate_val', win_rate_val)
     trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
     trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
 
-    trial.set_user_attr('winrates_by_fold', winrates_by_fold_cpu.tolist())
-    trial.set_user_attr('nb_trades_by_fold', nb_trades_by_fold_cpu.tolist())
+    trial.set_user_attr('winrates_val_by_fold', winrates_val_by_fold.tolist())
+    trial.set_user_attr('nb_trades_val_by_fold', nb_trades_val_by_fold.tolist())
+    trial.set_user_attr('nb_samples_val_by_fold', nb_samples_val_by_fold.tolist())
+
+    trial.set_user_attr('winrates_train_by_fold', winrates_train_by_fold.tolist())
+    trial.set_user_attr('nb_trades_train_by_fold', nb_trades_train_by_fold.tolist())
+    trial.set_user_attr('nb_samples_train_by_fold', nb_samples_train_by_fold.tolist())
+
 
     trial.set_user_attr('weight_split', weight_split)
     trial.set_user_attr('nb_split_weight', nb_split_weight)
     # trial.set_user_attr('model', model)
+
     trial.set_user_attr('selected_feature_names', selected_feature_names)
     trial.set_user_attr('use_of_rfe_in_optuna', config.get('use_of_rfe_in_optuna', rfe_param.NO_RFE))
-    trial.set_user_attr('optuna_objective_type',
-                        config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE))
+    trial.set_user_attr(
+        'optuna_objective_type',
+        config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE)
+    )
     trial.set_user_attr('profit_per_tp', weight_param['profit_per_tp'])
     trial.set_user_attr('penalty_per_fn', weight_param['penalty_per_fn'])
-    trial.set_user_attr('tp_val_list', tp_val_by_fold_cpu)
-    trial.set_user_attr('fp_val_list', fp_val_by_fold_cpu)
+    trial.set_user_attr('tp_val_list', tp_val_by_fold)
+    trial.set_user_attr('fp_val_list', fp_val_by_fold)
     trial.set_user_attr('cv_method', cv_method)
+
     use_imbalance_penalty = config.get('use_imbalance_penalty', False)
     trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
 
-
-
-    # 5. Retour du score ajusté (à minimiser) et de la différence de PnL par trade
+    # 12) Calcul des objectifs finaux
     objectives = calculate_normalized_objectives(
-        tp_train_list=tp_train_by_fold_cpu,
-        fp_train_list=fp_train_by_fold_cpu,
-        tp_val_list=tp_val_by_fold_cpu,
-        fp_val_list=fp_val_by_fold_cpu,
-        scores_train_list=scores_train_by_fold_cpu,
-        scores_val_list=scores_val_by_fold_cpu,
+        tp_train_list=tp_train_by_fold,
+        fp_train_list=fp_train_by_fold,
+        tp_val_list=tp_val_by_fold,
+        fp_val_list=fp_val_by_fold,
+        scores_train_list=scores_train_by_fold,
+        scores_val_list=scores_val_by_fold,
         fold_stats=fold_stats,
         scale_objectives=False,
         use_imbalance_penalty=use_imbalance_penalty
     )
-
-    # Extraction des métriques brutes pour analyse
     raw_metrics = objectives['raw_metrics']
 
-    # Affichage des métriques détaillées
-    print("\nMétriques brutes :")
-    print(f"PnL moyen          : {raw_metrics['avg_pnl']:.4f}")
-#    print(f"Winrate diff moyen : {raw_metrics['ecart_train_val']:.4%}")
-    print(f"Pénalité imbalance : {raw_metrics['imbalance_penalty']:.4f}")
-
-    print("\nObjectifs normalisés finaux :")
-    print(f"PnL objectif  Normalisé        : {objectives['pnl_norm_objective']:.4f}")
-    print(f"Winrate diff objectif Normalisé: {objectives['ecart_train_val']:.4f}")
-
-    # Sauvegarde des métriques dans Optuna
+    # Sauvegarde de quelques métriques pour debug
     trial.set_user_attr('pnl_norm_objective', objectives['pnl_norm_objective'])
     trial.set_user_attr('ecart_train_val', objectives['ecart_train_val'])
-    trial.set_user_attr('constraint_ecart_train_val', config.get('constraint_ecart_train_val',0))
-    trial.set_user_attr('constraint_winrates_by_fold', config.get('constraint_winrates_by_fold', 0))
-    trial.set_user_attr('constraint_min_trades_threshold_by_Fold',
-                        config.get('constraint_min_trades_threshold_by_Fold', 0))
+    trial.set_user_attr('constraint_ecart_train_val', config.get('constraint_ecart_train_val', 0))
+    trial.set_user_attr('constraint_winrates_val_by_fold', config.get('constraint_winrates_val_by_fold', 0))
+    trial.set_user_attr(
+        'constraint_min_trades_threshold_by_Fold',
+        config.get('constraint_min_trades_threshold_by_Fold', 0)
+    )
     trial.set_user_attr('raw_avg_pnl', raw_metrics['avg_pnl'])
     trial.set_user_attr('imbalance_penalty', raw_metrics['imbalance_penalty'])
 
-    # Retourner les objectifs pour Optuna
+    # 13) Retour des objectifs pour Optuna (à minimiser ou maximiser selon votre config)
     return [
         objectives['pnl_norm_objective'],
         objectives['ecart_train_val']
     ]
-    # return score_adjustedStd_val, pnl_perTrade_diff  # Retour normal
+
+
 
 
 ########################################
@@ -564,7 +498,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
 ########################################
 
 
-def train_and_evaluate_XGBOOST_model(
+def train_and_evaluate_model(
         df_init=None,
         config=None,  # Add config parameter here
         weight_param=None
@@ -814,19 +748,42 @@ def train_and_evaluate_XGBOOST_model(
 
     # Créer une fonction wrapper pour le callback qui inclut optuna
 
-    def callback_wrapper(study, trial):
+    def callback_optuna_wrapper(study, trial):
         return callback_optuna(study, trial, optuna, study_optuna, rfe_param, config,
                                results_directory)
 
+    # 1) Définir la variable et la callback au niveau module
+    from pynput import keyboard
 
-    # Lancer l'optimisation avec le wrapper
+
+    def callback_optuna_stop(study, trial):
+        global STOP_OPTIMIZATION
+        if STOP_OPTIMIZATION:
+            print("Callback triggered: stopping the study.")
+            study.stop()
+
+    def on_press(key):
+        global STOP_OPTIMIZATION
+        try:
+            if key.char == 'é':
+                print("Stop signal received: stopping the study.")
+                STOP_OPTIMIZATION = True
+        except AttributeError:
+            pass
+
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
 
     # Lancer l'optimisationxxxxxx
     study_optuna.optimize(
         lambda trial: objective_wrapper(trial, study_optuna, model_weight_optuna),
         n_trials=n_trials_optimization,
-        callbacks=[callback_wrapper],
+        callbacks=[callback_optuna_wrapper,callback_optuna_stop]
     )
+
+    # Arrêter proprement le listener après l'optimisation
+    listener.stop()
+    listener.join()
 
     bestResult_dict = study_optuna.user_attrs['bestResult_dict']
 
@@ -867,9 +824,9 @@ def train_and_evaluate_XGBOOST_model(
     X_train = X_train[selected_feature_names]
     X_test = X_test[selected_feature_names]
 
-    train_finalModel_analyse(xgb=xgb,
+    train_finalModel_analyse(
                              X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
-                             y_train_label=y_train_label,y_test_label=y_test_label,
+                             y_train_label_=y_train_label,y_test_label_=y_test_label,
                              nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
                              config=config,weight_param=weight_param,bestResult_dict=bestResult_dict)
 
@@ -1049,7 +1006,7 @@ if __name__ == "__main__":
     })
 
 
-    results = train_and_evaluate_XGBOOST_model(
+    results = train_and_evaluate_model(
         df_init=df_init,
         config=config,
         weight_param=weight_param

@@ -19,8 +19,9 @@ def get_path():
             base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
             DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
         else:
-            base_results_path = "/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
-            DIRECTORY_PATH = "/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB/merge"
+            base_results_path = "/Users/aurelienlachaud/Documents/trading_local/data_preprocessing/results_optim/"
+            DIRECTORY_PATH ="/Users/aurelienlachaud/Documents/trading_local/"
+            #DIRECTORY_PATH = "/Users/aurelienlachaud/Library/CloudStorage/OneDrive-Personal/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB/merge"
     else:  # collab
         DIRECTORY_PATH =r"/content/drive/MyDrive/testFile/"
         base_results_path = r"/content/drive/MyDrive/Colab_Notebooks/xtickReversal/results_optim/"
@@ -183,9 +184,9 @@ def get_config():
     # Configuration
     config = {
         'target_directory': "",
-        'device_': 'cuda',
+        'device_': 'cpu',
         'n_trials_optuna': 100000,
-        'nb_split_tscv_': 5,
+        'nb_split_tscv_': 8,
         'test_size_ratio': 0.2,
         'nanvalue_to_newval_': np.nan,
         'random_state_seed': 35,
@@ -201,9 +202,9 @@ def get_config():
         'min_features_if_RFE_AUTO': 3,
         'optuna_objective_type': optuna_doubleMetrics.DISABLE,  # USE_DIST_TO_IDEAL,
         'use_optuna_constraints_func': True,
-        'constraint_min_trades_threshold_by_Fold': 50,
+        'constraint_min_trades_threshold_by_Fold': 5,
         'constraint_ecart_train_val': 0.20,
-        'constraint_winrates_by_fold': 0.55,
+        'constraint_winrates_val_by_fold': 0.53,
         'use_imbalance_penalty': False,
         'is_log_enabled': False,
         'enable_vif_corr_mi': False,

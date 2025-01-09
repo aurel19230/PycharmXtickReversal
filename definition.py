@@ -129,19 +129,79 @@ def compute_confusion_matrix_cpu(y_true, y_pred, config):
 
     return TN, FP, FN, TP
 
-def log_cv_fold_metrics(X_train_full, X_train, val_pos, Y_train_cv, y_val_cv, tp_train, fp_train,
-                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val):
+
+def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold, config):
     """
-    Log les métriques pour chaque fold de validation croisée avec gestion d'erreurs.
+    Effectue les prédictions et calcule les métriques de confusion pour un jeu de données.
+
+    Args:
+        model: Le modèle entraîné
+        X_data: Les features d'entrée
+        y_true: Les labels réels
+        best_iteration: Le meilleur nombre d'itérations du modèle
+        threshold: Le seuil de classification
+        config: Dictionnaire de configuration
+
+    Returns:
+        tuple: (pred_proba, predictions, (tn, fp, fn, tp), y_true_converted)
+    """
+    # Prédictions
+    pred_proba = model.predict(X_data, iteration_range=(0, best_iteration))
+
+    # Conversion GPU si nécessaire
+    if config['device_'] != 'cpu':
+        import cupy as cp
+        pred_proba = cp.asarray(pred_proba, dtype=cp.float32)
+
+    # Application du seuil et processing
+    pred_proba, predictions = predict_and_process(pred_proba, threshold, config)
+
+    # Conversion des données pour la matrice de confusion
+    if config['device_'] != 'cpu':
+        import cupy as cp
+        y_true_converted = cp.asarray(y_true) if isinstance(y_true, (np.ndarray, pd.Series)) else y_true
+        predictions_converted = cp.asarray(predictions) if isinstance(predictions,
+                                                                      (np.ndarray, pd.Series)) else predictions
+    else:
+        y_true_converted = y_true
+        predictions_converted = predictions
+
+    # Calcul de la matrice de confusion
+    tn, fp, fn, tp = compute_confusion_matrix_cpu(y_true_converted, predictions_converted, config)
+
+    return pred_proba, predictions_converted, (tn, fp, fn, tp), y_true_converted
+
+
+def log_cv_fold_metrics(X_train_full, X_train_cv_pd, X_val_cv_pd, val_pos, Y_train_cv, y_val_cv, tp_train, fp_train,
+                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val, config, fold_num, nb_split_tscv, fold_raw_data):
+    """
+    Log les métriques de validation croisée au format standardisé.
+
+    Format:
+    === Fold N/Total ===
+    === Ranges ===
+    X_train_full index | Train pos range | Val pos range
+    === TRAIN ===
+    Distribution (Avant optimisation): stats
+    Métriques (après optimisation): métriques
+    === VALIDATION ===
+    Période: dates et durée
+    Distribution (Avant optimisation): stats
+    Métriques (après optimisation): métriques
 
     Args:
         X_train_full (pd.DataFrame): Données d'entraînement complètes
-        X_train (pd.DataFrame): Données d'entraînement du fold
+        X_train_cv (pd.DataFrame): Données d'entraînement du fold
+        X_val_cv_pd (pd.DataFrame): Données de validation du fold
         val_pos (array-like): Positions des données de validation
-        Y_train_cv (cp.ndarray): Labels d'entraînement sur GPU
-        y_val_cv (cp.ndarray): Labels de validation sur GPU
+        Y_train_cv (cp.ndarray): Labels d'entraînement
+        y_val_cv (cp.ndarray): Labels de validation
         tp_train, fp_train, tn_train, fn_train (int): Métriques d'entraînement
         tp_val, fp_val, tn_val, fn_val (int): Métriques de validation
+        config (dict): Configuration
+        fold_num (int): Numéro du fold courant
+        nb_split_tscv (int): Nombre total de folds
+        fold_data (dict): Données du fold
 
     Returns:
         dict: Dictionnaire contenant les métriques calculées
@@ -159,91 +219,117 @@ def log_cv_fold_metrics(X_train_full, X_train, val_pos, Y_train_cv, y_val_cv, tp
                 print(f"Erreur lors de la conversion timestamp->date: {str(e)}")
                 return None
 
-        # 2. Récupération des informations temporelles
-        try:
-            start_time, end_time, val_sessions = get_val_cv_time_range(X_train_full, X_train, val_pos)
-            time_diff = calculate_time_difference(timestamp_to_date_utc_(start_time),
-                                                  timestamp_to_date_utc_(end_time))
-            metrics['start_time'] = start_time
-            metrics['end_time'] = end_time
-            metrics['time_diff'] = time_diff
-        except Exception as e:
-            print(f"Erreur lors de la récupération des informations temporelles: {str(e)}")
-            return None
+        # === Fold et Ranges ===
+        print(f"\n============ Fold {fold_num + 1}/{nb_split_tscv} ============")
+        print("=== Ranges ===")
 
-        # 3. Calcul des tailles d'échantillons
-        try:
-            n_train = Y_train_cv.size if isinstance(Y_train_cv, cp.ndarray) else cp.asarray(
-                Y_train_cv).size
-            n_val = y_val_cv.size if isinstance(y_val_cv, cp.ndarray) else cp.asarray(y_val_cv).size
-            metrics['n_train'] = n_train
-            metrics['n_val'] = n_val
-        except Exception as e:
-            print(f"Erreur lors du calcul des tailles d'échantillons: {str(e)}")
-            return None
+        train_pos = fold_raw_data['train_indices']
+        val_pos = fold_raw_data['val_indices']
+        print(f"X_train_full index: {X_train_full.index.min()}-{X_train_full.index.max()} | "
+              f"Train pos range: {min(train_pos)}-{max(train_pos)} | "
+              f"Val pos range: {min(val_pos)}-{max(val_pos)}")
 
-        # 4. Calcul des trades avant optimisation
-        try:
-            trades_reussis = cp.sum(y_val_cv == 1).item()
-            trades_echoues = cp.sum(y_val_cv == 0).item()
-            total_trades = trades_reussis + trades_echoues
+        # === TRAIN ===
+        print("=== TRAIN ===")
+        # Période
+        start_time, end_time, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
+        time_diff = calculate_time_difference(
+            timestamp_to_date_utc_(start_time),
+            timestamp_to_date_utc_(end_time)
+        )
+        print(f"Période: Du {timestamp_to_date_utc_(start_time)} au {timestamp_to_date_utc_(end_time)} "
+              f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
 
-            winrate = (trades_reussis / total_trades * 100) if total_trades > 0 else 0
-            ratio_reussite_echec = trades_reussis / trades_echoues if trades_echoues > 0 else float('inf')
+        # Distribution avant optimisation
+        train_dist = fold_raw_data['distributions']['train']
+        total_train = sum(train_dist.values())
+        trades_reussis_train = train_dist.get(1, 0)
+        trades_echoues_train = train_dist.get(0, 0)
+        winrate_train = (trades_reussis_train / total_train * 100) if total_train > 0 else 0
+        ratio_train = trades_reussis_train / trades_echoues_train if trades_echoues_train > 0 else float('inf')
 
-            metrics.update({
-                'trades_reussis': trades_reussis,
-                'trades_echoues': trades_echoues,
-                'total_trades': total_trades,
-                'winrate': winrate,
-                'ratio_reussite_echec': ratio_reussite_echec
-            })
-        except Exception as e:
-            print(f"Erreur lors du calcul des trades: {str(e)}")
-            return None
+        print("Distribution (Avant optimisation):")
+        print(
+            f"- Total: {total_train} échantillons | Trades réussis: {trades_reussis_train} | Trades échoués: {trades_echoues_train}")
+        print(f"- Winrate: {winrate_train:.2f}%")
+        print(f"- Ratio réussis/échoués: {ratio_train:.2f}")
 
-        # 5. Métriques de confusion
-        try:
-            metrics.update({
-                'train_metrics': {
-                    'tp': tp_train, 'fp': fp_train,
-                    'tn': tn_train, 'fn': fn_train
-                },
-                'val_metrics': {
-                    'tp': tp_val, 'fp': fp_val,
-                    'tn': tn_val, 'fn': fn_val
-                }
-            })
-        except Exception as e:
-            print(f"Erreur lors de l'enregistrement des métriques de confusion: {str(e)}")
-            return None
+        # Métriques après optimisation
+        print("Métriques (après optimisation):")
+        total_trades_train = tp_train + fp_train
+        winrate_opti_train = (tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
+        print(f"- TP: {tp_train} | FP: {fp_train} | TN: {tn_train} | FN: {fn_train}")
+        print(
+            f"- Total trades pris: {total_trades_train} ({(total_trades_train / total_train * 100):.2f}% des échantillons)")
+        print(f"- Winrate: {winrate_opti_train:.2f}%")
 
-        # 6. Affichage formaté des résultats
-        try:
-            print(
-                f"\nPériode de validation - Du {timestamp_to_date_utc_(start_time)} ({start_time}) "
-                f"au {timestamp_to_date_utc_(end_time)} ({end_time})\n"
-                f"Durée: {time_diff.days} jours, {time_diff.months} mois, {time_diff.years} ans\n"
-                f"\nAvant optimisation:\n"
-                f"Trades réussis: {trades_reussis} | échoués: {trades_echoues} | "
-                f"total: {total_trades} | winrate: {winrate:.2f}% | "
-                f"ratio réussis/échoués: {ratio_reussite_echec:.2f}\n"
-                f"\nNombre de trades:\n"
-                f"Train: {n_train:,d}, Validation: {n_val:,d}\n"
-                f"\nMétriques Train:\n"
-                f"TP: {tp_train:4d} | FP: {fp_train:4d} | TN: {tn_train:4d} | FN: {fn_train:4d}\n"
-                f"\nMétriques Validation:\n"
-                f"TP: {tp_val:4d} | FP: {fp_val:4d} | TN: {tn_val:4d} | FN: {fn_val:4d}\n"
-            )
+        # === VALIDATION ===
+        print("=== VALIDATION ===")
 
-            return metrics
+        # Période
+        start_time, end_time, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
+        time_diff = calculate_time_difference(
+            timestamp_to_date_utc_(start_time),
+            timestamp_to_date_utc_(end_time)
+        )
+        print(f"Période: Du {timestamp_to_date_utc_(start_time)} au {timestamp_to_date_utc_(end_time)} "
+              f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
 
-        except Exception as e:
-            print(f"Erreur lors de l'affichage formaté: {str(e)}")
-            return None
+        # Distribution avant optimisation
+        val_dist = fold_raw_data['distributions']['val']
+        total_val = sum(val_dist.values())
+        trades_reussis_val = val_dist.get(1, 0)
+        trades_echoues_val = val_dist.get(0, 0)
+        winrate_val = (trades_reussis_val / total_val * 100) if total_val > 0 else 0
+        ratio_val = trades_reussis_val / trades_echoues_val if trades_echoues_val > 0 else float('inf')
+
+        print("Distribution (Avant optimisation):")
+        print(
+            f"- Total: {total_val} échantillons | Trades réussis: {trades_reussis_val} | Trades échoués: {trades_echoues_val}")
+        print(f"- Winrate: {winrate_val:.2f}%")
+        print(f"- Ratio réussis/échoués: {ratio_val:.2f}")
+
+        # Métriques après optimisation
+        print("Métriques (après optimisation):")
+        total_trades_val = tp_val + fp_val
+        winrate_opti_val = (tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
+        print(f"- TP: {tp_val} | FP: {fp_val} | TN: {tn_val} | FN: {fn_val}")
+        print(f"- Total trades pris: {total_trades_val} ({(total_trades_val / total_val * 100):.2f}% des échantillons)")
+        print(f"- Winrate: {winrate_opti_val:.2f}%")
+
+        # Mise à jour du dictionnaire des métriques
+        metrics.update({
+            'start_time': start_time,
+            'end_time': end_time,
+            'time_diff': time_diff,
+            'train_metrics': {
+                'total': total_train,
+                'trades_reussis': trades_reussis_train,
+                'trades_echoues': trades_echoues_train,
+                'winrate': winrate_train,
+                'ratio': ratio_train,
+                'tp': tp_train, 'fp': fp_train,
+                'tn': tn_train, 'fn': fn_train,
+                'total_trades_pris': total_trades_train,
+                'winrate_opti': winrate_opti_train
+            },
+            'val_metrics': {
+                'total': total_val,
+                'trades_reussis': trades_reussis_val,
+                'trades_echoues': trades_echoues_val,
+                'winrate': winrate_val,
+                'ratio': ratio_val,
+                'tp': tp_val, 'fp': fp_val,
+                'tn': tn_val, 'fn': fn_val,
+                'total_trades_pris': total_trades_val,
+                'winrate_opti': winrate_opti_val
+            }
+        })
+
+        return metrics
 
     except Exception as e:
-        print(f"Erreur générale dans log_cv_fold_metrics: {str(e)}")
+        print(f"Erreur dans log_cv_fold_metrics: {str(e)}")
         return None
 
 def calculate_time_difference(start_date_str, end_date_str):
@@ -288,9 +374,14 @@ def get_val_cv_time_range(X_full, X, index_val=None):
         KeyError: Si les index ne correspondent pas entre X_full et X
     """
     # Vérifications préliminaires
-    if X_full.empty or X.empty:
-        raise ValueError("Les DataFrames ne peuvent pas être vides")
+    """
+    if X_full.empty:
+        raise ValueError("X_full ne peut pas etre vide")
 
+    if X.empty:
+        raise ValueError("X ne peut pas etre vide")
+
+    """
     if 'timeStampOpening' not in X_full.columns:
         raise ValueError("La colonne 'timeStampOpening' doit être présente dans X_full")
 
@@ -303,6 +394,7 @@ def get_val_cv_time_range(X_full, X, index_val=None):
             if len(index_val) == 0:
                 raise ValueError("index_val ne peut pas être vide")
             # Récupérer les index originaux correspondant aux indices de validation
+            print(index_val)
             original_indices = X.index[index_val]
 
         # Vérifier que les indices existent dans X_full
@@ -403,7 +495,27 @@ def timestamp_to_date_utc(timestamp):
         return time.strftime(date_format, time.gmtime(timestamp))
 
 
-def compute_winrate_safe(tp, total_trades):
-    """Calcul sécurisé du winrate sur GPU"""
+def compute_winrate_safe(tp, total_trades, config):
+    """Calcul sécurisé du winrate sur GPU/CPU"""
+    # Détermine la bibliothèque à utiliser (CuPy ou NumPy)
+    xp = cp if config['device_'] == 'cuda' else np
+
+    # Utilise un masque pour éviter toute division par zéro
     mask = total_trades != 0
-    return cp.where(mask, tp / total_trades, cp.float32(0.0))
+    result = xp.zeros_like(total_trades, dtype=xp.float32)  # Initialise avec 0.0
+    result[mask] = tp[mask] / total_trades[mask]  # Effectue la division uniquement pour les indices valides
+
+    return result
+
+
+
+def log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data):
+    """
+    Affiche les informations détaillées sur le fold courant.
+
+    Args:
+        fold_num (int): Numéro du fold actuel
+        nb_split_tscv (int): Nombre total de folds
+        X_train_full (pd.DataFrame): Données d'entraînement complètes
+        fold_data (dict): Données du fold préparées
+    """

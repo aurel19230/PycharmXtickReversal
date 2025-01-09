@@ -42,7 +42,7 @@ def lgb_calculate_profitBased(y_true, y_pred_threshold, metric_dict):
 
 # Métrique personnalisée pour LightGBM
 def lgb_custom_metric_ProfitBased(metric_dict):
-    def profit_metric(preds, train_data):
+    def profit_metric(preds,train_data):
         """
         LightGBM custom metric pour le profit
         """
@@ -103,18 +103,23 @@ def train_lightgbm_model(X_train, y_train, X_valid, y_valid, metric_dict, w_p=1.
 def train_and_evaluate_lightgbm_model(
         X_train_cv=None,
         X_val_cv=None,
+        X_train_cv_pd=None,
+        X_val_cv_pd=None,
         Y_train_cv=None,
         y_val_cv=None,
+        data=None,
         params=None,
         model_weight_optuna=None,
         config=None,
-        fold_num=None,
+        fold_num=0,
+        fold_raw_data=None,
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
         X_train_full=None,
         is_log_enabled=False,
-        log_evaluation=0
+        log_evaluation=0,
+        nb_split_tscv=0
     ):
     """
     Train and evaluate a LightGBM model with custom metrics and objectives,
@@ -127,7 +132,9 @@ def train_and_evaluate_lightgbm_model(
     custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
     evals_result = {}
 
+
     if config['device_'] != 'cpu':
+        import cupy as cp
         X_train_cv = cp.asnumpy(X_train_cv.get())
         X_val_cv = cp.asnumpy(X_val_cv.get())
         Y_train_cv = cp.asnumpy(Y_train_cv.get())
@@ -188,31 +195,24 @@ def train_and_evaluate_lightgbm_model(
     best_iteration = val_score_bestIdx + 1
     train_score = train_scores[val_score_bestIdx]
 
-    # ---- Calcul des prédictions et métriques ----
-    # Prédictions validation
-    val_pred_proba = model.predict(X_val_cv, iteration_range=(0, best_iteration))
-    if config['device_'] != 'cpu':
-        val_pred_proba = cp.asarray(val_pred_proba, dtype=cp.float32)
-    val_pred_proba, val_pred = predict_and_process(val_pred_proba, model_weight_optuna['threshold'],config)
+    val_pred_proba, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = predict_and_compute_metrics(
+        model=model,
+        X_data=X_val_cv,
+        y_true=y_val_cv,
+        best_iteration=best_iteration,
+        threshold=model_weight_optuna['threshold'],
+        config=config
+    )
 
-    # Conversion pour le calcul de la matrice de confusion
-    if config['device_'] != 'cpu':
-        y_val_cv = cp.asarray(y_val_cv) if isinstance(y_val_cv, (np.ndarray, pd.Series)) else y_val_cv
-        val_pred = cp.asarray(val_pred) if isinstance(val_pred, (np.ndarray, pd.Series)) else val_pred
-    tn_val, fp_val, fn_val, tp_val = compute_confusion_matrix_cpu(y_val_cv, val_pred,config)
-
-    # Prédictions entraînement
-    train_pred_proba = model.predict(X_train_cv, iteration_range=(0, best_iteration))
-    if config['device_'] != 'cpu':
-        train_pred_proba = cp.asarray(train_pred_proba, dtype=cp.float32)
-    train_pred_proba, train_pred = predict_and_process(train_pred_proba, model_weight_optuna['threshold'],config)
-
-    # Conversion pour le calcul de la matrice de confusion
-    if config['device_'] != 'cpu':
-        Y_train_cv = cp.asarray(Y_train_cv) if isinstance(Y_train_cv, (np.ndarray, pd.Series)) else Y_train_cv
-        train_pred = cp.asarray(train_pred) if isinstance(train_pred, (np.ndarray, pd.Series)) else train_pred
-    tn_train, fp_train, fn_train, tp_train = compute_confusion_matrix_cpu(Y_train_cv, train_pred,config)
-
+    # Pour l'entraînement
+    y_train_predProba, train_pred, (tn_train, fp_train, fn_train, tp_train), Y_train_cv = predict_and_compute_metrics(
+        model=model,
+        X_data=X_train_cv,
+        y_true=Y_train_cv,
+        best_iteration=best_iteration,
+        threshold=model_weight_optuna['threshold'],
+        config=config
+    )
     # Métriques val & train
     val_metrics = {
         'tp': tp_val,
@@ -236,24 +236,19 @@ def train_and_evaluate_lightgbm_model(
     # Calcul winrate et trades
     tp_fp_sum_val = tp_val + fp_val
     tp_fp_sum_train = tp_train + fp_train
-
-    # Logging des métriques si souhaité
-    if is_log_enabled:
-        log_cv_fold_metrics(
-            X_train_full, X_train_cv, val_pos,
-            Y_train_cv, y_val_cv,
-            tp_train, fp_train, tn_train, fn_train,
-            tp_val, fp_val, tn_val, fn_val
-        )
+    tp_fp_tn_fn_sum_val = tp_val + fp_val+tn_val + fn_val
+    tp_fp_tn_fn_sum_train = tp_train + fp_train + tn_train + fn_train
 
     # Compilation des stats du fold
     fold_stats = {
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,
-        'val_winrate': compute_winrate_safe(tp_val, tp_fp_sum_val),
-        'train_winrate': compute_winrate_safe(tp_train, tp_fp_sum_train),
+        'val_winrate': compute_winrate_safe(tp_val, tp_fp_sum_val,config),
+        'train_winrate': compute_winrate_safe(tp_train, tp_fp_sum_train,config),
         'val_trades': tp_fp_sum_val,
+        'val_samples': tp_fp_tn_fn_sum_val,
         'train_trades': tp_fp_sum_train,
+        'train_samples': tp_fp_tn_fn_sum_train,
         'fold_num': fold_num,
         'best_iteration': best_iteration,
         'val_score': val_score_best,
@@ -265,17 +260,29 @@ def train_and_evaluate_lightgbm_model(
     if fold_stats_current is not None:
         fold_stats.update(fold_stats_current)
 
-    # debug_info tel que demandé
+    # Logging des métriques si souhaité
+    if is_log_enabled:
+        log_cv_fold_metrics(
+                X_train_full, X_train_cv_pd,X_val_cv_pd ,val_pos,
+                Y_train_cv, y_val_cv,
+                tp_train, fp_train, tn_train, fn_train,
+                tp_val, fp_val, tn_val, fn_val,config,fold_num, nb_split_tscv, fold_raw_data
+            )
+
+    # Au début du script, définir xp en fonction du device
+    xp = np if config['device_'] != 'cuda' else cp  # cp pour cupy, np pour numpy
+
+    # Ensuite le code peut être simplifié en :
     debug_info = {
         'threshold_used': model_weight_optuna['threshold'],
         'pred_proba_ranges': {
             'val': {
-                'min': float(cp.min(val_pred_proba)),
-                'max': float(cp.max(val_pred_proba))
+                'min': float(xp.min(val_pred_proba)),
+                'max': float(xp.max(val_pred_proba))
             },
             'train': {
-                'min': float(cp.min(train_pred_proba)),
-                'max': float(cp.max(train_pred_proba))
+                'min': float(xp.min(y_train_predProba)),
+                'max': float(xp.max(y_train_predProba))
             }
         }
     }
@@ -283,6 +290,8 @@ def train_and_evaluate_lightgbm_model(
     # Retour exact comme spécifié
     return {
         'model': model,
+        'fold_raw_data':fold_raw_data,
+        'y_train_predProba':y_train_predProba,
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,
         'fold_stats': fold_stats,
