@@ -1,6 +1,8 @@
 from enum import Enum
 import numpy as np
 import platform
+from termcolor import colored
+from colorama import Fore, Style, init
 
 if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
     import cupy as cp
@@ -39,16 +41,17 @@ class rfe_param(Enum):
 
 class model_customMetric(Enum):
     LGB_CUSTOM_METRIC_PROFITBASED=0
-    XGB_METRIC_ROCAUC = 1
-    XGB_METRIC_AUCPR = 2
-    XGB_METRIC_F1 = 4
-    XGB_METRIC_PRECISION = 5
-    XGB_METRIC_RECALL = 6
-    XGB_METRIC_MCC = 7
-    XGB_METRIC_YOUDEN_J = 8
-    XGB_METRIC_SHARPE_RATIO = 9
-    XGB_CUSTOM_METRIC_PROFITBASED = 10
-    XGB_CUSTOM_METRIC_TP_FP = 11
+    LGB_CUSTOM_METRIC_FOCALLOSS = 1
+    XGB_METRIC_ROCAUC = 11
+    XGB_METRIC_AUCPR = 12
+    XGB_METRIC_F1 = 13
+    XGB_METRIC_PRECISION = 14
+    XGB_METRIC_RECALL = 15
+    XGB_METRIC_MCC = 16
+    XGB_METRIC_YOUDEN_J = 17
+    XGB_METRIC_SHARPE_RATIO = 18
+    XGB_CUSTOM_METRIC_PROFITBASED = 19
+    XGB_CUSTOM_METRIC_TP_FP = 20
 
 class scalerChoice(Enum):
     SCALER_DISABLE = 0
@@ -71,10 +74,12 @@ def sigmoidCustom(x):
   return 1 / (1 + cp.exp(-x))
 def sigmoidCustom_cpu(x):
     """Custom sigmoid function."""
+    x = np.array(x, dtype=np.float64)  # Conversion explicite
     return 1 / (1 + np.exp(-x))
 
 
-def predict_and_process(pred_proba, threshold, config):
+
+def predict_and_process(pred_proba_raw, threshold, config):
     """Applique la sigmoid et le seuillage sur les prédictions.
 
     Args:
@@ -86,15 +91,15 @@ def predict_and_process(pred_proba, threshold, config):
         tuple: (probabilités après sigmoid, prédictions binaires)
     """
     if config['device_'] == 'cpu':
-        pred_proba = sigmoidCustom_cpu(pred_proba)
-        pred_proba = np.clip(pred_proba, 0.0, 1.0)
-        pred = (pred_proba > threshold).astype(np.int32)
+        pred_proba_afterSig = sigmoidCustom_cpu(pred_proba_raw)
+        pred_proba_afterSig = np.clip(pred_proba_afterSig, 0.0, 1.0)
+        pred = (pred_proba_afterSig > threshold).astype(np.int32)
     else:
-        pred_proba = sigmoidCustom(pred_proba)
-        pred_proba = cp.clip(pred_proba, 0.0, 1.0)
-        pred = (pred_proba > threshold).astype(cp.int32)
+        pred_proba_afterSig = sigmoidCustom(pred_proba_raw)
+        pred_proba_afterSig = cp.clip(pred_proba_afterSig, 0.0, 1.0)
+        pred = (pred_proba_afterSig > threshold).astype(cp.int32)
 
-    return pred_proba, pred
+    return pred_proba_afterSig, pred
 
 
 def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
@@ -146,15 +151,16 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
         tuple: (pred_proba, predictions, (tn, fp, fn, tp), y_true_converted)
     """
     # Prédictions
-    pred_proba = model.predict(X_data, iteration_range=(0, best_iteration))
+    pred_proba_log_odds = model.predict(X_data, iteration_range=(0, best_iteration),raw_score=True)
+    #print(f"pred_proba_log_oddsMin: {np.min(pred_proba_log_odds)}, Max: {np.max(pred_proba_log_odds)}")
 
     # Conversion GPU si nécessaire
     if config['device_'] != 'cpu':
         import cupy as cp
-        pred_proba = cp.asarray(pred_proba, dtype=cp.float32)
+        pred_proba_log_odds = cp.asarray(pred_proba_log_odds, dtype=cp.float32)
 
     # Application du seuil et processing
-    pred_proba, predictions = predict_and_process(pred_proba, threshold, config)
+    pred_proba_afterSig, predictions = predict_and_process(pred_proba_log_odds, threshold, config)
 
     # Conversion des données pour la matrice de confusion
     if config['device_'] != 'cpu':
@@ -169,11 +175,12 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
     # Calcul de la matrice de confusion
     tn, fp, fn, tp = compute_confusion_matrix_cpu(y_true_converted, predictions_converted, config)
 
-    return pred_proba, predictions_converted, (tn, fp, fn, tp), y_true_converted
+    return pred_proba_afterSig,pred_proba_log_odds, predictions_converted, (tn, fp, fn, tp), y_true_converted
 
 
-def log_cv_fold_metrics(X_train_full, X_train_cv_pd, X_val_cv_pd, val_pos, Y_train_cv, y_val_cv, tp_train, fp_train,
-                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val, config, fold_num, nb_split_tscv, fold_raw_data):
+def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, fp_train,
+                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val, fold_num, nb_split_tscv, fold_raw_data
+                           ,is_log_enabled):
     """
     Log les métriques de validation croisée au format standardisé.
 
@@ -219,115 +226,113 @@ def log_cv_fold_metrics(X_train_full, X_train_cv_pd, X_val_cv_pd, val_pos, Y_tra
                 print(f"Erreur lors de la conversion timestamp->date: {str(e)}")
                 return None
 
-        # === Fold et Ranges ===
-        print(f"\n============ Fold {fold_num + 1}/{nb_split_tscv} ============")
-        print("=== Ranges ===")
 
-        train_pos = fold_raw_data['train_indices']
-        val_pos = fold_raw_data['val_indices']
-        print(f"X_train_full index: {X_train_full.index.min()}-{X_train_full.index.max()} | "
-              f"Train pos range: {min(train_pos)}-{max(train_pos)} | "
-              f"Val pos range: {min(val_pos)}-{max(val_pos)}")
-
-        # === TRAIN ===
-        print("=== TRAIN ===")
-        # Période
-        start_time, end_time, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
-        time_diff = calculate_time_difference(
-            timestamp_to_date_utc_(start_time),
-            timestamp_to_date_utc_(end_time)
-        )
-        print(f"Période: Du {timestamp_to_date_utc_(start_time)} au {timestamp_to_date_utc_(end_time)} "
-              f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
 
         # Distribution avant optimisation
         train_dist = fold_raw_data['distributions']['train']
-        total_train = sum(train_dist.values())
-        trades_reussis_train = train_dist.get(1, 0)
-        trades_echoues_train = train_dist.get(0, 0)
-        winrate_train = (trades_reussis_train / total_train * 100) if total_train > 0 else 0
-        ratio_train = trades_reussis_train / trades_echoues_train if trades_echoues_train > 0 else float('inf')
-
-        print("Distribution (Avant optimisation):")
-        print(
-            f"- Total: {total_train} échantillons | Trades réussis: {trades_reussis_train} | Trades échoués: {trades_echoues_train}")
-        print(f"- Winrate: {winrate_train:.2f}%")
-        print(f"- Ratio réussis/échoués: {ratio_train:.2f}")
-
-        # Métriques après optimisation
-        print("Métriques (après optimisation):")
+        total_samples_train = sum(train_dist.values())
+        class1_train = train_dist.get(1, 0)
+        class0_train = train_dist.get(0, 0)
+        winrate_train = (class1_train / total_samples_train * 100) if total_samples_train > 0 else 0
+        ratio_train = class1_train / class0_train if class0_train > 0 else float('inf')
+        train_pos = fold_raw_data['train_indices']
+        val_pos = fold_raw_data['val_indices']
+        start_time_train, end_time_train, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
+        time_diff = calculate_time_difference(
+            timestamp_to_date_utc_(start_time_train),
+            timestamp_to_date_utc_(end_time_train)
+        )
         total_trades_train = tp_train + fp_train
         winrate_opti_train = (tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
-        print(f"- TP: {tp_train} | FP: {fp_train} | TN: {tn_train} | FN: {fn_train}")
-        print(
-            f"- Total trades pris: {total_trades_train} ({(total_trades_train / total_train * 100):.2f}% des échantillons)")
-        print(f"- Winrate: {winrate_opti_train:.2f}%")
 
-        # === VALIDATION ===
-        print("=== VALIDATION ===")
 
         # Période
-        start_time, end_time, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
+        start_time_val, end_time_val, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
         time_diff = calculate_time_difference(
-            timestamp_to_date_utc_(start_time),
-            timestamp_to_date_utc_(end_time)
+            timestamp_to_date_utc_(start_time_val),
+            timestamp_to_date_utc_(end_time_val)
         )
-        print(f"Période: Du {timestamp_to_date_utc_(start_time)} au {timestamp_to_date_utc_(end_time)} "
-              f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
 
         # Distribution avant optimisation
         val_dist = fold_raw_data['distributions']['val']
-        total_val = sum(val_dist.values())
-        trades_reussis_val = val_dist.get(1, 0)
-        trades_echoues_val = val_dist.get(0, 0)
-        winrate_val = (trades_reussis_val / total_val * 100) if total_val > 0 else 0
-        ratio_val = trades_reussis_val / trades_echoues_val if trades_echoues_val > 0 else float('inf')
+        total_samples_val = sum(val_dist.values())
+        class1_val = val_dist.get(1, 0)
+        class0_val = val_dist.get(0, 0)
+        winrate_val = (class1_val / total_samples_val * 100) if total_samples_val > 0 else 0
+        ratio_val = class1_val / class0_val if class0_val > 0 else float('inf')
 
-        print("Distribution (Avant optimisation):")
-        print(
-            f"- Total: {total_val} échantillons | Trades réussis: {trades_reussis_val} | Trades échoués: {trades_echoues_val}")
-        print(f"- Winrate: {winrate_val:.2f}%")
-        print(f"- Ratio réussis/échoués: {ratio_val:.2f}")
 
-        # Métriques après optimisation
-        print("Métriques (après optimisation):")
         total_trades_val = tp_val + fp_val
         winrate_opti_val = (tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
-        print(f"- TP: {tp_val} | FP: {fp_val} | TN: {tn_val} | FN: {fn_val}")
-        print(f"- Total trades pris: {total_trades_val} ({(total_trades_val / total_val * 100):.2f}% des échantillons)")
-        print(f"- Winrate: {winrate_opti_val:.2f}%")
+
 
         # Mise à jour du dictionnaire des métriques
-        metrics.update({
-            'start_time': start_time,
-            'end_time': end_time,
-            'time_diff': time_diff,
+        raw_metrics={
             'train_metrics': {
-                'total': total_train,
-                'trades_reussis': trades_reussis_train,
-                'trades_echoues': trades_echoues_train,
+                'total_samples_train': total_samples_train,
+                'class1_train': class1_train,
+                'class0_train': class0_train,
                 'winrate': winrate_train,
-                'ratio': ratio_train,
-                'tp': tp_train, 'fp': fp_train,
-                'tn': tn_train, 'fn': fn_train,
-                'total_trades_pris': total_trades_train,
-                'winrate_opti': winrate_opti_train
+                'ratio_train': ratio_train,
+                'start_time_train': timestamp_to_date_utc_(start_time_train),
+                'end_time_train': timestamp_to_date_utc_(end_time_train)
             },
             'val_metrics': {
-                'total': total_val,
-                'trades_reussis': trades_reussis_val,
-                'trades_echoues': trades_echoues_val,
+                'total': total_samples_val,
+                'class1_val': class1_val,
+                'class0_val': class0_val,
                 'winrate': winrate_val,
-                'ratio': ratio_val,
-                'tp': tp_val, 'fp': fp_val,
-                'tn': tn_val, 'fn': fn_val,
-                'total_trades_pris': total_trades_val,
-                'winrate_opti': winrate_opti_val
+                'ratio_val': ratio_val,
+                'start_time_val': timestamp_to_date_utc_(start_time_val),
+                'end_time_val': timestamp_to_date_utc_(end_time_val)
             }
-        })
+        }
+        if is_log_enabled:
+            # === Fold et Ranges ===
+            print(f"\n============ Fold {fold_num + 1}/{nb_split_tscv} ============")
+            print("=== Ranges ===")
 
-        return metrics
+            print(f"X_train_full index: {X_train_full.index.min()}-{X_train_full.index.max()} | "
+                  f"Train pos range: {min(train_pos)}-{max(train_pos)} | "
+                  f"Val pos range: {min(val_pos)}-{max(val_pos)}")
 
+            # === TRAIN ===
+            print("=== TRAIN ===")
+            # Période
+
+            print(f"Période: Du {timestamp_to_date_utc_(start_time_train)} au {timestamp_to_date_utc_(end_time_train)} "
+                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
+            print("Distribution (Avant optimisation):")
+            print(
+                f"- Total: {total_samples_train} échantillons | class1: {class1_train} | class0: {class0_train}")
+            print(f"- Winrate: {winrate_train:.2f}%")
+            print(f"- Ratio réussis/échoués: {ratio_train:.2f}")
+
+            # Métriques après optimisation
+            print("Métriques (après optimisation):")
+
+            print(f"- TP: {tp_train} | FP: {fp_train} | TN: {tn_train} | FN: {fn_train}")
+            print(
+                f"- Total trades pris: {total_trades_train} ({(total_trades_train / total_samples_train * 100):.2f}% des échantillons)")
+            print(f"- Winrate: {winrate_opti_train:.2f}%")
+
+            # === VALIDATION ===
+            print("=== VALIDATION ===")
+            print(f"Période: Du {timestamp_to_date_utc_(start_time_val)} au {timestamp_to_date_utc_(end_time_val)} "
+                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
+            print("Distribution (Avant optimisation):")
+            print(
+                f"- Total: {total_samples_val} échantillons | Trades réussis: {class1_val} | Trades échoués: {class0_val}")
+            print(f"- Winrate: {winrate_val:.2f}%")
+            print(f"- Ratio réussis/échoués: {ratio_val:.2f}")
+
+            # Métriques après optimisation
+            print("Métriques (après optimisation):")
+            print(f"- TP: {tp_val} | FP: {fp_val} | TN: {tn_val} | FN: {fn_val}")
+            print(
+                f"- Total trades pris: {total_trades_val} ({(total_trades_val / total_samples_val * 100):.2f}% des échantillons)")
+            print(f"- Winrate: {winrate_opti_val:.2f}%")
+        return raw_metrics
     except Exception as e:
         print(f"Erreur dans log_cv_fold_metrics: {str(e)}")
         return None
@@ -496,18 +501,58 @@ def timestamp_to_date_utc(timestamp):
 
 
 def compute_winrate_safe(tp, total_trades, config):
-    """Calcul sécurisé du winrate sur GPU/CPU"""
-    # Détermine la bibliothèque à utiliser (CuPy ou NumPy)
+    """
+    Calcule le winrate de manière sécurisée en pourcentage.
+
+    Args:
+        tp: Nombre de True Positives (trades gagnants)
+        total_trades: Nombre total de trades
+        config: Dictionnaire de configuration avec la clé 'device_'
+
+    Returns:
+        array: Winrate en pourcentage (0-100) avec gestion des divisions par zéro
+    """
+    # Sélectionne la bibliothèque appropriée selon le device
     xp = cp if config['device_'] == 'cuda' else np
 
-    # Utilise un masque pour éviter toute division par zéro
+    # Crée un masque pour identifier les positions où total_trades n'est pas zéro
     mask = total_trades != 0
-    result = xp.zeros_like(total_trades, dtype=xp.float32)  # Initialise avec 0.0
-    result[mask] = tp[mask] / total_trades[mask]  # Effectue la division uniquement pour les indices valides
+
+    # Initialise le tableau de résultats avec des zéros
+    result = xp.zeros_like(total_trades, dtype=xp.float32)
+
+    # Calcule le winrate en pourcentage uniquement pour les positions valides
+    # Multiplie par 100 pour convertir en pourcentage
+    result[mask] = (tp[mask] / total_trades[mask]) * 100
 
     return result
 
 
+def compute_winrate_ratio_difference(winrate_train, winrate_val, config):
+    """
+    Calcule l'écart relatif entre deux winrates sous forme de ratio en pourcentage.
+
+    Args:
+        winrate_train: Winrate de l'ensemble d'entraînement (déjà calculé)
+        winrate_val: Winrate de l'ensemble de validation (déjà calculé)
+        config: Configuration avec le type de device (CPU/GPU)
+
+    Returns:
+        array: Écart relatif en pourcentage avec gestion des cas spéciaux
+    """
+    # Sélectionne la bibliothèque selon le device
+    xp = cp if config['device_'] == 'cuda' else np
+
+    # Initialise le résultat avec des zéros
+    result = xp.zeros_like(winrate_train, dtype=xp.float32)
+
+    # Crée un masque pour les positions où winrate_train n'est pas zéro
+    mask = winrate_train != 0
+
+    # Calcule le ratio uniquement pour les positions valides
+    result[mask] = (winrate_train[mask] - winrate_val[mask]) / winrate_train[mask] * 100
+
+    return result
 
 def log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data):
     """
@@ -519,3 +564,131 @@ def log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data):
         X_train_full (pd.DataFrame): Données d'entraînement complètes
         fold_data (dict): Données du fold préparées
     """
+
+
+def calculate_profit_ratio(tp, fp, tp_fp_sum, profit_per_tp, loss_per_fp):
+    """
+    Calcule le ratio profit par trade avec gestion de la division par zéro
+
+    Args:
+        tp: Nombre de True Positives
+        fp: Nombre de False Positives
+        tp_fp_sum: Somme des trades (TP + FP)
+        profit_per_tp: Profit par trade gagnant
+        loss_per_fp: Perte par trade perdant
+
+    Returns:
+        float: Ratio de profit par trade, 0 si aucun trade
+    """
+    if tp_fp_sum == 0:
+        return 0.0
+
+    return (tp * profit_per_tp + fp * loss_per_fp) / tp_fp_sum
+
+
+import numpy as np
+
+
+def calculate_ratio_difference(ratio_train, ratio_val, config):
+    """
+    Calcule l'écart relatif entre les ratios train et validation
+    avec gestion de la division par zéro et compatibilité GPU/CPU
+
+    Args:
+        ratio_train: Ratio sur l'ensemble d'entraînement (float)
+        ratio_val: Ratio sur l'ensemble de validation (float)
+        config: Dictionnaire de configuration contenant la clé 'device_'
+
+    Returns:
+        float: Écart relatif en pourcentage
+    """
+    # Sélection de la bibliothèque appropriée (CuPy ou NumPy)
+    xp = cp if config['device_'] == 'cuda' else np
+
+    # Conversion des valeurs en type compatible avec le device
+    ratio_train = xp.array(ratio_train, dtype=xp.float32)
+    ratio_val = xp.array(ratio_val, dtype=xp.float32)
+
+    # Gestion du cas où ratio_train est 0
+    if xp.equal(ratio_train, 0):
+        return 0.0 if xp.equal(ratio_val, 0) else 100.0
+
+    # Calcul de l'écart relatif
+    result = ((ratio_train - ratio_val) / ratio_train) * 100
+
+    # Arrondir à 2 décimales
+    return float(xp.round(result, decimals=2))
+
+def format_constraint_message(is_violated, config, trial, constraint_name, config_key, attribute_key, check_type):
+    """
+    Formate un message de contrainte de manière uniforme avec les valeurs minimales ou maximales.
+
+    Args:
+        is_violated (bool): Indique si la contrainte est violée.
+        config (dict): Dictionnaire de configuration contenant les seuils.
+        trial (optuna.Trial): Essai Optuna en cours.
+        constraint_name (str): Nom de la contrainte pour l'affichage.
+        config_key (str): Clé pour accéder au seuil dans config.
+        attribute_key (str): Clé pour accéder aux valeurs dans trial.user_attrs.
+        check_type (str): Type de comparaison, 'max' ou 'min'.
+    """
+    # Récupération des valeurs avec gestion des cas vides
+    values = trial.user_attrs.get(attribute_key, [])
+    threshold = config.get(config_key, 0)
+
+    # Détermine la valeur à afficher (min ou max selon check_type)
+    if check_type == 'max':
+        value_to_compare = max(values) if values else 0
+        comparison = ">" if is_violated else "<="
+    elif check_type == 'min':
+        value_to_compare = min(values) if values else 0
+        comparison = "<" if is_violated else ">="
+    else:
+        raise ValueError("check_type must be 'max' or 'min'.")
+
+    # Détermine le style du message
+    color = Fore.RED if is_violated else Fore.GREEN
+    symbol = "-" if is_violated else "\u2713"
+
+    # Formate les valeurs de la liste pour l'affichage
+    formatted_values = [f"{x:.2f}" for x in values] if values else []
+
+    # Construction du message
+    if is_violated:
+        return (
+            color +
+            f"    {symbol} {constraint_name} {comparison} {threshold} " +
+            f"({check_type}: {value_to_compare:.2f}, values: {formatted_values})" +
+            Style.RESET_ALL
+        )
+    else:
+        return (
+            color +
+            f"    {symbol} {constraint_name} {comparison} {threshold}" +
+            Style.RESET_ALL
+        )
+
+from sklearn.linear_model import LinearRegression
+
+def linear_regression_slope_market_trend(series):
+    X = np.arange(len(series)).reshape(-1, 1)
+    y = series.values.reshape(-1, 1)
+    model = LinearRegression().fit(X, y)
+    slope = model.coef_[0][0]
+    return slope
+
+def apply_slope_with_session_check(data, window):
+    result = pd.Series(index=data.index, dtype=float)
+
+    for idx in result.index:
+        historical_data = data.loc[:idx]
+        last_session_start = historical_data[::-1]['SessionStartEnd'].eq(10).idxmax()
+        bars_since_session_start = len(historical_data.loc[last_session_start:idx])
+
+        if bars_since_session_start >= window:
+            series = data.loc[:idx, 'close'].tail(window)
+            result[idx] = linear_regression_slope_market_trend(series)
+        else:
+            result[idx] = np.nan
+
+    return result

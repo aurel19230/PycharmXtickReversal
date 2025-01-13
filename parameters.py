@@ -13,6 +13,8 @@ def get_path():
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
+    FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized.csv"
+
     ENV = detect_environment()
     if ENV == 'pycharm':
         if platform.system() != "Darwin":
@@ -74,37 +76,40 @@ def get_model_param_range(model_type):
         }
     elif model_type == modelType.LGBM:
         return {
+            # Plus de feuilles par arbre -> arbres plus complexes -> log odds plus étendus
+            'num_leaves': {'min': 60, 'max': 150},
 
-            # Nombre maximum de feuilles par arbre (à maintenir < 2^max_depth pour éviter le surapprentissage)
-            'num_leaves': {'min': 20, 'max': 85},  # Réduit pour éviter le surapprentissage
+            # Taux plus élevé = mises à jour plus agressives -> log odds plus extrêmes
+            'learning_rate': {'min': 0.007, 'max': 0.1, 'log': True},
 
-            # Taux d'apprentissage (plus petit avec plus d'itérations pour meilleure précision)
-            'learning_rate': {'min': 0.0007, 'max': 0.015, 'log': True},
+            # Plus petit nombre d'échantillons par feuille -> splits plus fins -> log odds plus dispersés
+            'min_child_samples': {'min': 40, 'max': 100},
 
-            # Nombre minimum d'observations par feuille (important contre le surapprentissage)
-            'min_child_samples': {'min': 20, 'max': 350},  # Augmenté selon recommandations
+            # Plus grande fraction des données -> arbres plus similaires -> log odds moins moyennés
+            'bagging_fraction': {'min': 0.5, 'max': 0.85},
 
-            # Fraction des données utilisées pour chaque itération
-            'bagging_fraction': {'min': 0.65, 'max': 0.90},
-
-            # Fraction des features utilisées pour chaque arbre
+            # Plus de features par arbre -> décisions plus tranchées -> log odds plus étendus
             'feature_fraction': {'min': 0.6, 'max': 0.85},
 
-            # Fraction des features utilisées pour chaque niveau de l'arbre
-            'feature_fraction_bynode': {'min': 0.65, 'max': 0.95},
+            # Plus de features par niveau -> splits plus discriminants -> log odds plus contrastés
+            'feature_fraction_bynode': {'min': 0.6, 'max': 0.95},
 
-            # Gain minimum nécessaire pour faire un split
-            'min_split_gain': {'min': 0.1, 'max': 5},
+            # Seuil de gain plus bas -> plus de splits autorisés -> log odds plus dispersés
+            'min_split_gain': {'min': 0.3, 'max': 4},
 
-            # Terme de régularisation L1 (équivalent à reg_alpha dans XGB)
-            'lambda_l1': {'min': 1, 'max': 3, 'log': True},
+            # Moins de régularisation L1 -> poids moins contraints -> log odds plus extrêmes
+            'lambda_l1': {'min': 0.3, 'max': 2.6, 'log': True},
 
-            # Terme de régularisation L2 (équivalent à reg_lambda dans XGB)
-            'lambda_l2': {'min': 0.1, 'max': 0.9, 'log': True},
+            # Moins de régularisation L2 -> poids moins lissés -> log odds plus étendus
+            'lambda_l2': {'min': 0.1, 'max': 1, 'log': True},
 
-            # Fréquence du bagging (chaque k itérations)
-            'bagging_freq': {'min': 1, 'max': 7}
+            # Bagging plus fréquent (valeurs plus petites) -> plus de moyennage -> log odds plus resserrés
+            # Bagging moins fréquent (valeurs plus grandes) -> moins de moyennage -> log odds plus dispersés
+            'bagging_freq': {'min': 2, 'max': 7}
         }
+
+
+
     elif model_type == modelType.CATBOOST:
         return {
             # Équivalent à XGB num_boost_round : Nombre total d'arbres
@@ -114,7 +119,7 @@ def get_model_param_range(model_type):
             'depth': {'min': 6, 'max': 12},
 
             # Équivalent à XGB learning_rate : Taux d'apprentissage
-            'learning_rate': {'min': 0.001, 'max': 0.03, 'log': True},
+            'learning_rate': {'min': 0.007, 'max': 0.06, 'log': True},
 
             # Paramètres de sous-échantillonnage
             # Équivalent à XGB min_child_weight : Nombre minimum d'échantillons dans une feuille
@@ -169,10 +174,10 @@ def get_weight_param():
         # Nombre d'itérations de boosting (équivalent à num_boost_round dans XGB)
         'num_boost_round': {'min': 400, 'max': 1200},
         'threshold': {'min': 0.45, 'max': 0.59},  # total_trades_val = tp + fp
-        'w_p': {'min': 0.6, 'max': 1.9},  # poid pour la class 1 dans objective
-        'w_n': {'min': 1, 'max': 1},  # poid pour la class 0 dans objective
-        'profit_per_tp': {'min': 1.25, 'max': 1.25},  # fixe, dépend des profits par trade
-        'loss_per_fp': {'min': -1.25, 'max': -1.25},  # fixe, dépend des pertes par trade
+        'w_p': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
+        'w_n': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
+        #'profit_per_tp': {'min': 1.25, 'max': 1.25},  # fixe, dépend des profits par trade
+        #'loss_per_fp': {'min': -1.25, 'max': -1.25},  # fixe, dépend des pertes par trade
         'penalty_per_fn': {'min': 0, 'max': 0},
         'weight_split': {'min': 0.65, 'max': 0.65},
         'nb_split_weight': {'min': 0, 'max': 0},  # si 0, pas d'utilisation de weight_split
@@ -183,30 +188,33 @@ def get_weight_param():
 def get_config():
     # Configuration
     config = {
+        'boosting_type':'gbdt', #dart
         'target_directory': "",
         'device_': 'cpu',
         'n_trials_optuna': 100000,
-        'nb_split_tscv_': 8,
+        'nb_split_tscv_': 5,
         'test_size_ratio': 0.2,
         'nanvalue_to_newval_': np.nan,
         'random_state_seed': 35,
         'early_stopping_rounds': 80,
+        'profit_per_tp':1.25,
+        'loss_per_fp': -1.25,
         # 'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
         'results_directory': "",
         'cv_method': cv_config.TIME_SERIE_SPLIT_NON_ANCHORED,
         # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED
-        'non_acnhored_val_ratio': 1.0,
+        'non_acnhored_val_ratio': 0.6,
         'weightPareto_pnl_val': 0.4,
         'weightPareto_pnl_diff': 0.6,
         'use_of_rfe_in_optuna': rfe_param.NO_RFE,
         'min_features_if_RFE_AUTO': 3,
         'optuna_objective_type': optuna_doubleMetrics.DISABLE,  # USE_DIST_TO_IDEAL,
         'use_optuna_constraints_func': True,
-        'constraint_min_trades_threshold_by_Fold': 5,
-        'constraint_ecart_train_val': 0.20,
-        'constraint_winrates_val_by_fold': 0.53,
+        'config_constraint_min_trades_threshold_by_Fold': 10,
+        'config_constraint_ratioWinrate_train_val': 19,
+        'config_constraint_winrates_val_by_fold': 50,
         'use_imbalance_penalty': False,
-        'is_log_enabled': False,
+        'is_log_enabled': True,
         'enable_vif_corr_mi': False,
         'vif_threshold': 18,
         'corr_threshold': 0.5,
@@ -214,7 +222,7 @@ def get_config():
         'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
         'model_type': modelType.LGBM,
-        'custom_objective_lossFct': model_customMetric.LGB_CUSTOM_METRIC_PROFITBASED,
+        'custom_objective_lossFct': model_customMetric.LGB_CUSTOM_METRIC_PROFITBASED ,#LGB_CUSTOM_METRIC_PROFITBASED LGB_CUSTOM_METRIC_FOCALLOSS
          #'model_type': modelType.XGB,
          #'custom_objective_lossFct': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED,
 

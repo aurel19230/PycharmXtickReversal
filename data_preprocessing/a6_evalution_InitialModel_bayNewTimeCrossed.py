@@ -23,7 +23,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
 
-
 from sklearn.model_selection import KFold, TimeSeriesSplit
 import sys
 
@@ -69,7 +68,6 @@ def install_and_import_packages(packages, ENV=None):
 # Utilisation
 ENV = detect_environment()
 
-
 # Import des fonctions selon l'environnement
 
 from func_standard import (print_notification,
@@ -81,14 +79,11 @@ from func_standard import (print_notification,
                            train_finalModel_analyse, init_dataSet,
                            calculate_normalized_objectives,
                            run_cross_validation,
-                           setup_model_params_optuna, setup_model_weight_optuna,cv_config, displaytNan_vifMiCorrFiltering,
+                           setup_model_params_optuna, setup_model_weight_optuna, cv_config,
+                           displaytNan_vifMiCorrFiltering,
                            load_features_and_sections, apply_scaling, manage_rfe_selection, display_metrics,
                            check_distribution_coherence, check_value_ranges, setup_cv_method,
-                           calculate_constraints_optuna,remove_nan_inf,add_session_id,process_cv_results)
-
-
-
-
+                           calculate_constraints_optuna, remove_nan_inf, add_session_id, process_cv_results)
 
 # Après le redémarrage, on peut importer les packages
 from colorama import Fore, Style, init
@@ -227,7 +222,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         n_trials_optuna = config.get('n_trials_optuna', 4)
 
         # 2) Configuration des hyperparamètres du modèle via Optuna
-        params_optuna = setup_model_params_optuna(trial, config['model_type'], random_state_seed_, device)
+        params_optuna = setup_model_params_optuna(trial, config, random_state_seed_)
 
         # 3) Configuration du poids du modèle (class weight, etc.)
         model_weight_optuna = setup_model_weight_optuna(trial, weight_param, config)
@@ -253,7 +248,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         )
 
         # 6) Lancement de la cross-validation
-        cv_results = run_cross_validation(
+        cv_results,raw_metrics_byFold = run_cross_validation(
             X_train=X_train,
             X_train_full=X_train_full,
             y_train_label=y_train_label,
@@ -296,6 +291,11 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     tp_val_by_fold = processed_results['tp_val_by_fold']
     fp_val_by_fold = processed_results['fp_val_by_fold']
     scores_val_by_fold = processed_results['scores_val_by_fold']
+    class0_raw_data_val_by_fold = processed_results['class0_raw_data_val_by_fold']
+    class1_raw_data_val_by_fold = processed_results['class1_raw_data_val_by_fold']
+    winrate_raw_data_val_by_fold = processed_results['winrate_raw_data_val_by_fold']
+    val_pred_proba_log_odds = processed_results['val_pred_proba_log_odds']
+    val_trades_samples_perct = processed_results['val_trades_samples_perct']
 
     # Training metrics
     winrates_train_by_fold = processed_results['winrates_train_by_fold']
@@ -304,32 +304,40 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     tp_train_by_fold = processed_results['tp_train_by_fold']
     fp_train_by_fold = processed_results['fp_train_by_fold']
     scores_train_by_fold = processed_results['scores_train_by_fold']
+    class0_raw_data_train_by_fold = processed_results['class0_raw_data_train_by_fold']
+    class1_raw_data_train_by_fold = processed_results['class1_raw_data_train_by_fold']
+    winrate_raw_data_train_by_fold = processed_results['winrate_raw_data_train_by_fold']
+    train_pred_proba_log_odds = processed_results['train_pred_proba_log_odds']
+    train_trades_samples_perct = processed_results['train_trades_samples_perct']
 
-    fold_stats           = processed_results['fold_stats']
-    metrics_dict         = processed_results['metrics']  # total_tp_val, total_fp_val, etc.
+    perctDiff_winrateRatio_train_val = processed_results['perctDiff_winrateRatio_train_val']
+    perctDiff_ratioTradeSample_train_val = processed_results['perctDiff_ratioTradeSample_train_val']
+
+    fold_stats = processed_results['fold_stats']
+    metrics_dict = processed_results['metrics']  # total_tp_val, total_fp_val, etc.
 
     # Extraction des totaux
-    total_tp_val   = metrics_dict['total_tp_val']
-    total_fp_val   = metrics_dict['total_fp_val']
-    total_tn_val   = metrics_dict['total_tn_val']
-    total_fn_val   = metrics_dict['total_fn_val']
+    total_tp_val = metrics_dict['total_tp_val']
+    total_fp_val = metrics_dict['total_fp_val']
+    total_tn_val = metrics_dict['total_tn_val']
+    total_fn_val = metrics_dict['total_fn_val']
     total_tp_train = metrics_dict['total_tp_train']
     total_fp_train = metrics_dict['total_fp_train']
     total_tn_train = metrics_dict['total_tn_train']
     total_fn_train = metrics_dict['total_fn_train']
 
     # 8) Calculs de métriques finales
-    total_samples_val   = total_tp_val + total_fp_val + total_tn_val + total_fn_val
+    total_samples_val = total_tp_val + total_fp_val + total_tn_val + total_fn_val
     total_samples_train = total_tp_train + total_fp_train + total_tn_train + total_fn_train
-    total_trades_val    = total_tp_val + total_fp_val
-    total_trades_train  = total_tp_train + total_fp_train
+    total_trades_val = total_tp_val + total_fp_val
+    total_trades_train = total_tp_train + total_fp_train
 
-    total_pnl_val   = sum(scores_val_by_fold)
+    total_pnl_val = sum(scores_val_by_fold)
     total_pnl_train = sum(scores_train_by_fold)
 
-    val_pnl_perTrades   = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
+    val_pnl_perTrades = total_pnl_val / total_trades_val if total_trades_val > 0 else 0
     train_pnl_perTrades = total_pnl_train / total_trades_train if total_trades_train > 0 else 0
-    pnl_perTrade_diff   = abs(val_pnl_perTrades - train_pnl_perTrades)
+    pnl_perTrade_diff = abs(val_pnl_perTrades - train_pnl_perTrades)
 
     # 9) Paramètres additionnels via Optuna
     weight_split = trial.suggest_float(
@@ -360,16 +368,16 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     tp_fp_percentage_val = ((total_tp_val + total_fp_val) / total_samples_val * 100) if total_samples_val > 0 else 0
     win_rate_val = (total_tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
     tp_fp_diff_val = total_tp_val - total_fp_val
-    cummulative_pnl_val = (total_tp_val * weight_param['profit_per_tp']['min']
-                           + total_fp_val * weight_param['loss_per_fp']['max'])
+    cummulative_pnl_val = (total_tp_val * config['profit_per_tp']
+                           + total_fp_val * config['loss_per_fp'])
 
     # Quelques métriques supplémentaires pour entraînement
     tp_fp_percentage_train = (
-                (total_tp_train + total_fp_train) / total_samples_train * 100) if total_samples_train > 0 else 0
+            (total_tp_train + total_fp_train) / total_samples_train * 100) if total_samples_train > 0 else 0
     win_rate_train = (total_tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
     tp_fp_diff_train = total_tp_train - total_fp_train
-    cummulative_pnl_train = (total_tp_train * weight_param['profit_per_tp']['min']
-                             + total_fp_train * weight_param['loss_per_fp']['max'])
+    cummulative_pnl_train = (total_tp_train * config['profit_per_tp']
+                             + total_fp_train * config['loss_per_fp'])
 
     # 11) Mise à jour de tous les attributs du trial pour validation
     # Mise à jour des attributs du trial pour validation
@@ -389,6 +397,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     trial.set_user_attr('win_rate_val', win_rate_val)
     trial.set_user_attr('tp_fp_diff_val', tp_fp_diff_val)
     trial.set_user_attr('cummulative_pnl_val', cummulative_pnl_val)
+    trial.set_user_attr('val_pred_proba_log_odds', val_pred_proba_log_odds)
 
     # Mise à jour des attributs du trial pour entraînement
     trial.set_user_attr('tp_fp_percentage_train', tp_fp_percentage_train)
@@ -405,6 +414,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     trial.set_user_attr('win_rate_train', win_rate_train)
     trial.set_user_attr('tp_fp_diff_train', tp_fp_diff_train)
     trial.set_user_attr('cummulative_pnl_train', cummulative_pnl_train)
+    trial.set_user_attr('train_pred_proba_log_odds', train_pred_proba_log_odds)
 
     trial.set_user_attr('params_optuna', params_optuna)
     trial.set_user_attr('model_weight_optuna', model_weight_optuna)
@@ -413,7 +423,6 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     # scores_ens_val_list
     trial.set_user_attr('scores_ens_val_list', scores_val_by_fold.tolist())
     trial.set_user_attr('scores_ens_train_list', scores_train_by_fold.tolist())
-
 
     trial.set_user_attr('nb_split_tscv', nb_split_tscv)
     trial.set_user_attr('mean_cv_score', mean_cv_score)
@@ -433,10 +442,23 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     trial.set_user_attr('winrates_val_by_fold', winrates_val_by_fold.tolist())
     trial.set_user_attr('nb_trades_val_by_fold', nb_trades_val_by_fold.tolist())
     trial.set_user_attr('nb_samples_val_by_fold', nb_samples_val_by_fold.tolist())
+    trial.set_user_attr('val_trades_samples_perct', val_trades_samples_perct.tolist())
 
     trial.set_user_attr('winrates_train_by_fold', winrates_train_by_fold.tolist())
     trial.set_user_attr('nb_trades_train_by_fold', nb_trades_train_by_fold.tolist())
     trial.set_user_attr('nb_samples_train_by_fold', nb_samples_train_by_fold.tolist())
+
+    trial.set_user_attr('class0_raw_data_val_by_fold', class0_raw_data_val_by_fold.tolist())
+    trial.set_user_attr('class1_raw_data_val_by_fold', class1_raw_data_val_by_fold.tolist())
+    trial.set_user_attr('winrate_raw_data_val_by_fold', winrate_raw_data_val_by_fold.tolist())
+
+    trial.set_user_attr('class0_raw_data_train_by_fold', class0_raw_data_train_by_fold.tolist())
+    trial.set_user_attr('class1_raw_data_train_by_fold', class1_raw_data_train_by_fold.tolist())
+    trial.set_user_attr('winrate_raw_data_train_by_fold', winrate_raw_data_train_by_fold.tolist())
+    trial.set_user_attr('train_trades_samples_perct', train_trades_samples_perct.tolist())
+
+    trial.set_user_attr('perctDiff_winrateRatio_train_val', perctDiff_winrateRatio_train_val.tolist())
+    trial.set_user_attr('perctDiff_ratioTradeSample_train_val', perctDiff_ratioTradeSample_train_val.tolist())
 
 
     trial.set_user_attr('weight_split', weight_split)
@@ -449,11 +471,20 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         'optuna_objective_type',
         config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE)
     )
-    trial.set_user_attr('profit_per_tp', weight_param['profit_per_tp'])
+    trial.set_user_attr('profit_per_tp', config['profit_per_tp'])
     trial.set_user_attr('penalty_per_fn', weight_param['penalty_per_fn'])
     trial.set_user_attr('tp_val_list', tp_val_by_fold)
     trial.set_user_attr('fp_val_list', fp_val_by_fold)
     trial.set_user_attr('cv_method', cv_method)
+
+    trial.set_user_attr('config_constraint_ratioWinrate_train_val', config.get('config_constraint_ratioWinrate_train_val', 0))
+    trial.set_user_attr('config_constraint_winrates_val_by_fold', config.get('config_constraint_winrates_val_by_fold', 0))
+    trial.set_user_attr(
+        'config_constraint_min_trades_threshold_by_Fold',
+        config.get('config_constraint_min_trades_threshold_by_Fold', 0)
+    )
+
+    trial.set_user_attr('raw_metrics_byFold',raw_metrics_byFold)
 
     use_imbalance_penalty = config.get('use_imbalance_penalty', False)
     trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
@@ -475,12 +506,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
     # Sauvegarde de quelques métriques pour debug
     trial.set_user_attr('pnl_norm_objective', objectives['pnl_norm_objective'])
     trial.set_user_attr('ecart_train_val', objectives['ecart_train_val'])
-    trial.set_user_attr('constraint_ecart_train_val', config.get('constraint_ecart_train_val', 0))
-    trial.set_user_attr('constraint_winrates_val_by_fold', config.get('constraint_winrates_val_by_fold', 0))
-    trial.set_user_attr(
-        'constraint_min_trades_threshold_by_Fold',
-        config.get('constraint_min_trades_threshold_by_Fold', 0)
-    )
+
     trial.set_user_attr('raw_avg_pnl', raw_metrics['avg_pnl'])
     trial.set_user_attr('imbalance_penalty', raw_metrics['imbalance_penalty'])
 
@@ -489,8 +515,6 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
         objectives['pnl_norm_objective'],
         objectives['ecart_train_val']
     ]
-
-
 
 
 ########################################
@@ -508,11 +532,11 @@ def train_and_evaluate_model(
     nb_split_tscv = config.get('nb_split_tscv_', 10)
     nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
     random_state_seed = config.get('random_state_seed', 30)
-    #early_stopping_rounds = config.get('early_stopping_rounds', 70)
+    # early_stopping_rounds = config.get('early_stopping_rounds', 70)
     cv_method = config.get('cv_method', cv_config.K_FOLD)
-    #optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
+    # optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
-    selected_columns= config.get('selected_columns', None)
+    selected_columns = config.get('selected_columns', None)
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
     model = config.get('model_type', modelType.XGB)
 
@@ -538,12 +562,12 @@ def train_and_evaluate_model(
 
     # Affichage des informations sur les NaN et zéros dans chaque colonne
     print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
-    displaytNan_vifMiCorrFiltering(X=X_train_full, selected_columns=selected_columns,name="X_train_full",config=config)
+    displaytNan_vifMiCorrFiltering(X=X_train_full, selected_columns=selected_columns, name="X_train_full",
+                                   config=config)
 
     print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
     displaytNan_vifMiCorrFiltering(X=X_train, selected_columns=selected_columns, name="X_train",
                                    config=config)
-
 
     if chosen_scaler != scalerChoice.SCALER_DISABLE:
         # Sauvegarde des données originales pour réinsertion potentielle
@@ -625,25 +649,25 @@ def train_and_evaluate_model(
     print("X_test")
     print(X_test)
 
-
     enable_vif_corr_mi = config.get('enable_vif_corr_mi', None)
     if enable_vif_corr_mi:
-        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorrFiltering(X=X_train,Y= y_train_label,selected_columns=selected_columns,name="X_train",config=config,enable_vif_corr_mi=enable_vif_corr_mi)
+        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorrFiltering(X=X_train, Y=y_train_label,
+                                                                                  selected_columns=selected_columns,
+                                                                                  name="X_train", config=config,
+                                                                                  enable_vif_corr_mi=enable_vif_corr_mi)
         print("\nRésumé:")
         print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
         print(
             f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
-    else :
-        selected_columns_afterVifCorrMiFiltering=selected_columns
+    else:
+        selected_columns_afterVifCorrMiFiltering = selected_columns
         print("\nRésumé:")
         print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
         print(
             f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
 
-    X_train=X_train[selected_columns_afterVifCorrMiFiltering]
-    X_test=X_test[selected_columns_afterVifCorrMiFiltering]
-
-
+    X_train = X_train[selected_columns_afterVifCorrMiFiltering]
+    X_test = X_test[selected_columns_afterVifCorrMiFiltering]
 
     # Affichage de la distribution des classes
     print("Distribution des trades (excluant les 99):")
@@ -673,7 +697,6 @@ def train_and_evaluate_model(
 
     # Début de l'optimisation
     print_notification('###### DÉBUT: OPTIMISATION BAYESIENNE ##########', color="blue")
-
 
     # Assurez-vous que X_test et y_test_label ont le même nombre de lignes
     assert X_test.shape[0] == y_test_label.shape[0], "X_test et y_test_label doivent avoir le même nombre de lignes"
@@ -716,8 +739,6 @@ def train_and_evaluate_model(
     # Créer l'étude
     # Assume 'optuna_objective_type' is the parameter that determines the optimization mode
 
-
-
     # Conditionally create the study
     if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) == optuna_doubleMetrics.DISABLE:
         # Create a single-objective study
@@ -725,10 +746,12 @@ def train_and_evaluate_model(
 
         def create_constraints_func():
             def constraints_func(trial):
-                constraints=calculate_constraints_optuna(trial=trial,config=config)
+                constraints = calculate_constraints_optuna(trial=trial, config=config)
 
                 return constraints
+
             return constraints_func
+
         sampler = optuna.samplers.TPESampler(
             seed=42,
             constraints_func=create_constraints_func() if config.get('use_optuna_constraints_func', False) else None
@@ -755,7 +778,6 @@ def train_and_evaluate_model(
     # 1) Définir la variable et la callback au niveau module
     from pynput import keyboard
 
-
     def callback_optuna_stop(study, trial):
         global STOP_OPTIMIZATION
         if STOP_OPTIMIZATION:
@@ -765,7 +787,7 @@ def train_and_evaluate_model(
     def on_press(key):
         global STOP_OPTIMIZATION
         try:
-            if key.char == 'é':
+            if key.char == '²':
                 print("Stop signal received: stopping the study.")
                 STOP_OPTIMIZATION = True
         except AttributeError:
@@ -778,7 +800,7 @@ def train_and_evaluate_model(
     study_optuna.optimize(
         lambda trial: objective_wrapper(trial, study_optuna, model_weight_optuna),
         n_trials=n_trials_optimization,
-        callbacks=[callback_optuna_wrapper,callback_optuna_stop]
+        callbacks=[callback_optuna_wrapper, callback_optuna_stop]
     )
 
     # Arrêter proprement le listener après l'optimisation
@@ -787,16 +809,12 @@ def train_and_evaluate_model(
 
     bestResult_dict = study_optuna.user_attrs['bestResult_dict']
 
-
-
-
     # Après l'optimisation
-    #best_params = bestResult_dict["best_params"]
+    # best_params = bestResult_dict["best_params"]
     params_optuna = bestResult_dict["params_optuna"]
     model_weight_optuna = bestResult_dict["model_weight_optuna"]
 
     optimal_threshold = model_weight_optuna['threshold']
-
 
     selected_feature_names = bestResult_dict["selected_feature_names"]
     rfe_param_value = bestResult_dict["use_of_rfe_in_optuna"]
@@ -806,7 +824,6 @@ def train_and_evaluate_model(
         f"## Optimisation Optuna terminée Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
     print(f"## Meilleurs hyperparamètres trouvés pour params_optuna: ", params_optuna)
     print(f"## Meilleurs hyperparamètres trouvés pour model_weight_optuna: ", model_weight_optuna)
-
 
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])
@@ -825,24 +842,25 @@ def train_and_evaluate_model(
     X_test = X_test[selected_feature_names]
 
     train_finalModel_analyse(
-                             X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
-                             y_train_label_=y_train_label,y_test_label_=y_test_label,
-                             nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
-                             config=config,weight_param=weight_param,bestResult_dict=bestResult_dict)
+        X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
+        y_train_label_=y_train_label, y_test_label_=y_test_label,
+        nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
+        config=config, weight_param=weight_param, bestResult_dict=bestResult_dict)
 
 
 ############### main######################
 if __name__ == "__main__":
     # Demander à l'utilisateur s'il souhaite afficher les graphiques
     check_gpu_availability()
-    from parameters import get_path, get_weight_param,get_config
-    DIRECTORY_PATH,FILE_PATH, base_results_path=get_path()
-    weight_param=get_weight_param()
-    config=get_config()
+    from parameters import get_path, get_weight_param, get_config
+
+    DIRECTORY_PATH, FILE_PATH, base_results_path = get_path()
+    weight_param = get_weight_param()
+    config = get_config()
     directories = DIRECTORY_PATH.split(os.path.sep)
     print(directories)
     target_directory = directories[-2]
-    results_directory=os.path.join(base_results_path, target_directory),
+    results_directory = os.path.join(base_results_path, target_directory),
 
     # Obtenir l'heure et la date actuelles
     now = datetime.now()
@@ -869,8 +887,6 @@ if __name__ == "__main__":
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
 
     df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
-
-
 
     print("\nContenu de CUSTOM_SESSIONS (format tabulé) :")
     print(f"{'Section':<15} {'Start':>6} {'End':>6} {'Type':>6} {'Selected':>8} {'Description':<20}")
@@ -915,13 +931,12 @@ if __name__ == "__main__":
         'total_count_blw',
         'staked00_high',
         'staked00_low',
-        'bear_imbalance_high_3', ## 4.8 % de NAN
-        'bull_imbalance_high_0', #7.8%
-        'bearish_absorption_ratio' #2.8nan,
-
+        'bear_imbalance_high_3',  ## 4.8 % de NAN
+        'bull_imbalance_high_0',  # 7.8%
+        'bearish_absorption_ratio'  # 2.8nan,
 
     ]
-    excluded_columns_tradeDirection= [
+    excluded_columns_tradeDirection = [
         'bullish_ask_bid_ratio',
         'bullish_ask_ratio',
         'bullish_bid_ratio',
@@ -946,14 +961,14 @@ if __name__ == "__main__":
         'bullish_absorption_score',
         'bullish_market_context_score',
         'bullish_combined_pressure',
-       'naked_poc_dist_above',
+        'naked_poc_dist_above',
         'bull_imbalance_low_1',
         'bull_imbalance_low_2',
         'bull_imbalance_low_3',
         'bear_imbalance_low_0',
         'bear_imbalance_low_1',
         'bear_imbalance_low_2',
-        ]
+    ]
 
     excluded_columns_CorrCol = [
     ]
@@ -968,8 +983,8 @@ if __name__ == "__main__":
         'Big',
         'state',
         'State',
-        'extrem',
-        'Extrem',
+        #'extrem',
+        #'Extrem',
         "bullish",
     ]
 
@@ -980,7 +995,7 @@ if __name__ == "__main__":
     ]
 
     print(excluded_columns_category)
-    excluded_columns = excluded_columns_principal + excluded_columns_tradeDirection+excluded_columns_CorrCol+excluded_columns_category
+    excluded_columns = excluded_columns_principal + excluded_columns_tradeDirection + excluded_columns_CorrCol + excluded_columns_category
 
     # ajoute les colonnes pour retraitement ultérieurs
     df_init = add_session_id(df_init, CUSTOM_SESSIONS)
@@ -996,15 +1011,13 @@ if __name__ == "__main__":
         config.update({
             'enable_vif_corr_mi': False})
 
-
     config.update({
-        'excluded_columns_principal':excluded_columns_principal ,
-        'excluded_columns_tradeDirection':excluded_columns_tradeDirection ,
+        'excluded_columns_principal': excluded_columns_principal,
+        'excluded_columns_tradeDirection': excluded_columns_tradeDirection,
         'excluded_columns_CorrCol': excluded_columns_CorrCol,
         'excluded_columns_category': excluded_columns_category,
-        'selected_columns':selected_columns
+        'selected_columns': selected_columns
     })
-
 
     results = train_and_evaluate_model(
         df_init=df_init,

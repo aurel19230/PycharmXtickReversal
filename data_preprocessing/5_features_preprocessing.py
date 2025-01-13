@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from func_standard import print_notification, load_data,calculate_naked_poc_distances,CUSTOM_SESSIONS,save_features_with_sessions
+from definition import *
 import math
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
@@ -183,17 +184,11 @@ features_df['deltaCustomSessionIndex'] = features_df['deltaTimestampOpening'].ap
 )
 
 
-def linear_regression_slope_market_trend(series):
-    X = np.arange(len(series)).reshape(-1, 1)
-    y = series.values.reshape(-1, 1)
-    model = LinearRegression().fit(X, y)
-    slope = model.coef_[0][0]
-    return slope
+
 
 
 import numpy as np
 from numba import jit
-from sklearn.linear_model import LinearRegression
 
 
 @jit(nopython=True)
@@ -344,21 +339,7 @@ def linear_regression_slope_market_trend(series):
     return model.coef_[0][0]
 
 
-def apply_slope_with_session_check(data, window):
-    result = pd.Series(index=data.index, dtype=float)
 
-    for idx in result.index:
-        historical_data = data.loc[:idx]
-        last_session_start = historical_data[::-1]['SessionStartEnd'].eq(10).idxmax()
-        bars_since_session_start = len(historical_data.loc[last_session_start:idx])
-
-        if bars_since_session_start >= window:
-            series = data.loc[:idx, 'close'].tail(window)
-            result[idx] = linear_regression_slope_market_trend(series)
-        else:
-            result[idx] = np.nan
-
-    return result
 
 
 
@@ -698,6 +679,14 @@ features_df['diffVolCandle_0_1Ratio'] = np.where(df['volume'] != 0,
                                             (df['volume'] - df['volume'].shift(1)) / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
 # Relatif delta evol
+features_df['diffVolDelta_0_0Ratio'] = np.where(df['volume'] != 0,
+                                           df['delta'] / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+features_df['diffVolDelta_1_1Ratio'] = np.where(df['volume'] != 0,
+                                           df['delta'].shift(1) / df['volume'].shift(1), diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+features_df['diffVolDelta_2_2Ratio'] = np.where(df['volume'] != 0,
+                                           df['delta'].shift(2) / df['volume'].shift(2), diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+features_df['diffVolDelta_3_3Ratio'] = np.where(df['volume'] != 0,
+                                           df['delta'].shift(3) / df['volume'].shift(3), diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 features_df['diffVolDelta_0_1Ratio'] = np.where(df['volume'] != 0,
                                            (df['delta'] - df['delta'].shift(1)) / df['volume'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
@@ -2349,6 +2338,12 @@ column_settings = {
    # 'ratioDeltaAbv':                          (False, False, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolCandle_0_1Ratio':                 (False, True, 1, 98.5,toBeDisplayed_if_s(user_choice, False)),#ok
     'diffVolDelta_0_1Ratio':                  (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
+    'diffVolDelta_0_0Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+
+    'diffVolDelta_1_1Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffVolDelta_2_2Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffVolDelta_3_3Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+
     'cumDiffVolDeltaRatio':                  (True, True, 1, 99,toBeDisplayed_if_s(user_choice, False)),#ok
 
     # Volume profile features
