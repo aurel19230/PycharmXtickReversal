@@ -18,10 +18,11 @@ import time
 
 class cv_config(Enum):
     TIME_SERIE_SPLIT = 0
-    TIME_SERIE_SPLIT_NON_ANCHORED = 1
-    TIMESERIES_SPLIT_BY_ID = 2
-    K_FOLD = 3
-    K_FOLD_SHUFFLE = 4
+    TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN = 1
+    TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL = 2
+    TIMESERIES_SPLIT_BY_ID = 3
+    K_FOLD = 4
+    K_FOLD_SHUFFLE = 5
 
 class modelType (Enum):
     XGB=0
@@ -39,19 +40,24 @@ class rfe_param(Enum):
     RFE_AUTO = 2
 
 
-class model_customMetric(Enum):
-    LGB_CUSTOM_METRIC_PROFITBASED=0
-    LGB_CUSTOM_METRIC_FOCALLOSS = 1
-    XGB_METRIC_ROCAUC = 11
-    XGB_METRIC_AUCPR = 12
-    XGB_METRIC_F1 = 13
-    XGB_METRIC_PRECISION = 14
-    XGB_METRIC_RECALL = 15
-    XGB_METRIC_MCC = 16
-    XGB_METRIC_YOUDEN_J = 17
-    XGB_METRIC_SHARPE_RATIO = 18
-    XGB_CUSTOM_METRIC_PROFITBASED = 19
-    XGB_CUSTOM_METRIC_TP_FP = 20
+class model_custom_objective(Enum):
+    LGB_CUSTOM_OBJECTIVE_PROFITBASED=0
+    LGB_CUSTOM_OBJECTIVE_BINARY = 10
+    LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY = 11
+    LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY_LAMBDA = 12
+
+
+class model_custom_metric(Enum):
+    LGB_CUSTOM_METRIC_PNL=0
+    XGB_METRIC_ROCAUC = 10
+    XGB_METRIC_AUCPR = 11
+    XGB_METRIC_F1 = 12
+    XGB_METRIC_PRECISION = 13
+    XGB_METRIC_RECALL = 14
+    XGB_METRIC_MCC = 15
+    XGB_METRIC_YOUDEN_J = 16
+    XGB_METRIC_SHARPE_RATIO = 17
+    XGB_CUSTOM_METRIC_PROFITBASED = 18
 
 class scalerChoice(Enum):
     SCALER_DISABLE = 0
@@ -67,7 +73,53 @@ class ScalerMode(Enum):
      # Pour le test : transform uniquement
 
 import numpy as np
+def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
+    """
+    Prépare les données d'entraînement et de validation pour la validation croisée,
+    en gérant la conversion GPU/CPU selon la configuration.
 
+    Parameters:
+    -----------
+    config : dict
+        Dictionnaire de configuration contenant la clé 'device_' avec la valeur 'cpu' ou 'gpu'.
+    data : dict
+        Dictionnaire contenant les données nécessaires pour les folds.
+    train_pos : np.ndarray
+        Positions des échantillons pour l'entraînement.
+    val_pos : np.ndarray
+        Positions des échantillons pour la validation.
+
+    Returns:
+    --------
+    dict : Contient les données transformées.
+    """
+    # Extract fold data
+    X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
+    # X_train_cv_pd reste un DataFrame
+    X_train_cv_pd = data['X_train_no99_fullRange_pd'].iloc[train_pos]
+
+    Y_train_cv = data['y_train_no99_fullRange'][train_pos].reshape(-1)
+
+    X_val_cv = data['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
+    # X_val_cv_pd reste un DataFrame
+    X_val_cv_pd = data['X_train_no99_fullRange_pd'].iloc[val_pos]
+
+    y_val_cv = data['y_train_no99_fullRange'][val_pos].reshape(-1)
+
+    # Handle GPU/CPU conversion
+    if config['device_'] != 'cpu':
+        import cupy as cp
+
+        # Conversion GPU -> CPU (CuPy -> NumPy)
+        X_train_cv = cp.asnumpy(X_train_cv)
+        X_val_cv = cp.asnumpy(X_val_cv)
+        Y_train_cv = cp.asnumpy(Y_train_cv)
+        y_val_cv = cp.asnumpy(y_val_cv)
+    else:
+        # Pas de conversion nécessaire si on est déjà sur CPU
+        pass
+
+    return X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd, y_val_cv
 
 def sigmoidCustom(x):
 # Supposons que x est déjà un tableau CuPy
@@ -178,9 +230,8 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
     return pred_proba_afterSig,pred_proba_log_odds, predictions_converted, (tn, fp, fn, tp), y_true_converted
 
 
-def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, fp_train,
-                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val, fold_num, nb_split_tscv, fold_raw_data
-                           ,is_log_enabled):
+def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, fold_num, nb_split_tscv, fold_raw_data
+                           ,is_log_enabled,df_init_candles):
     """
     Log les métriques de validation croisée au format standardisé.
 
@@ -213,7 +264,6 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
     Returns:
         dict: Dictionnaire contenant les métriques calculées
     """
-    metrics = {}
     try:
         # 1. Conversion des timestamps en dates UTC
         def timestamp_to_date_utc_(timestamp):
@@ -238,17 +288,16 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
         train_pos = fold_raw_data['train_indices']
         val_pos = fold_raw_data['val_indices']
         start_time_train, end_time_train, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
-        time_diff = calculate_time_difference(
+        time_diff_train = calculate_time_difference(
             timestamp_to_date_utc_(start_time_train),
             timestamp_to_date_utc_(end_time_train)
         )
-        total_trades_train = tp_train + fp_train
-        winrate_opti_train = (tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
+
 
 
         # Période
         start_time_val, end_time_val, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
-        time_diff = calculate_time_difference(
+        time_diff_val = calculate_time_difference(
             timestamp_to_date_utc_(start_time_val),
             timestamp_to_date_utc_(end_time_val)
         )
@@ -262,8 +311,25 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
         ratio_val = class1_val / class0_val if class0_val > 0 else float('inf')
 
 
-        total_trades_val = tp_val + fp_val
-        winrate_opti_val = (tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
+        # indice consécutif pour les données d'entraînement sur le fold
+        train_start = X_train_cv_pd.index[0]  # Premier indice
+        train_end = X_train_cv_pd.index[-1]  # Dernier indice
+        close_cv_train = df_init_candles['close'].loc[train_start:train_end]
+        high_cv_train = df_init_candles['high'].loc[train_start:train_end]
+        low_cv_train = df_init_candles['low'].loc[train_start:train_end]
+
+        #slope_cv_train = linear_regression_slope_market_trend(close_cv_train)
+        slope_cv_train,r2_slope_cv_train,counter_moves_train=calculate_trend_strength(close_cv_train,high_cv_train,low_cv_train)
+
+        # indice consécutif pour les données de validation sur le fold
+        val_start = X_val_cv_pd.index[0]
+        val_end = X_val_cv_pd.index[-1]
+        close_cv_val = df_init_candles['close'].loc[val_start:val_end]
+        high_cv_val = df_init_candles['high'].loc[val_start:val_end]
+        low_cv_val = df_init_candles['low'].loc[val_start:val_end]
+
+        #slope_cv_val = linear_regression_slope_market_trend(close_cv_val)
+        slope_cv_val,r2_slope_cv_val,counter_moves_val=calculate_trend_strength(close_cv_val,high_cv_val,low_cv_val)
 
 
         # Mise à jour du dictionnaire des métriques
@@ -275,7 +341,10 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
                 'winrate': winrate_train,
                 'ratio_train': ratio_train,
                 'start_time_train': timestamp_to_date_utc_(start_time_train),
-                'end_time_train': timestamp_to_date_utc_(end_time_train)
+                'end_time_train': timestamp_to_date_utc_(end_time_train),
+                'slope_cv_train':slope_cv_train,
+                'r2_slope_cv_train': r2_slope_cv_train,
+                'counter_moves_train': counter_moves_train,
             },
             'val_metrics': {
                 'total': total_samples_val,
@@ -284,7 +353,10 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
                 'winrate': winrate_val,
                 'ratio_val': ratio_val,
                 'start_time_val': timestamp_to_date_utc_(start_time_val),
-                'end_time_val': timestamp_to_date_utc_(end_time_val)
+                'end_time_val': timestamp_to_date_utc_(end_time_val),
+                'slope_cv_val': slope_cv_val,
+                'r2_slope_cv_val':r2_slope_cv_val,
+                'counter_moves_val': counter_moves_val
             }
         }
         if is_log_enabled:
@@ -301,7 +373,17 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
             # Période
 
             print(f"Période: Du {timestamp_to_date_utc_(start_time_train)} au {timestamp_to_date_utc_(end_time_train)} "
-                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
+                  f"(Durée: {time_diff_train.months} mois, {time_diff_train.days} jours)")
+
+
+
+            print("Indices d'entraînement :")
+            print(f"De {train_start} à {train_end}")
+            print("Valeurs des closes correspondantes de df_init_candles pour l'entraînement :")
+            vals_close_train = close_cv_train.tolist()
+            print(f"[{', '.join(map(str, vals_close_train[:10]))} ... {', '.join(map(str, vals_close_train[-10:]))}]")
+            print(f"Pente de la régression linéaire pour l'entraînement: {slope_cv_train}\n")
+
             print("Distribution (Avant optimisation):")
             print(
                 f"- Total: {total_samples_train} échantillons | class1: {class1_train} | class0: {class0_train}")
@@ -311,30 +393,31 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, f
             # Métriques après optimisation
             print("Métriques (après optimisation):")
 
-            print(f"- TP: {tp_train} | FP: {fp_train} | TN: {tn_train} | FN: {fn_train}")
-            print(
-                f"- Total trades pris: {total_trades_train} ({(total_trades_train / total_samples_train * 100):.2f}% des échantillons)")
-            print(f"- Winrate: {winrate_opti_train:.2f}%")
 
             # === VALIDATION ===
-            print("=== VALIDATION ===")
+            print("\n=== VALIDATION ===")
             print(f"Période: Du {timestamp_to_date_utc_(start_time_val)} au {timestamp_to_date_utc_(end_time_val)} "
-                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
+                  f"(Durée: {time_diff_val.months} mois, {time_diff_val.days} jours)")
+            # Pour les données de validation
+
+            print("Indices de validation :")
+            print(f"De {val_start} à {val_end}")
+            print("Valeurs des closes correspondantes de df_init_candles pour la validation :")
+            vals_close_val = close_cv_val.tolist()
+            print(f"[{', '.join(map(str, vals_close_val[:10]))} ... {', '.join(map(str, vals_close_val[-10:]))}]")
+            print(f"Pente de la régression linéaire pour l'entraînement: {slope_cv_val}\n")
+
             print("Distribution (Avant optimisation):")
             print(
                 f"- Total: {total_samples_val} échantillons | Trades réussis: {class1_val} | Trades échoués: {class0_val}")
             print(f"- Winrate: {winrate_val:.2f}%")
             print(f"- Ratio réussis/échoués: {ratio_val:.2f}")
 
-            # Métriques après optimisation
-            print("Métriques (après optimisation):")
-            print(f"- TP: {tp_val} | FP: {fp_val} | TN: {tn_val} | FN: {fn_val}")
-            print(
-                f"- Total trades pris: {total_trades_val} ({(total_trades_val / total_samples_val * 100):.2f}% des échantillons)")
-            print(f"- Winrate: {winrate_opti_val:.2f}%")
         return raw_metrics
     except Exception as e:
-        print(f"Erreur dans log_cv_fold_metrics: {str(e)}")
+        print(f"#########################################")
+        print(f"Erreur dans compute_raw_train_dist: {str(e)}")
+        print(f"#########################################")
         return None
 
 def calculate_time_difference(start_date_str, end_date_str):
@@ -676,6 +759,80 @@ def linear_regression_slope_market_trend(series):
     model = LinearRegression().fit(X, y)
     slope = model.coef_[0][0]
     return slope
+
+import ta
+def calculate_trend_strength(close=None, high=None, low=None):
+    """
+    Calcule un score de force de tendance entre 0 et 100
+    en combinant plusieurs métriques
+    """
+    try:
+        # 1. Régression linéaire pour la direction et la régularité
+        X = np.arange(len(close)).reshape(-1, 1)
+        y = close.values.reshape(-1, 1)
+        reg = LinearRegression().fit(X, y)
+
+        # Force de la pente (normalisée)
+        slope = reg.coef_[0][0]
+        r2 = reg.score(X, y)  # R² pour mesurer la linéarité
+        # 3. Analyse améliorée des contre-tendances avec high/low
+        if slope > 0:  # Tendance haussière
+            # Un counter move significatif est quand :
+            # - Le low descend sous le low précédent
+            # - ET/OU le high n'arrive pas à dépasser le high précédent
+            low_breaks = (low+1.5 < low.shift(1)).sum()
+            high_fails = (high < high.shift(1)).sum()
+            counter_moves = (low_breaks ) / ( len(close))
+        else:  # Tendance baissière
+            # Un counter move significatif est quand :
+            # - Le high monte au-dessus du high précédent
+            # - ET/OU le low n'arrive pas à descendre sous le low précédent
+            high_breaks = (high-1.5 > high.shift(1)).sum()
+            low_fails = (low > low.shift(1)).sum()
+            counter_moves = (high_breaks ) / ( len(close))
+
+        # On pourrait aussi ajouter l'amplitude
+        if slope > 0:
+            counter_amplitude = abs((low - low.shift(1)) / low.shift(1))[low < low.shift(1)].mean()
+        else:
+            counter_amplitude = abs((high - high.shift(1)) / high.shift(1))[high > high.shift(1)].mean()
+
+
+
+
+        """
+        # 2. Calcul des drawdowns pour évaluer les pullbacks
+        price_series = pd.Series(series)
+        rolling_max = price_series.expanding().max()
+        drawdowns = (price_series - rolling_max) / rolling_max * 100
+        max_drawdown = abs(drawdowns.min())
+    
+        
+    
+        # 4. Calcul du score composite
+        trend_score = (
+                abs(slope) * 40 +  # Force de la direction (40% du score)
+                r2 * 30 +  # Régularité (30% du score)
+                (1 - counter_moves) * 20 +  # Continuité (20% du score)
+                (1 - max_drawdown / 100) * 10  # Résistance aux pullbacks (10% du score)
+        )
+    
+        return {
+            'trend_score': trend_score,
+            'slope': slope,
+            'r2': r2,
+            'max_drawdown': max_drawdown,
+            'counter_moves_ratio': counter_moves
+        }
+        """
+
+
+
+        return slope,r2,counter_moves
+    except Exception as e:
+        print(f"Error in calculate_trend_strength: {str(e)}")
+        raise e  # On relance l'exception capturée
+
 
 def apply_slope_with_session_check(data, window):
     result = pd.Series(index=data.index, dtype=float)

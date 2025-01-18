@@ -1868,11 +1868,11 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
     print(f"Analyse terminée. Les résultats ont été sauvegardés dans le dossier '{output_dir}'.")
 
 
-def init_dataSet(df_init=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None, results_directory=None):
+def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None, results_directory=None):
     # Gestion des valeurs NaN
     selected_columns = config.get('selected_columns', None)
 
-    df_filtered = sessions_selection(df_init, CUSTOM_SESSIONS_=CUSTOM_SESSIONS_,
+    df_filtered = sessions_selection(df_init_features, CUSTOM_SESSIONS_=CUSTOM_SESSIONS_,
                                      results_directory=results_directory)
 
     if nanvalue_to_newval is not None:
@@ -1925,10 +1925,10 @@ def init_dataSet(df_init=None, nanvalue_to_newval=None, config=None, CUSTOM_SESS
     for col in temporal_columns:
         if col not in X_train_full.columns:
             # Vérification de la présence de la colonne dans le DataFrame initial
-            # df_init contient toutes les colonnes d'origine avant la sélection des features
-            if col not in df_init.columns:
+            # df_init_features contient toutes les colonnes d'origine avant la sélection des features
+            if col not in df_init_features.columns:
                 raise ValueError(
-                    f"La colonne '{col}' n'est pas présente dans df_init. Cette colonne est nécessaire pour les logs temporels et la validation croisée.")
+                    f"La colonne '{col}' n'est pas présente dans df_init_features. Cette colonne est nécessaire pour les logs temporels et la validation croisée.")
 
             # Création d'une copie de X_train_full lors de la première modification
             # pour éviter les modifications involontaires sur le DataFrame d'origine
@@ -1937,8 +1937,8 @@ def init_dataSet(df_init=None, nanvalue_to_newval=None, config=None, CUSTOM_SESS
 
             # Ajout de la colonne en respectant l'indexation de X_train_full
             # On utilise .loc pour garantir un alignement correct des indices
-            # entre df_init et X_train_full
-            X_train_full[col] = df_init.loc[X_train_full.index, col]
+            # entre df_init_features et X_train_full
+            X_train_full[col] = df_init_features.loc[X_train_full.index, col]
             print(f"Colonne '{col}' ajoutée à X_train_full pour les logs temporels et la validation croisée")
 
     # ===== Vérification de la cohérence des distributions de classes =====
@@ -1983,7 +1983,7 @@ def add_early_stopping_zone(ax, best_iteration, color='orange', alpha=0.2):
             horizontalalignment='center', verticalalignment='top', fontsize=12, color='orange')
 
 
-def plot_custom_metric_evolution_with_trade_info(model, evals_result, metric_name='custom_metric_ProfitBased',
+def plot_custom_metric_evolution_with_trade_info(model, evals_result, metric_name='custom_metric_PNL',
                                                  n_train_trades=None, n_test_trades=None, results_directory=None):
     if not evals_result or 'train' not in evals_result or 'test' not in evals_result:
         print("Résultats d'évaluation incomplets ou non disponibles.")
@@ -2213,9 +2213,14 @@ def analyze_shap_interactions(final_model, X_test, results_directory, dataset_na
     --------
     None
     """
-
+    #lxtest = lgb.Dataset(X_test) semble inutile
+    shap_interaction_values = final_model.predict(
+        X_test,
+        pred_interactions=True,
+        iteration_range=(0, final_model.best_iteration)  # C'est correct tel quel
+    )
     # Calcul des valeurs d'interaction SHAP
-    shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
+    #shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
     # Exclure le biais en supprimant la dernière ligne et la dernière colonne
     shap_interaction_values = shap_interaction_values[:, :-1, :-1]
 
@@ -2313,12 +2318,46 @@ def analyze_shap_interactions(final_model, X_test, results_directory, dataset_na
 
     print(f"Heatmap des interactions sauvegardée sous 'feature_interaction_heatmap_{dataset_name}.png'")
 
+def best_modellastFold_analyse( X_test=None, y_test_label=None,
+                                bestResult_dict=None,results_directory=None,config=None):
 
-def train_finalModel_analyse(
+    best_modellastFold_string = bestResult_dict['best_modellastFold_string']
+    best_modellastFold_params = bestResult_dict['best_modellastFold_params']
+    # Recharger le modèle
+    import lightgbm as lgb
+    best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+    # Assigner les paramètres récupérés au modèle
+    if best_modellastFold_params:
+        best_modellastFold.params.update(best_modellastFold_params)
+
+    model_weight_optuna_best=bestResult_dict["model_weight_optuna"]
+    y_pred_proba_afterSig, pred_proba_log_odds, predictions_converted, (
+    tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+        model=best_modellastFold,
+        X_data=X_test,
+        y_true=y_test_label,
+        best_iteration=best_modellastFold.best_iteration,
+        threshold=model_weight_optuna_best['threshold'],
+        config=config
+    )
+
+    reporting_model_performance(pred_proba_log_odds, tp_xtest, fp_xtest, fn_xtest, tn_xtest, config)
+
+    """
+    print_notification('###### DEBUT: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
+                       color="blue")
+    importance_df, shap_comparison, shap_values_train, shap_values_test, resulat_test_shap_feature_importance = main_shap_analysis(
+                        cv_model, X_train, y_train_label_, X_test, y_test_label_,
+                        save_dir=os.path.join(results_directory, 'shap_dependencies_results_reTrainModel'))
+    print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
+                       color="blue")
+    """
+def reTrain_finalModel_analyse(
                              X_train=None, X_train_full=None, X_test=None, X_test_full=None,
                              y_train_label_=None, y_test_label_=None,
                              nb_SessionTest=None, nan_value=None, feature_names=None,
                              config=None, weight_param=None, bestResult_dict=None,is_log_enabled=False):
+    print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
     results_directory = config.get('results_directory', None)
     params_optuna = bestResult_dict["params_optuna"]
 
@@ -2346,6 +2385,9 @@ def train_finalModel_analyse(
     print(f"Période de test : du {timestamp_to_date_utc(start_time_test)} au {timestamp_to_date_utc(end_time_test)}")
     print(f"Nombre de sessions test : {num_sessions_test}\n")
 
+
+
+
     results = train_and_evaluate_lightgbm_model(
         X_train_cv=X_train,
         X_val_cv=X_test,
@@ -2363,7 +2405,7 @@ def train_finalModel_analyse(
         log_evaluation=10
     )
 
-    final_model=results['model']
+    final_model=results['current_model']
     evals_result = results['evals_result']
     # Affichage des résultats clés
     print(f"Sur X_Test :")
@@ -2383,6 +2425,8 @@ def train_finalModel_analyse(
     model_file = os.path.join(save_dir, f"final_training_model_{timestamp}.json")
     final_model.save_model(model_file)
     print(f"\nModèle sauvegardé: {model_file}")
+
+
 
     # Utilisation de la fonction
     plot_custom_metric_evolution_with_trade_info(final_model, evals_result, n_train_trades=len(X_train),
@@ -2449,7 +2493,7 @@ def train_finalModel_analyse(
     else:
         print("Les prédictions sont dans l'intervalle [0, 1] attendu pour une classification binaire.")
     """
-    y_pred_proba_afterSig, _,predictions_converted, (tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+    y_pred_proba_afterSig, pred_proba_log_odds,predictions_converted, (tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
         model=final_model,
         X_data=X_test,
         y_true=y_test_label_,
@@ -2457,13 +2501,10 @@ def train_finalModel_analyse(
         threshold=model_weight_optuna_best['threshold'],
         config=config
     )
-    pnl = tp_xtest * config['profit_per_tp'] + fp_xtest * config['loss_per_fp']
-    print("Prediction sur X_test sur modele finale suite au ré_entrainement du modele de la CV:")
-    print(f"   -Check: {tp_xtest+fp_xtest} tradees pour {(tp_xtest+fp_xtest+fn_xtest+tn_xtest)} samples")
-    print(f"   -Confusion Matrix: TP: {tp_xtest}, FP: {fp_xtest}, FN: {fn_xtest}, TN: {tn_xtest}")
-    print(f"   -PnL sur X_test : {pnl}")
-    print(
-        f"   - % (trades test)/(samples test): {((tp_xtest+fp_xtest)/(tp_xtest+fp_xtest+fn_xtest+tn_xtest))*100}%")
+
+
+    reporting_model_performance(pred_proba_log_odds, tp_xtest, fp_xtest, fn_xtest, tn_xtest, config)
+
     print_notification('###### FIN: GENERATION PREDICTION AVEC MOBEL FINAL (TEST) ##########', color="blue")
 
     print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########',
@@ -2560,8 +2601,8 @@ def train_finalModel_analyse(
     Winrate = cum_tp / total_trades_cum * 100 if total_trades_cum > 0 else 0
     print(f"=> Test final: X_test avec model final optimisé : TP: {cum_tp}, FP: {cum_fp}, Winrate: {Winrate:.2f}%")
     # On prend la valeur 'max' pour chaque paramètre
-    profit_value = float(weight_param['profit_per_tp']['max'])
-    loss_value = float(weight_param['loss_per_fp']['max'])
+    profit_value = float(config['profit_per_tp'])
+    loss_value = float(config['loss_per_fp'])
 
     print(f"  - PNL : {cum_tp * profit_value + cum_fp * loss_value:.2f}")
 
@@ -2700,8 +2741,8 @@ def train_finalModel_analyse(
         y_pred_proba_afterSig,
         model_weight_optuna_best,
         thresholds=np.arange(0.0, 1.01, 0.001),
-        min_winrate=config['constraint_winrates_val_by_fold'],
-        min_trades=config['constraint_min_trades_threshold_by_Fold']
+        min_winrate=config['config_constraint_winrates_val_by_fold'],
+        min_trades=config['config_constraint_min_trades_threshold_by_Fold']
     )
 
     print_notification('###### FIN: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########',
@@ -2711,7 +2752,7 @@ def train_finalModel_analyse(
                        color="blue")
     importance_df, shap_comparison, shap_values_train, shap_values_test, resulat_test_shap_feature_importance = main_shap_analysis(
         final_model, X_train, y_train_label_, X_test, y_test_label_,
-        save_dir=os.path.join(results_directory, 'shap_dependencies_results'))
+        save_dir=os.path.join(results_directory, 'shap_dependencies_results_reTrainModel'))
     print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
 
@@ -3351,7 +3392,7 @@ def process_RFE_filteringg(params=None, model_weight_optuna=None, selected_colum
     w_p = model_weight_optuna['w_p']
     w_n = model_weight_optuna['w_n']
 
-    def custom_profit_scorer(y_true, y_pred_proba, model_weight_optuna, normalize=False):
+    def custom_profit_scorer(y_true, y_pred_proba, model_weight_optuna, normalize=False,config=None,custom=None):
         """
         Calcule le profit en fonction des prédictions de probabilités.
 
@@ -3377,7 +3418,7 @@ def process_RFE_filteringg(params=None, model_weight_optuna=None, selected_colum
         fp = np.sum((y_true == 0) & (y_pred == 1))
 
         # Calculer le profit
-        profit = (tp * model_weight_optuna['profit_per_tp']) - (fp * model_weight_optuna['loss_per_fp'])
+        profit = (tp * config['profit_per_tp']) - (fp * config['loss_per_fp'])
 
         if normalize:
             profit = profit / len(y_true)
@@ -3817,46 +3858,24 @@ def setup_model_weight_optuna(trial, weight_param,config):
     #print(f"---------------------------------------------------------------------------------------: ",
      #     custom_objective_lossFct)
 
-    # Initialisation du dictionnaire des métriques
-    if custom_objective_lossFct == model_customMetric.XGB_CUSTOM_METRIC_TP_FP:
-        # Suggérer les poids pour la métrique combinée
-        profit_ratio_weight = trial.suggest_float('profit_ratio_weight',
-                                                  weight_param['profit_ratio_weight']['min'],
-                                                  weight_param['profit_ratio_weight']['max'])
-
-        win_rate_weight = trial.suggest_float('win_rate_weight',
-                                              weight_param['win_rate_weight']['min'],
-                                              weight_param['win_rate_weight']['max'])
-
-        selectivity_weight = trial.suggest_float('selectivity_weight',
-                                                 weight_param['selectivity_weight']['min'],
-                                                 weight_param['selectivity_weight']['max'])
-
-        # Normalisation des poids
-        total_weight = profit_ratio_weight + win_rate_weight + selectivity_weight
+    """
+    if (custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED):
         model_weight_optuna = {
-            'profit_ratio_weight': profit_ratio_weight / total_weight,
-            'win_rate_weight': win_rate_weight / total_weight,
-            'selectivity_weight': selectivity_weight / total_weight,
-        }
-
-    elif (custom_objective_lossFct == model_customMetric.XGB_CUSTOM_METRIC_PROFITBASED
-          or
-          custom_objective_lossFct == model_customMetric.LGB_CUSTOM_METRIC_PROFITBASED
-          or custom_objective_lossFct == model_customMetric.LGB_CUSTOM_METRIC_FOCALLOSS):
-        model_weight_optuna = {
-            # 'profit_per_tp': trial.suggest_float('profit_per_tp',
-            #                                      weight_param['profit_per_tp']['min'],
-            #                                      weight_param['profit_per_tp']['max']),
-            # 'loss_per_fp': trial.suggest_float('loss_per_fp',
-            #                                    weight_param['loss_per_fp']['min'],
-            #                                    weight_param['loss_per_fp']['max']),
             'penalty_per_fn': trial.suggest_float('penalty_per_fn',
                                                   weight_param['penalty_per_fn']['min'],
                                                   weight_param['penalty_per_fn']['max'])
         }
+    """
+    model_weight_optuna = {
+        'penalty_per_fn': trial.suggest_float('penalty_per_fn',
+                                              weight_param['penalty_per_fn']['min'],
+                                              weight_param['penalty_per_fn']['max'])
+    }
+    if 'model_weight_optuna' not in locals():
+        model_weight_optuna = {}  # Initialiser si n'existe pas
 
     model_weight_optuna['threshold'] = threshold_value
+
     w_p = trial.suggest_float('w_p', weight_param['w_p']['min'], weight_param['w_p']['max'])
     w_n = trial.suggest_float('w_n', weight_param['w_n']['min'], weight_param['w_n']['max'])
     model_weight_optuna['w_p'] = w_p
@@ -3867,7 +3886,6 @@ def setup_model_weight_optuna(trial, weight_param,config):
         weight_param['num_boost_round']['min'],
         weight_param['num_boost_round']['max']
     )
-    print(model_weight_optuna['num_boost_round'])
     return model_weight_optuna
 
 
@@ -4181,7 +4199,6 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
             'val_trades_samples_perct': arrays['val_trades_samples_perct'],
             'mean_val_score': mean_val_score,
             'std_val_score': std_val_score,
-
             'perctDiff_winrateRatio_train_val': arrays['perctDiff_winrateRatio_train_val'],
             'perctDiff_ratioTradeSample_train_val': arrays['perctDiff_ratioTradeSample_train_val'],
             'metrics': final_metrics,
@@ -4334,8 +4351,42 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
 
 
 
-def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
-                         model_weight_optuna, cv, nb_split_tscv,
+# Fonction pour calculer et récupérer les métriques
+def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_split_tscv, is_log_enabled,
+                    df_init_candles):
+    """
+    Calcul des métriques ou récupération des métriques depuis le cache global.
+    """
+    if "raw_metrics_byFold" in raw_metrics_cache:
+        return raw_metrics_cache["raw_metrics_byFold"]
+
+    print("#############################get_raw_metrics########################################## ")
+
+    raw_metrics_byFold = []
+    for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
+        fold_raw_data = prepare_fold_data(X_train, y_train_label, train_pos, val_pos)
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv = prepare_dataSplit_cv_train_val(
+            config, data, train_pos, val_pos)
+        raw_metrics = compute_raw_train_dist(
+            X_train_full=X_train_full,
+            X_train_cv_pd=X_train_cv_pd,
+            X_val_cv_pd=X_val_cv_pd,
+            fold_num=fold_num,
+            nb_split_tscv=nb_split_tscv,
+            fold_raw_data=fold_raw_data,
+            is_log_enabled=is_log_enabled,
+            df_init_candles=df_init_candles
+        )
+        raw_metrics_byFold.append(raw_metrics)
+
+    # Stocker dans le cache
+    raw_metrics_cache["raw_metrics_byFold"] = raw_metrics_byFold
+    return raw_metrics_byFold
+
+raw_metrics_cache = {}
+
+def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, df_init_candles=None,trial=None, params=None,
+                         model_weight_optuna=None, cv=None, nb_split_tscv=None,
                          model=None, is_log_enabled=False, config=None, **kwargs):
     """
     Validation croisée unifiée pour XGBoost et CatBoost.
@@ -4362,8 +4413,12 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
         arrays = initialize_arrays(nb_split_tscv,config,len(X_train))
         # Mise à jour des métriques et statistiques
         all_fold_stats = {}
-        raw_metrics_byFold=[]
-        # Boucle CV
+
+        # Utilisation d'une variable globale
+
+        raw_metrics_byFold = get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_split_tscv, is_log_enabled, df_init_candles)
+
+
         for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
             # Validation des indices
             validate_fold_indices(train_pos, val_pos)
@@ -4376,9 +4431,10 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
              #   log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
 
             # Traitement du fold avec le processor approprié
-            fold_results,raw_metrics = fold_processor(
-                X_train=X_train,
+            fold_results = fold_processor(
+
                 X_train_full=X_train_full,
+                df_init_candles=df_init_candles,
                 train_pos=train_pos,
                 val_pos=val_pos,
                 params=params,
@@ -4388,20 +4444,31 @@ def run_cross_validation(X_train, X_train_full, y_train_label, trial, params,
                 config=config,
                 nb_split_tscv=nb_split_tscv,
                 fold_raw_data=fold_raw_data,
-                fold_num=fold_num,  # Ajout d'une virgule
+                fold_num=fold_num,
                 **kwargs  # Déplacement sur une nouvelle ligne
             )
 
             update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats,config)
-            raw_metrics_byFold.append(raw_metrics)
         # Calcul des résultats finaux
-        results = calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,config,)
+        results = calculate_final_results(
+            metrics_dict, arrays, all_fold_stats, nb_split_tscv,config)
+
+        model_lastFold = fold_results['current_model']
+        # Sauvegarder l'état du modèle sous forme de chaîne
+        model_lastFold_string = model_lastFold.model_to_string()
+        trial.set_user_attr('model_lastFold_string', model_lastFold_string)
+
+        # Sauvegarder les paramètres séparément
+        model_lastFold_params = model_lastFold.params
+        trial.set_user_attr('model_lastFold_params', model_lastFold_params)
+
+        print("results[model_lastFold]: ",model_lastFold)
+        print("results['model_lastFold]: ",model_lastFold.params)
 
         if config['device_'] == 'cuda':
             print(f"\nMémoire GPU finale: {cp.get_default_memory_pool().used_bytes() / 1024 ** 2:.2f} MB")
         else:
             print("\nMode CPU - pas de tracking mémoire GPU")
-
 
         return results,raw_metrics_byFold
 
@@ -4457,7 +4524,7 @@ def select_fold_processor(model: None):
         raise ValueError(f"Framework non supporté: {model}")
     return processors[model]
 
-def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
+def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
                              data=None, model_weight_optuna=None,
                              is_log_enabled=False, config=None,nb_split_tscv=0):
     """
@@ -4466,18 +4533,8 @@ def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=0, fold_r
     which returns the full set of metrics and debug_info.
     """
     try:
-        # Extract fold data
-        X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
-        # X_train_cv_pd reste un DataFrame
-        X_train_cv_pd = data['X_train_no99_fullRange_pd'].iloc[train_pos]
-
-        Y_train_cv = data['y_train_no99_fullRange'][train_pos].reshape(-1)
-
-        X_val_cv = data['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
-        # X_val_cv_pd reste un DataFrame
-        X_val_cv_pd = data['X_train_no99_fullRange_pd'].iloc[val_pos]
-
-        y_val_cv = data['y_train_no99_fullRange'][val_pos].reshape(-1)
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv = prepare_dataSplit_cv_train_val(
+            config, data, train_pos, val_pos)
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -4485,13 +4542,14 @@ def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=0, fold_r
             **calculate_fold_stats(y_val_cv, "val",config)
         }
 
-        results , raw_metrics= train_and_evaluate_lightgbm_model(
+        fold_results = train_and_evaluate_lightgbm_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
             X_train_cv_pd=X_train_cv_pd,
             X_val_cv_pd=X_val_cv_pd,
             Y_train_cv=Y_train_cv,
             y_val_cv=y_val_cv,
+            df_init_candles=df_init_candles,
             data=data,
             params=params,
             model_weight_optuna=model_weight_optuna,
@@ -4507,7 +4565,7 @@ def process_cv_fold_lightgbm(X_train=None, X_train_full=None, fold_num=0, fold_r
         )
 
         # Retourner le résultat tel quel
-        return results,raw_metrics
+        return fold_results
 
     except Exception as e:
         print(f"\nErreur dans process_cv_fold lightgbm:")
@@ -4547,9 +4605,9 @@ def process_cv_fold_xgboost(X_train=None, X_train_full=None, fold_num=None, trai
         w_p = model_weight_optuna['w_p']
         w_n = model_weight_optuna['w_n']
 
-        if custom_objective_lossFct == model_customMetric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
+        if custom_objective_lossFct == model_custom_objective.XGB_METRIC_custom_metric_PNL:
 
-            custom_metric = lambda predtTrain, dtrain: xgb_custom_metric_ProfitBased_gpu(predtTrain, dtrain,
+            custom_metric = lambda predtTrain, dtrain: LGB_CUSTOM_OBJECTIVE_ProfitBased_gpu(predtTrain, dtrain,
                                                                                          model_weight_optuna)
             obj_function = xgb_create_weighted_logistic_obj_gpu(w_p, w_n)
             params['disable_default_eval_metric'] = 1
@@ -4578,9 +4636,9 @@ def process_cv_fold_xgboost(X_train=None, X_train_full=None, fold_num=None, trai
             maximize=True
         )
 
-        if custom_objective_lossFct == model_customMetric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED:
-            eval_scores = evals_result['eval']['custom_metric_ProfitBased']
-            train_scores = evals_result['train']['custom_metric_ProfitBased']
+        if custom_objective_lossFct == model_custom_objective.XGB_METRIC_custom_metric_PNL:
+            eval_scores = evals_result['eval']['custom_metric_PNL']
+            train_scores = evals_result['train']['custom_metric_PNL']
 
         else:
             eval_scores = evals_result['eval']['aucpr']
@@ -4853,8 +4911,9 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
 
 
 
-def report_trial_optuna(trial, best_trial_with_2_obj, rfe_param, modele_param_optuna_range, selected_columns,
-                        results_directory, config):
+def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range, selected_columns,
+                        results_directory, config,bestResult_dict):
+    best_trial_with_2_obj=best_trial.number + 1
     # Récupération des valeurs depuis trial.user_attrs
     total_tp_val = trial.user_attrs['total_tp_val']
     total_fp_val = trial.user_attrs['total_fp_val']
@@ -4946,7 +5005,7 @@ def report_trial_optuna(trial, best_trial_with_2_obj, rfe_param, modele_param_op
 
     def convert_to_serializable_config(obj):
         """Convert non-serializable objects to a format suitable for JSON."""
-        if isinstance(obj, model_customMetric):
+        if isinstance(obj, model_custom_objective):
             return str(obj)  # or obj.name or obj.value depending on the enum or custom class
         try:
             json.dumps(obj)  # Try to serialize it
@@ -4985,7 +5044,40 @@ def report_trial_optuna(trial, best_trial_with_2_obj, rfe_param, modele_param_op
                     except Exception as copy_error:
                         print(f"Échec de la copie de secours: {str(copy_error)}")
                         return False
+    def save_lightgbm_model(best_trial,model, save_dir):
+        """
+        Sauvegarde un modèle LightGBM dans un fichier.
+        Si le fichier final_model.json existe déjà, il est supprimé avant d'être recréé.
 
+        :param model: Modèle LightGBM à sauvegarder.
+        :param save_dir: Répertoire de sauvegarde.
+        :return: Chemin complet du fichier sauvegardé.
+        """
+        best_trial_number=best_trial.number + 1
+        # Créer le répertoire si nécessaire
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Nom du fichier
+        model_file_path = os.path.join(save_dir, f"best_modellastFold_{best_trial_number}.json")
+
+        # Supprimer le fichier existant si nécessaire
+        if os.path.exists(model_file_path):
+            try:
+                os.remove(model_file_path)
+                print(f"Fichier existant supprimé : {model_file_path}")
+            except Exception as e:
+                print(f"Erreur lors de la suppression du fichier existant : {e}")
+                raise
+
+        # Sauvegarde du modèle
+        try:
+            model.save_model(model_file_path)
+            print(f"Modèle sauvegardé avec succès : {model_file_path}")
+        except Exception as e:
+            print(f"Erreur lors de la sauvegarde du modèle : {e}")
+            raise
+
+        return model_file_path
     def save_trial_results(trial, result_dict_trialOptuna, config=None,
                            modele_param_optuna_range=None, weight_param=None, selected_columns=None,
                            save_dir="optuna_results",
@@ -5085,23 +5177,106 @@ def report_trial_optuna(trial, best_trial_with_2_obj, rfe_param, modele_param_op
     # print(f"   Config: {config}")
 
     # Appel de la fonction save_trial_results
+    save_dir = os.path.join(results_directory, 'optuna_results')
     save_trial_results(
         trial,
         result_dict_trialOptuna,
         config=config,
         modele_param_optuna_range=modele_param_optuna_range, selected_columns=selected_columns,
         weight_param=weight_param,
-        save_dir=os.path.join(results_directory, 'optuna_results'),  # 'optuna_results' should be a string
+        save_dir=save_dir,  # 'optuna_results' should be a string
         result_file="optuna_results.json"
     )
+
+    best_modellastFold_string =bestResult_dict['best_modellastFold_string']
+    best_modellastFold_params =bestResult_dict['best_modellastFold_params']
+
+    # Recharger le modèle
+    import lightgbm as lgb
+    best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+
+    # Assigner les paramètres récupérés au modèle
+    if best_modellastFold_params:
+        best_modellastFold.params.update(best_modellastFold_params)
+
+    # Vérification
+    print("report_trial_optuna best_modellastFold]: ", best_modellastFold)
+    print("report_trial_optuna best_modellastFold.params: ", best_modellastFold.params)
+
+    save_lightgbm_model(best_trial,best_modellastFold, save_dir)
+
     print(f"####{trial.number + 1}/{n_trials_optuna} Optuna results and model saved successfully.####")
 
+def validate_and_update_params(trial_params, model_weight_optuna, params_optuna):
+    """
+    Parcourt trial_params, met à jour les clés dans model_weight_optuna et params_optuna,
+    et affiche les résultats en colonnes. Affiche en vert les clés mises à jour et en violet celles non mises à jour,
+    en distinguant les deux objets (model_weight_optuna et params_optuna).
+
+    Args:
+        trial_params (dict): Dictionnaire contenant les paramètres du trial (Optuna).
+        model_weight_optuna (dict): Dictionnaire des poids du modèle.
+        params_optuna (dict): Dictionnaire des paramètres du modèle.
+    """
+    from termcolor import colored
+
+    # Afficher les valeurs initiales
+    print("--- Avant mise à jour ---")
+    print("model_weight_optuna:", model_weight_optuna)
+    print("params_optuna:", params_optuna)
+
+    updated_in_model_weight = []
+    updated_in_params_optuna = []
+
+    # Mettre à jour les valeurs et suivre les clés mises à jour
+    for key, value in trial_params.items():
+        if key in model_weight_optuna:
+            model_weight_optuna[key] = value
+            updated_in_model_weight.append(key)
+        elif key in params_optuna:
+            params_optuna[key] = value
+            updated_in_params_optuna.append(key)
+
+    # Vérifier les clés non mises à jour
+    missing_in_model_weight = set(model_weight_optuna.keys()) - set(updated_in_model_weight)
+    missing_in_params_optuna = set(params_optuna.keys()) - set(updated_in_params_optuna)
+
+    # Affichage des résultats pour model_weight_optuna
+    """
+    print("\n--- Résultats pour model_weight_optuna ---")
+    print(f"{'Clé':<20}{'Statut':<20}")
+    print("-" * 40)
+    for key in model_weight_optuna.keys():
+        if key in updated_in_model_weight:
+            status = colored("Mis à jour", "green")
+        else:
+            status = colored("Non mis à jour", "magenta")
+        print(f"{key:<20}{status:<20}")
+
+    # Affichage des résultats pour params_optuna
+    print("\n--- Résultats pour params_optuna ---")
+    print(f"{'Clé':<20}{'Statut':<20}")
+    print("-" * 40)
+    for key in params_optuna.keys():
+        if key in updated_in_params_optuna:
+            status = colored("Mis à jour", "green")
+        else:
+            status = colored("Non mis à jour", "magenta")
+        print(f"{key:<20}{status:<20}")
+
+    # Afficher les valeurs finales
+    print("\n--- Après mise à jour ---")
+    print("model_weight_optuna:", model_weight_optuna)
+    print("params_optuna:", params_optuna)
+    """
 
 
 def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, results_directory):
     """
     Callback function for Optuna to monitor progress and log the best trial.
     """
+    is_newBestTrial = False
+
     current_trial = trial.number
     print(f"\n {Fore.CYAN}Optuna Callback Current Trial {current_trial + 1}:{Style.RESET_ALL}")
     optuna_objective_type_value = trial.user_attrs.get('optuna_objective_type', optuna_doubleMetrics.DISABLE)
@@ -5114,8 +5289,11 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     if trial.state != optuna.trial.TrialState.COMPLETE:
         return
 
-    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-    if not completed_trials:
+    previous_completed_count = study.user_attrs.get('previous_completed_count', 0)
+    current_completed_count = previous_completed_count + 1  # Puisque le trial actuel est complété
+    study.set_user_attr('previous_completed_count', current_completed_count)
+
+    if not current_completed_count:
         study.set_user_attr('bestResult_dict', {
             "best_optunaTrial_number": None,
             "best_pnl_val": None,
@@ -5127,6 +5305,8 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     contraints_reached = True
     # Check if the optimization is single-objective or multi-objective
     if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
+        completed_trials = study.get_trials(states=[optuna.trial.TrialState.COMPLETE])
+
         # Multi-objective optimization: custom selection of the best trial
         pareto_trials = study.best_trials
         weights = np.array([weightPareto_pnl_val, weightPareto_pnl_diff])
@@ -5169,6 +5349,18 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         # Single-objective optimization: use best_trial directly
         try:
             best_trial = study.best_trial
+
+            # Récupérer le numéro du best trial précédent depuis les user attributes
+            previous_best_trial_number = study.user_attrs.get("previous_best_trial_number")
+
+            # Comparer avec le best trial actuel
+            if previous_best_trial_number != best_trial.number:
+                print(f"Le meilleur essai a changé !")
+                print(f"Ancien : {previous_best_trial_number}, Nouveau : {best_trial.number}")
+                is_newBestTrial=True
+                # Mettre à jour l'attribut utilisateur
+                study.set_user_attr("previous_best_trial_number", best_trial.number)
+
         except ValueError as e:
             if "No feasible trials are completed yet" in str(e):
                 print("no feasible trials are completed yet")
@@ -5178,68 +5370,6 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
             else:
                 raise e
 
-    def validate_and_update_params(trial_params, model_weight_optuna, params_optuna):
-        """
-        Parcourt trial_params, met à jour les clés dans model_weight_optuna et params_optuna,
-        et affiche les résultats en colonnes. Affiche en vert les clés mises à jour et en violet celles non mises à jour,
-        en distinguant les deux objets (model_weight_optuna et params_optuna).
-
-        Args:
-            trial_params (dict): Dictionnaire contenant les paramètres du trial (Optuna).
-            model_weight_optuna (dict): Dictionnaire des poids du modèle.
-            params_optuna (dict): Dictionnaire des paramètres du modèle.
-        """
-        from termcolor import colored
-
-        # Afficher les valeurs initiales
-        print("--- Avant mise à jour ---")
-        print("model_weight_optuna:", model_weight_optuna)
-        print("params_optuna:", params_optuna)
-
-        updated_in_model_weight = []
-        updated_in_params_optuna = []
-
-        # Mettre à jour les valeurs et suivre les clés mises à jour
-        for key, value in trial_params.items():
-            if key in model_weight_optuna:
-                model_weight_optuna[key] = value
-                updated_in_model_weight.append(key)
-            elif key in params_optuna:
-                params_optuna[key] = value
-                updated_in_params_optuna.append(key)
-
-        # Vérifier les clés non mises à jour
-        missing_in_model_weight = set(model_weight_optuna.keys()) - set(updated_in_model_weight)
-        missing_in_params_optuna = set(params_optuna.keys()) - set(updated_in_params_optuna)
-
-        # Affichage des résultats pour model_weight_optuna
-        """
-        print("\n--- Résultats pour model_weight_optuna ---")
-        print(f"{'Clé':<20}{'Statut':<20}")
-        print("-" * 40)
-        for key in model_weight_optuna.keys():
-            if key in updated_in_model_weight:
-                status = colored("Mis à jour", "green")
-            else:
-                status = colored("Non mis à jour", "magenta")
-            print(f"{key:<20}{status:<20}")
-
-        # Affichage des résultats pour params_optuna
-        print("\n--- Résultats pour params_optuna ---")
-        print(f"{'Clé':<20}{'Statut':<20}")
-        print("-" * 40)
-        for key in params_optuna.keys():
-            if key in updated_in_params_optuna:
-                status = colored("Mis à jour", "green")
-            else:
-                status = colored("Non mis à jour", "magenta")
-            print(f"{key:<20}{status:<20}")
-
-        # Afficher les valeurs finales
-        print("\n--- Après mise à jour ---")
-        print("model_weight_optuna:", model_weight_optuna)
-        print("params_optuna:", params_optuna)
-        """
 
     model_weight_optuna = best_trial.user_attrs.get('model_weight_optuna', None)
     params_optuna = best_trial.user_attrs.get('params_optuna', None)
@@ -5247,9 +5377,29 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     validate_and_update_params(best_trial.params, model_weight_optuna, params_optuna)
     print("model_weight_optuna", model_weight_optuna)
     print("params_optuna", params_optuna)
-
     # Create the result dictionary
+
+
+    # Récupérer le modèle sauvegardé
+    best_modellastFold_string = trial.user_attrs.get('model_lastFold_string', None)
+    best_modellastFold_params = trial.user_attrs.get('model_lastFold_params', None)
+
+    # Recharger le modèle
+    import lightgbm as lgb
+    best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+
+    # Assigner les paramètres récupérés au modèle
+    if best_modellastFold_params:
+        best_modellastFold.params.update(best_modellastFold_params)
+
+    # Vérification
+    print("in callback_optuna best_model best_modellastFold]: ", best_modellastFold)
+    print("in callback_optuna best_model best_modellastFold.params: ", best_modellastFold.params)
+
+
     bestResult_dict = {
+        "best_modellastFold_string":best_modellastFold_string,
+        "best_modellastFold_params": best_modellastFold_params,
         "params_optuna":params_optuna,
         "model_weight_optuna":model_weight_optuna,
         "best_optunaTrial_number": best_trial.number + 1,
@@ -5317,7 +5467,6 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         )
     else:
         ratio_raw_class_1_0_val = None  # Cas où les données sont manquantes
-
     # Récupération des données pour train
     winrate_train_list = best_trial.user_attrs.get('winrate_raw_data_train_by_fold', None)
     winrate_train_list_formatted = [f"{x:.2f}" for x in winrate_train_list] if winrate_train_list else None
@@ -5385,7 +5534,6 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         'perctDiff_ratioTradeSample_train_val': best_trial.user_attrs.get('perctDiff_ratioTradeSample_train_val', None)
 
     }
-
     #scores_ens_val_list_formatted = [f"{x:.2f}" for x in metrics['scores_ens_val_list']]
     # Vérification des valeurs None
     keys_with_none = [key for key, value in metrics.items() if value is None]
@@ -5401,8 +5549,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     # Rapport
     modele_param_optuna_range = get_model_param_range(config['model_type'])
 
-    report_trial_optuna(trial, best_trial.number + 1, rfe_param, modele_param_optuna_range, selected_feature_names,
-                        results_directory, config)
+
 
     method_names_pareto = {
         optuna_doubleMetrics.DISABLE: "DISABLE",
@@ -5414,14 +5561,13 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
 
     method_names_cv = {
         cv_config.TIME_SERIE_SPLIT: "TIME_SERIE_SPLIT",
-        cv_config.TIME_SERIE_SPLIT_NON_ANCHORED: "TIME_SERIE_SPLIT_NON_ANCHORED",
+        cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL: "TIME_SERIE_SPLIT_NON_ANCHORED",
+        cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN: "TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN",
         cv_config.TIMESERIES_SPLIT_BY_ID: 'TIMESERIES_SPLIT_BY_ID',
         cv_config.K_FOLD: "K_FOLD",
         cv_config.K_FOLD_SHUFFLE: "K_FOLD_SHUFFLE"
 
     }
-
-    scaler_choice = config.get('scaler_choice', 0)
 
     train_pred_proba_log_odds = metrics['train_pred_proba_log_odds']
     val_pred_proba_log_odds = metrics['train_pred_proba_log_odds']
@@ -5429,7 +5575,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     # Vérification que les deux listes ne sont pas None et ont le même nombre de folds
     if train_pred_proba_log_odds is not None and val_pred_proba_log_odds is not None:
         if len(train_pred_proba_log_odds) == len(val_pred_proba_log_odds):
-            print(f"Nombre de folds: {len(train_pred_proba_log_odds)}")
+            #print(f"Nombre de folds: {len(train_pred_proba_log_odds)}")
 
             # Initialiser des listes pour stocker les minima et maxima de chaque fold pour train et val
             train_min_values = []
@@ -5474,14 +5620,13 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     else:
         print("train_pred_proba_log_odds ou val_pred_proba_log_odds est None ou n'est pas disponible.")
         exit(88)
-
-    custom_objective_lossFct = config.get("custom_objective_lossFct", None)
     method_name_cv = method_names_cv.get(cv_method, "UNKNOWN")
     use_imbalance_penalty = best_trial.user_attrs.get('use_imbalance_penalty', False)
     print(f"\n   {Fore.BLUE}##Meilleur essai jusqu'à present: {bestResult_dict['best_optunaTrial_number']}, "
-          f"Methode=> Optuna: '{method_name_pareto} | CV: '{method_name_cv} |  Objective loss Fct : {custom_objective_lossFct} | \n"
+          f"Methode=> Optuna: '{method_name_pareto} | CV: '{method_name_cv} |  Objective loss Fct : {config.get('custom_objective_lossFct', None)} | \n"
           f"use_imbalance_penalty: {'Activé' if use_imbalance_penalty else 'Désactivé'}' |"
-          f"scaler_choice: {scaler_choice} | model:{config.get('model_type', 0)} \n##{Style.RESET_ALL}")
+          f"scaler_choice: {config.get('scaler_choice', 0)} | model:{config.get('model_type', 0)} |"
+          f"enable_vif_corr_mi: { config.get('enable_vif_corr_mi', 0)} ##{Style.RESET_ALL}")
     if config['use_optuna_constraints_func'] == True:
 
         #nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
@@ -5559,14 +5704,16 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
    # print(f"     -Ratio class 1/0  val              : {metrics['ratio_raw_class_1_0_val']:.2f}%")
     metrics_list = raw_metrics_byFold[0]
     print(f" *Ensemble Train: ")
-
-    # raw_metrics_byFold est un tuple, prenons son premier élément qui est une liste
     print(f"     -Fold Start: {[metrics['train_metrics']['start_time_train'] for metrics in metrics_list]}")
     print(f"     -Fold End  : {[metrics['train_metrics']['end_time_train'] for metrics in metrics_list]}")
-    print(f"     -Train Log Odds Min: {train_min_values}")
-    print(f"     -Train Log Odds Max: {train_max_values}")
-    print(f"     -Train Probabilités Min: {train_prob_min}")
-    print(f"     -Train Probabilités Max: {train_prob_max}")
+    print(f"     -Slope     : {[metrics['train_metrics']['slope_cv_train'] for metrics in metrics_list]}")
+    print(f"     -r2        : {[metrics['train_metrics']['r2_slope_cv_train'] for metrics in metrics_list]}")
+    print(f"     -Counter Mv: {[metrics['train_metrics']['counter_moves_train'] for metrics in metrics_list]}")
+
+
+    print(f"     -Train Log Odds Min: {train_min_values} => Probabilité: {train_prob_min}")
+    print(f"     -Train Log Odds Max: {train_max_values} => Probabilité: {train_prob_max}")
+
     print(f"     -Nombre de: TP: {metrics['total_tp_train']}, FP: {metrics['total_fp_train']}, "
           f"TN: {metrics['total_tn_train']}, FN: {metrics['total_fn_train']}")
     print(f"     -% Winrate                     : {metrics['win_rate_train']:.2f}%")
@@ -5585,10 +5732,12 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     print(f" *Ensemble Validation: ")
     print(f"     -Fold Start: {[metrics['val_metrics']['start_time_val'] for metrics in metrics_list]}")
     print(f"     -Fold End  : {[metrics['val_metrics']['end_time_val'] for metrics in metrics_list]}")
-    print(f"     -Val Log Odds Min: {val_min_values}")
-    print(f"     -Val Log Odds Max: {val_max_values}")
-    print(f"     -Val Probabilités Min: {val_prob_min}")
-    print(f"     -Val Probabilités Max: {val_prob_max}")
+    print(f"     -Slope     : {[metrics['val_metrics']['slope_cv_val'] for metrics in metrics_list]}")
+    print(f"     -r2        : {[metrics['val_metrics']['r2_slope_cv_val'] for metrics in metrics_list]}")
+    print(f"     -Counter Mv: {[metrics['val_metrics']['counter_moves_val'] for metrics in metrics_list]}")
+
+    print(f"     -Val Log Odds Min: {val_min_values} => Probabilités: {val_prob_min}")
+    print(f"     -Val Log Odds Max: {val_max_values} => Probabilités: {val_prob_max}")
     print(f"     -Nombre de: TP: {metrics['total_tp_val']}, FP: {metrics['total_fp_val']}, "
           f"TN: {metrics['total_tn_val']}, FN: {metrics['total_fn_val']}")
     print(f"     -% Winrate                     : {metrics['win_rate_val']:.2f}%")
@@ -5627,6 +5776,10 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         f"     -Nombre d'échantillons           : {sum([metrics['total_tp_train'], metrics['total_fp_train'], metrics['total_tn_train'], metrics['total_fn_train']])} "
         f"dont {metrics['total_tp_train'] + metrics['total_fp_train']} trades pris")
     print(f"\n    =>Hyperparamètres du meilleur score trouvé à date: {bestResult_dict['best_params']}")
+
+    if is_newBestTrial==True:
+        report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range, selected_feature_names,
+                        results_directory, config,bestResult_dict)
 
     study_optuna.set_user_attr('bestResult_dict', bestResult_dict)
 
@@ -6658,13 +6811,81 @@ class CustomSessionTimeSeriesSplit_byID(BaseCrossValidator):
         return self.n_splits
 
 
-class NonAnchoredWalkForwardCV(BaseCrossValidator):
+class nonAnchore_dWalkForwardCV_afterPrevTrain(BaseCrossValidator):
+    """
+    Validateur walk-forward 'non ancré' (nonAnchored) qui calcule
+    automatiquement la taille de l'entrainement (train_size).
+
+    - Nombre de splits (folds) : n_splits
+    - Ratio pour la validation : val_ratio (<= 1)
+
+    Caractéristiques :
+    ----------------
+    1. Le train du fold suivant démarre là où s'arrête le train du fold précédent
+       (pas de recouvrement du train).
+    2. La validation est immédiatement après le train.
+    3. train_size est calculé à partir de la formule :
+         floor(n / ((1 + val_ratio) * n_splits))
+    4. val_size = round(train_size * val_ratio).
+    5. Si on ne peut pas générer l'ensemble des n_splits demandés
+       parce qu'on atteint la fin du dataset, on arrête.
+    """
+
+    def __init__(self, n_splits, val_ratio=0.5):
+        super().__init__()
+        assert 0 < val_ratio <= 1, "val_ratio doit être compris entre 0 et 1."
+
+        self.n_splits = n_splits
+        self.val_ratio = val_ratio
+
+        # train_size sera calculé dans .split() en fonction de la taille de X
+
+    def get_n_splits(self, X, y=None, groups=None):
+        """
+        On retourne simplement le nombre de splits souhaité,
+        même si en pratique on risque d'en produire moins
+        si le dataset est trop petit.
+        """
+        return self.n_splits
+
+    def split(self, X, y=None, groups=None):
+        n = len(X)
+
+        train_size = int(n / (self.n_splits + self.val_ratio))
+        val_size = int(train_size * self.val_ratio)
+
+        # Ajuster pour l'espace restant
+        total_used = self.n_splits * (train_size + val_size)
+        leftover = n - total_used
+        if leftover > 0:
+            last_train_extra = leftover
+
+        start = 0
+        for fold in range(self.n_splits):
+            current_train_size = train_size
+            """
+            if fold == self.n_splits - 1:  # dernier fold
+                current_train_size += last_train_extra
+            """
+            end_train = start + current_train_size
+            end_val = end_train + val_size
+
+            if end_val > n:  # Sécurité
+                break
+
+            train_indices = np.arange(start, end_train)
+            val_indices = np.arange(end_train, end_val)
+            yield train_indices, val_indices
+
+            start += current_train_size
+
+class nonAnchore_dWalkForwardCV_afterPrevVal(BaseCrossValidator):
     """
     Validation croisée Non-Anchored Walk-Forward avec ratio stable.
 
     - Le ratio r = val_size / train_size est maintenu constant à partir du second fold.
     - Le leftover est ajouté au premier train pour utiliser au mieux toutes les données.
-    - Chaque split est déterminé à l'avance en fonction du ratio, puis on avance dans les données.
+
     """
 
     def __init__(self, n_splits, r=1.0):
@@ -6679,13 +6900,8 @@ class NonAnchoredWalkForwardCV(BaseCrossValidator):
         nb_split_tscv = self.n_splits
         r = self.r
 
-        # Calcul du train_size maximum
-        # On veut (train_size + val_size)*nb_split_tscv <= N
-        # val_size = r * train_size => (1 + r)*train_size * nb_split_tscv <= N
-        # train_size <= N / (nb_split_tscv*(1+r))
         train_size = int(N // (nb_split_tscv * (1 + r)))
         val_size = int(train_size * r)
-
         required_size = nb_split_tscv * (train_size + val_size)
         leftover = N - required_size
 
@@ -6695,20 +6911,25 @@ class NonAnchoredWalkForwardCV(BaseCrossValidator):
         # Fold 1
         current_index = 0
         train_indices = np.arange(current_index, current_index + train_size_first)
-        current_index += train_size_first
-        val_indices = np.arange(current_index, current_index + val_size)
-        current_index += val_size
+        val_indices = np.arange(current_index + train_size_first,
+                                current_index + train_size_first + val_size)
 
         yield train_indices, val_indices
 
         # Folds suivants
+
+        # Comportement original : train commence après la validation précédente
+        current_index = current_index + train_size_first + val_size
+
+        # Folds suivants
         for i in range(1, nb_split_tscv):
             train_indices = np.arange(current_index, current_index + train_size)
-            current_index += train_size
-            val_indices = np.arange(current_index, current_index + val_size)
-            current_index += val_size
+            val_indices = np.arange(current_index + train_size,
+                                    current_index + train_size + val_size)
 
             yield train_indices, val_indices
+
+            current_index += train_size + val_size
 
 
 def convert_metrics_to_numpy(metrics_dict):
@@ -6737,20 +6958,26 @@ def calculate_time_difference(start_date_str, end_date_str):
     return diff
 
 
-def setup_cv_method(df_init=None, X_train=None, y_train_label=None, cv_method=None, nb_split_tscv=None, config=None):
-    # D'abord, vérifier si la colonne existe dans df_init
-    if 'timeStampOpening' not in df_init.columns:
-        raise ValueError("La colonne 'timeStampOpening' est absente de df_init.")
+def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_method=None, nb_split_tscv=None, config=None):
+    # D'abord, vérifier si la colonne existe dans df_init_features
+    if 'timeStampOpening' not in df_init_features.columns:
+        raise ValueError("La colonne 'timeStampOpening' est absente de df_init_features.")
 
     """Configure la méthode de validation croisée"""
     if cv_method == cv_config.TIME_SERIE_SPLIT:
         return TimeSeriesSplit(n_splits=nb_split_tscv)
-    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED:
+    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL:
         r = config.get('non_acnhored_val_ratio', 1)
 
-        cv = NonAnchoredWalkForwardCV(n_splits=nb_split_tscv, r=r)
+        cv = nonAnchore_dWalkForwardCV_afterPrevVal(n_splits=nb_split_tscv, r=r)
         return cv
+    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN:
+        r = config.get('non_acnhored_val_ratio', 1)
 
+        cv = nonAnchore_dWalkForwardCV_afterPrevTrain(
+        n_splits=nb_split_tscv,
+        val_ratio=r)
+        return cv
     elif cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
         # Ensuite, appliquer la logique en fonction de cv_method
         # On garde une trace des colonnes originales
@@ -6760,20 +6987,20 @@ def setup_cv_method(df_init=None, X_train=None, y_train_label=None, cv_method=No
 
         # Ajout des colonnes nécessaires si elles n'existent pas déjà
         if 'timeStampOpening' not in X_train_.columns:
-            X_train_['timeStampOpening'] = df_init.loc[X_train_.index, 'timeStampOpening']
+            X_train_['timeStampOpening'] = df_init_features.loc[X_train_.index, 'timeStampOpening']
 
         if 'session_type_index' not in X_train_.columns:
-            X_train_['session_type_index'] = df_init.loc[X_train_.index, 'session_type_index']
+            X_train_['session_type_index'] = df_init_features.loc[X_train_.index, 'session_type_index']
 
         # Vérification des valeurs
         columns_to_check = ['timeStampOpening']
-        comparison_results = X_train_[columns_to_check].eq(df_init.loc[X_train_.index, columns_to_check])
+        comparison_results = X_train_[columns_to_check].eq(df_init_features.loc[X_train_.index, columns_to_check])
         discrepancies = comparison_results[~comparison_results.all(axis=1)]
 
         if not discrepancies.empty:
             print("\nDétails des divergences :")
             print(discrepancies)
-            raise ValueError("divergence df_init X_train_")
+            raise ValueError("divergence df_init_features X_train_")
 
         # Création d'une colonne temporaire session_type_index_utc
         X_train_['session_type_index_utc'] = timestamp_to_date_utc(X_train_['timeStampOpening']).str[:10] + '_' + \
@@ -7189,161 +7416,40 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'metrics': metrics_converted
     }
 
-def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, tp_train, fp_train,
-                        tn_train, fn_train, tp_val, fp_val, tn_val, fn_val, fold_num, nb_split_tscv, fold_raw_data
-                           ,is_log_enabled):
+def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
     """
-    Log les métriques de validation croisée au format standardisé.
-
-    Format:
-    === Fold N/Total ===
-    === Ranges ===
-    X_train_full index | Train pos range | Val pos range
-    === TRAIN ===
-    Distribution (Avant optimisation): stats
-    Métriques (après optimisation): métriques
-    === VALIDATION ===
-    Période: dates et durée
-    Distribution (Avant optimisation): stats
-    Métriques (après optimisation): métriques
+    Fonction pour rapporter les performances d'un modèle.
 
     Args:
-        X_train_full (pd.DataFrame): Données d'entraînement complètes
-        X_train_cv (pd.DataFrame): Données d'entraînement du fold
-        X_val_cv_pd (pd.DataFrame): Données de validation du fold
-        val_pos (array-like): Positions des données de validation
-        Y_train_cv (cp.ndarray): Labels d'entraînement
-        y_val_cv (cp.ndarray): Labels de validation
-        tp_train, fp_train, tn_train, fn_train (int): Métriques d'entraînement
-        tp_val, fp_val, tn_val, fn_val (int): Métriques de validation
-        config (dict): Configuration
-        fold_num (int): Numéro du fold courant
-        nb_split_tscv (int): Nombre total de folds
-        fold_data (dict): Données du fold
+        pred_proba_log_odds (np.array): Log-odds prédites par le modèle.
+        tp (int): Nombre de vrais positifs.
+        fp (int): Nombre de faux positifs.
+        fn (int): Nombre de faux négatifs.
+        tn (int): Nombre de vrais négatifs.
+        config (dict): Configuration contenant les paramètres de profit et de perte.
 
     Returns:
-        dict: Dictionnaire contenant les métriques calculées
+        None: Affiche les résultats directement.
     """
+    # Calcul du PnL
+    pnl = tp * config['profit_per_tp'] + fp * config['loss_per_fp']
 
-    try:
-        # 1. Conversion des timestamps en dates UTC
-        def timestamp_to_date_utc_(timestamp):
-            try:
-                date_format = "%Y-%m-%d %H:%M:%S"
-                if isinstance(timestamp, pd.Series):
-                    return timestamp.apply(lambda x: time.strftime(date_format, time.gmtime(x)))
-                return time.strftime(date_format, time.gmtime(timestamp))
-            except Exception as e:
-                print(f"Erreur lors de la conversion timestamp->date: {str(e)}")
-                return None
+    # Calcul des statistiques pour log-odds
+    log_odds_min = np.min(pred_proba_log_odds)
+    log_odds_max = np.max(pred_proba_log_odds)
 
+    # Transformation en probabilités avec sigmoidCustom_cpu
+    proba_min = sigmoidCustom_cpu(log_odds_min)
+    proba_max = sigmoidCustom_cpu(log_odds_max)
 
-
-        # Distribution avant optimisation
-        train_dist = fold_raw_data['distributions']['train']
-        total_samples_train = sum(train_dist.values())
-        class1_train = train_dist.get(1, 0)
-        class0_train = train_dist.get(0, 0)
-        winrate_train = (class1_train / total_samples_train * 100) if total_samples_train > 0 else 0
-        ratio_train = class1_train / class0_train if class0_train > 0 else float('inf')
-        train_pos = fold_raw_data['train_indices']
-        val_pos = fold_raw_data['val_indices']
-        start_time_train, end_time_train, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
-        time_diff = calculate_time_difference(
-            timestamp_to_date_utc_(start_time_train),
-            timestamp_to_date_utc_(end_time_train)
-        )
-        total_trades_train = tp_train + fp_train
-        winrate_opti_train = (tp_train / total_trades_train * 100) if total_trades_train > 0 else 0
-
-
-        # Période
-        start_time_val, end_time_val, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
-        time_diff = calculate_time_difference(
-            timestamp_to_date_utc_(start_time_val),
-            timestamp_to_date_utc_(end_time_val)
-        )
-
-        # Distribution avant optimisation
-        val_dist = fold_raw_data['distributions']['val']
-        total_samples_val = sum(val_dist.values())
-        class1_val = val_dist.get(1, 0)
-        class0_val = val_dist.get(0, 0)
-        winrate_val = (class1_val / total_samples_val * 100) if total_samples_val > 0 else 0
-        ratio_val = class1_val / class0_val if class0_val > 0 else float('inf')
-
-
-        total_trades_val = tp_val + fp_val
-        winrate_opti_val = (tp_val / total_trades_val * 100) if total_trades_val > 0 else 0
-
-
-        # Mise à jour du dictionnaire des métriques
-        raw_metrics={
-            'train_metrics': {
-                'total_samples_train': total_samples_train,
-                'class1_train': class1_train,
-                'class0_train': class0_train,
-                'winrate': winrate_train,
-                'ratio_train': ratio_train,
-                'start_time_train': timestamp_to_date_utc_(start_time_train),
-                'end_time_train': timestamp_to_date_utc_(end_time_train)
-            },
-            'val_metrics': {
-                'total': total_samples_val,
-                'class1_val': class1_val,
-                'class0_val': class0_val,
-                'winrate': winrate_val,
-                'ratio_val': ratio_val,
-                'start_time_val': timestamp_to_date_utc_(start_time_val),
-                'end_time_val': timestamp_to_date_utc_(end_time_val)
-            }
-        }
-        if is_log_enabled:
-            # === Fold et Ranges ===
-            print(f"\n============ Fold {fold_num + 1}/{nb_split_tscv} ============")
-            print("=== Ranges ===")
-
-            print(f"X_train_full index: {X_train_full.index.min()}-{X_train_full.index.max()} | "
-                  f"Train pos range: {min(train_pos)}-{max(train_pos)} | "
-                  f"Val pos range: {min(val_pos)}-{max(val_pos)}")
-
-            # === TRAIN ===
-            print("=== TRAIN ===")
-            # Période
-
-            print(f"Période: Du {timestamp_to_date_utc_(start_time_train)} au {timestamp_to_date_utc_(end_time_train)} "
-                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
-            print("Distribution (Avant optimisation):")
-            print(
-                f"- Total: {total_samples_train} échantillons | class1: {class1_train} | class0: {class0_train}")
-            print(f"- Winrate: {winrate_train:.2f}%")
-            print(f"- Ratio réussis/échoués: {ratio_train:.2f}")
-
-            # Métriques après optimisation
-            print("Métriques (après optimisation):")
-
-            print(f"- TP: {tp_train} | FP: {fp_train} | TN: {tn_train} | FN: {fn_train}")
-            print(
-                f"- Total trades pris: {total_trades_train} ({(total_trades_train / total_samples_train * 100):.2f}% des échantillons)")
-            print(f"- Winrate: {winrate_opti_train:.2f}%")
-
-            # === VALIDATION ===
-            print("=== VALIDATION ===")
-            print(f"Période: Du {timestamp_to_date_utc_(start_time_val)} au {timestamp_to_date_utc_(end_time_val)} "
-                  f"(Durée: {time_diff.months} mois, {time_diff.days} jours)")
-            print("Distribution (Avant optimisation):")
-            print(
-                f"- Total: {total_samples_val} échantillons | Trades réussis: {class1_val} | Trades échoués: {class0_val}")
-            print(f"- Winrate: {winrate_val:.2f}%")
-            print(f"- Ratio réussis/échoués: {ratio_val:.2f}")
-
-            # Métriques après optimisation
-            print("Métriques (après optimisation):")
-            print(f"- TP: {tp_val} | FP: {fp_val} | TN: {tn_val} | FN: {fn_val}")
-            print(
-                f"- Total trades pris: {total_trades_val} ({(total_trades_val / total_samples_val * 100):.2f}% des échantillons)")
-            print(f"- Winrate: {winrate_opti_val:.2f}%")
-        return raw_metrics
-    except Exception as e:
-        print(f"Erreur dans log_cv_fold_metrics: {str(e)}")
-        return None
+    # Affichage des résultats
+    print(f"log-odds => min: {log_odds_min:.2f}, max: {log_odds_max:.2f} | "
+          f"proba => min: {proba_min:.2f}, max: {proba_max:.2f}")
+    print("Prediction sur X_test sur modèle final suite au ré-entrainement du modèle de la CV:")
+    total_samples = tp + fp + fn + tn
+    total_trades = tp + fp
+    print(f"   - Trades testés : {total_trades} trades pour {total_samples} échantillons")
+    print(f"   - Confusion Matrix : TP: {tp}, FP: {fp}, FN: {fn}, TN: {tn}")
+    print(f"   - PnL sur X_test : {pnl:.2f}")
+    trade_percentage = (total_trades / total_samples) * 100
+    print(f"   - % (trades testés / échantillons testés) : {trade_percentage:.2f}%")

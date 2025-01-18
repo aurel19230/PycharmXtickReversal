@@ -77,35 +77,35 @@ def get_model_param_range(model_type):
     elif model_type == modelType.LGBM:
         return {
             # Plus de feuilles par arbre -> arbres plus complexes -> log odds plus étendus
-            'num_leaves': {'min': 60, 'max': 150},
+            'num_leaves': {'min': 90, 'max': 170},
 
             # Taux plus élevé = mises à jour plus agressives -> log odds plus extrêmes
             'learning_rate': {'min': 0.007, 'max': 0.1, 'log': True},
 
             # Plus petit nombre d'échantillons par feuille -> splits plus fins -> log odds plus dispersés
-            'min_child_samples': {'min': 40, 'max': 100},
+            'min_child_samples': {'min': 60, 'max': 180},
 
             # Plus grande fraction des données -> arbres plus similaires -> log odds moins moyennés
-            'bagging_fraction': {'min': 0.5, 'max': 0.85},
+            'bagging_fraction': {'min': 0.4, 'max': 0.7},
 
             # Plus de features par arbre -> décisions plus tranchées -> log odds plus étendus
-            'feature_fraction': {'min': 0.6, 'max': 0.85},
+            'feature_fraction': {'min': 0.75, 'max': 0.95},
 
             # Plus de features par niveau -> splits plus discriminants -> log odds plus contrastés
-            'feature_fraction_bynode': {'min': 0.6, 'max': 0.95},
+            'feature_fraction_bynode': {'min': 0.65, 'max': 0.9},
 
             # Seuil de gain plus bas -> plus de splits autorisés -> log odds plus dispersés
-            'min_split_gain': {'min': 0.3, 'max': 4},
+            'min_split_gain': {'min': 1.5, 'max': 9},
 
             # Moins de régularisation L1 -> poids moins contraints -> log odds plus extrêmes
-            'lambda_l1': {'min': 0.3, 'max': 2.6, 'log': True},
+            'lambda_l1': {'min': 0.1, 'max':3.5, 'log': True},
 
             # Moins de régularisation L2 -> poids moins lissés -> log odds plus étendus
-            'lambda_l2': {'min': 0.1, 'max': 1, 'log': True},
+            'lambda_l2': {'min': 0.1, 'max': 3., 'log': True},
 
             # Bagging plus fréquent (valeurs plus petites) -> plus de moyennage -> log odds plus resserrés
             # Bagging moins fréquent (valeurs plus grandes) -> moins de moyennage -> log odds plus dispersés
-            'bagging_freq': {'min': 2, 'max': 7}
+            'bagging_freq': {'min': 3, 'max': 7}
         }
 
 
@@ -173,7 +173,7 @@ def get_weight_param():
     weight_param = {
         # Nombre d'itérations de boosting (équivalent à num_boost_round dans XGB)
         'num_boost_round': {'min': 400, 'max': 1200},
-        'threshold': {'min': 0.45, 'max': 0.59},  # total_trades_val = tp + fp
+        'threshold': {'min': 0.47, 'max': 0.53},  # total_trades_val = tp + fp
         'w_p': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
         'w_n': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
         #'profit_per_tp': {'min': 1.25, 'max': 1.25},  # fixe, dépend des profits par trade
@@ -192,7 +192,7 @@ def get_config():
         'target_directory': "",
         'device_': 'cpu',
         'n_trials_optuna': 100000,
-        'nb_split_tscv_': 5,
+        'nb_split_tscv_': 7,
         'test_size_ratio': 0.2,
         'nanvalue_to_newval_': np.nan,
         'random_state_seed': 35,
@@ -201,9 +201,8 @@ def get_config():
         'loss_per_fp': -1.25,
         # 'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
         'results_directory': "",
-        'cv_method': cv_config.TIME_SERIE_SPLIT_NON_ANCHORED,
-        # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED
-        'non_acnhored_val_ratio': 0.6,
+
+        'non_acnhored_val_ratio': 0.8,
         'weightPareto_pnl_val': 0.4,
         'weightPareto_pnl_diff': 0.6,
         'use_of_rfe_in_optuna': rfe_param.NO_RFE,
@@ -211,18 +210,22 @@ def get_config():
         'optuna_objective_type': optuna_doubleMetrics.DISABLE,  # USE_DIST_TO_IDEAL,
         'use_optuna_constraints_func': True,
         'config_constraint_min_trades_threshold_by_Fold': 10,
-        'config_constraint_ratioWinrate_train_val': 19,
+        'config_constraint_ratioWinrate_train_val': 12,
         'config_constraint_winrates_val_by_fold': 50,
         'use_imbalance_penalty': False,
-        'is_log_enabled': True,
-        'enable_vif_corr_mi': False,
+        'is_log_enabled': False,
+        'enable_vif_corr_mi': True,
         'vif_threshold': 18,
         'corr_threshold': 0.5,
         'mi_threshold': 0.001,
         'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST
+        'cv_method': cv_config.TIME_SERIE_SPLIT,
+        # TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN
+        # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
         'model_type': modelType.LGBM,
-        'custom_objective_lossFct': model_customMetric.LGB_CUSTOM_METRIC_PROFITBASED ,#LGB_CUSTOM_METRIC_PROFITBASED LGB_CUSTOM_METRIC_FOCALLOSS
+        'custom_objective_lossFct': model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED ,#LGB_CUSTOM_METRIC_PROFITBASED LGB_CUSTOM_OBJECTIVE_BINARY LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY
+        'custom_metric_eval': model_custom_metric.LGB_CUSTOM_METRIC_PNL,
          #'model_type': modelType.XGB,
          #'custom_objective_lossFct': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED,
 

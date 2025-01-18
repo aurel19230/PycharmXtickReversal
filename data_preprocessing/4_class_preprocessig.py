@@ -2,14 +2,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from standardFunc_sauv import timestamp_to_date_utc
-from standardFunc_sauv import print_notification, load_data
+from func_standard import timestamp_to_date_utc
+from func_standard import print_notification, load_data
 import os
 
 # Charger les données
 # Nom du fichier
 file_name = "Step3_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession.csv"
-file_name = "Step3_4_0_5TP_1SL_newBB_080919_281124_extractOnly750LastFullSession.csv"
+file_name = "Step3_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession.csv"
 
 # Chemin du répertoire
 directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_5TP_1SL_newBB\\merge"

@@ -3,7 +3,7 @@ import numpy as np
 from numba import jit
 import os
 import time
-from standardFunc_sauv import  print_notification
+from func_standard import  print_notification
 
 directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
 

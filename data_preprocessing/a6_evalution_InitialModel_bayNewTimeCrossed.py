@@ -75,8 +75,8 @@ from func_standard import (print_notification,
                            optuna_doubleMetrics,
                            callback_optuna,
                            calculate_weighted_adjusted_score_custom,
-                           model_customMetric, scalerChoice,
-                           train_finalModel_analyse, init_dataSet,
+                           scalerChoice,
+                           reTrain_finalModel_analyse, init_dataSet,best_modellastFold_analyse,
                            calculate_normalized_objectives,
                            run_cross_validation,
                            setup_model_params_optuna, setup_model_weight_optuna, cv_config,
@@ -90,7 +90,6 @@ from colorama import Fore, Style, init
 
 
 # 3. Optimisation des splits
-
 
 ########################################
 #########    FUNCTION DEF      #########
@@ -198,7 +197,7 @@ from typing import Iterator, Optional, Tuple, Union
 from numbers import Integral
 
 
-def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
+def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,
                      X_train_full=None, device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
                      model_weight_optuna=None, weight_param=None, random_state_seed_=None, is_log_enabled=None,
                      cv_method=cv_config.K_FOLD, selected_columns=None, model=None, ENV='pycharm'):
@@ -229,7 +228,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
 
         # 4) Configuration de la méthode de cross-validation
         cv = setup_cv_method(
-            df_init=df_init,
+            df_init_features=df_init_features,
             X_train=X_train,
             y_train_label=y_train_label,
             cv_method=cv_method,
@@ -252,6 +251,7 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             X_train=X_train,
             X_train_full=X_train_full,
             y_train_label=y_train_label,
+            df_init_candles=df_init_candles,
             trial=trial,
             params=params_optuna,
             model_weight_optuna=model_weight_optuna,
@@ -259,8 +259,24 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
             nb_split_tscv=nb_split_tscv,
             is_log_enabled=is_log_enabled,
             model=model,
-            config=config
+            config=config,
         )
+
+        # Récupérer le modèle sauvegardé
+        best_modellastFold_string = trial.user_attrs.get('model_lastFold_string', None)
+        best_modellastFold_params = trial.user_attrs.get('model_lastFold_params', None)
+
+        import lightgbm as lgb
+        best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+
+        # Assigner les paramètres récupérés au modèle
+        if best_modellastFold_params:
+            best_modellastFold.params.update(best_modellastFold_params)
+
+        # Vérification
+        print("objective_optuna best_modellastFold]: ", best_modellastFold)
+        print("objective_optuna best_modellastFold.params: ", best_modellastFold.params)
+
 
     except Exception as e:
         print(f"\n{'!' * 50}")
@@ -381,6 +397,10 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
 
     # 11) Mise à jour de tous les attributs du trial pour validation
     # Mise à jour des attributs du trial pour validation
+
+
+
+
     trial.set_user_attr('total_tp_val', total_tp_val)
     trial.set_user_attr('total_fp_val', total_fp_val)
     trial.set_user_attr('total_tn_val', total_tn_val)
@@ -523,7 +543,8 @@ def objective_optuna(df_init=None, trial=None, study=None, X_train=None, X_test=
 
 
 def train_and_evaluate_model(
-        df_init=None,
+        df_init_features=None,
+        df_init_candles=None,
         config=None,  # Add config parameter here
         weight_param=None
 ):
@@ -540,17 +561,17 @@ def train_and_evaluate_model(
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
     model = config.get('model_type', modelType.XGB)
 
-    zeros = (df_init['class_binaire'] == 0).sum()
-    ones = (df_init['class_binaire'] == 1).sum()
+    zeros = (df_init_features['class_binaire'] == 0).sum()
+    ones = (df_init_features['class_binaire'] == 1).sum()
     total = zeros + ones
-    print(f"Dimensions de df_init: {df_init.shape} (lignes, colonnes)")
-    print("df_init:")
-    print(df_init)
+    print(f"Dimensions de df_init_features: {df_init_features.shape} (lignes, colonnes)")
+    print("df_init_features:")
+    print(df_init_features)
 
     (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
      X_train, y_train_label, X_test, y_test_label,
      nb_SessionTrain, nb_SessionTest, nan_value) = (
-        init_dataSet(df_init=df_init, nanvalue_to_newval=nanvalue_to_newval,
+        init_dataSet(df_init_features=df_init_features, nanvalue_to_newval=nanvalue_to_newval,
                      config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
 
     print(
@@ -644,10 +665,9 @@ def train_and_evaluate_model(
     if len(X_test) != len(y_test_label):
         raise ValueError(f"Mismatch des tailles (pas de scaler): "
                          f"X_test ({len(X_test)}) et y_test_label ({len(y_test_label)})")
-    print("X_train")
-    print(X_train)
-    print("X_test")
-    print(X_test)
+
+    print(f"Shape de X_train : {X_train.shape}")
+    print(f"Shape de X_test : {X_test.shape}")
 
     enable_vif_corr_mi = config.get('enable_vif_corr_mi', None)
     if enable_vif_corr_mi:
@@ -704,7 +724,8 @@ def train_and_evaluate_model(
     # Adjust the objective wrapper function
     def objective_wrapper(trial, study, model_weight_optuna):
         # Call your original objective function
-        score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(df_init=df_init,
+        score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(df_init_features=df_init_features,
+                                                                    df_init_candles=df_init_candles,
                                                                     trial=trial, study=study, X_train=X_train,
                                                                     X_test=X_test,
                                                                     y_train_label=y_train_label,
@@ -832,16 +853,26 @@ def train_and_evaluate_model(
               bestResult_dict["ecart_train_val"])
     print("#################################")
     print("#################################\n")
-
-    print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
-
-    print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
-
     print(selected_feature_names)
     X_train = X_train[selected_feature_names]
     X_test = X_test[selected_feature_names]
 
-    train_finalModel_analyse(
+    print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
+
+
+
+
+    print_notification('###### DEBUT: ANALYSE DERNIER FOLD ##########', color="blue")
+
+    best_modellastFold_analyse( X_test=X_test,
+                                y_test_label=y_test_label,bestResult_dict=bestResult_dict,
+                                results_directory=results_directory,config=config)
+
+    print_notification('###### FIN: ANALYSE DERNIER FOLD ##########', color="blue")
+
+
+
+    reTrain_finalModel_analyse(
         X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
         y_train_label_=y_train_label, y_test_label_=y_test_label,
         nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
@@ -886,8 +917,13 @@ if __name__ == "__main__":
     # Définir les paramètres supplémentaires
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
 
-    df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
+    df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
 
+    # Initialiser df_init_candles s'il n'existe pas ou est None
+    df_init_candles = pd.DataFrame(index=df_init_features.index)
+    df_init_candles[['close', 'high', 'low']] = df_init_features[['close', 'high', 'low']]
+
+    print(df_init_candles['low'])
     print("\nContenu de CUSTOM_SESSIONS (format tabulé) :")
     print(f"{'Section':<15} {'Start':>6} {'End':>6} {'Type':>6} {'Selected':>8} {'Description':<20}")
     print("-" * 70)
@@ -898,19 +934,19 @@ if __name__ == "__main__":
     print_notification('###### FIN: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
     # Utilisation
     # Définition des sections personnalisées
-    print("df_init: ")
-    zeros = (df_init['class_binaire'] == 0).sum()
-    ones = (df_init['class_binaire'] == 1).sum()
+    print("df_init_features: ")
+    zeros = (df_init_features['class_binaire'] == 0).sum()
+    ones = (df_init_features['class_binaire'] == 1).sum()
     total = zeros + ones
-    print(f"   - Dimensions de df_init: {df_init.shape} (lignes, colonnes)")
+    print(f"   - Dimensions de df_init_features: {df_init_features.shape} (lignes, colonnes)")
     print(
-        f"   - Distribution des trades df_init - Échecs (0): {zeros} ({zeros / total * 100:.1f}%), Réussis (1): {ones} ({ones / total * 100:.1f}%), Total: {total}")
+        f"   - Distribution des trades df_init_features - Échecs (0): {zeros} ({zeros / total * 100:.1f}%), Réussis (1): {ones} ({ones / total * 100:.1f}%), Total: {total}")
 
-    print(f"   - Nb de features avant  selection manuelle: {len(df_init.columns)}\n")
+    print(f"   - Nb de features avant  selection manuelle: {len(df_init_features.columns)}\n")
 
     # Définition des colonnes de features et des colonnes exclues
     excluded_columns_principal = [
-        'class_binaire', 'date', 'trade_category',
+        'class_binaire', 'date', 'trade_category','close','high','low',
         'SessionStartEnd',
 
         'timeStampOpening',
@@ -986,21 +1022,19 @@ if __name__ == "__main__":
         #'extrem',
         #'Extrem',
         "bullish",
-    ]
-
-    # Créer la liste des colonnes à exclure
+]
+        # Créer la liste des colonnes à exclure
     excluded_columns_category = [
-        col for col in df_init.columns
+        col for col in df_init_features.columns
         if any(category in col for category in excluded_categories)
     ]
 
-    print(excluded_columns_category)
     excluded_columns = excluded_columns_principal + excluded_columns_tradeDirection + excluded_columns_CorrCol + excluded_columns_category
 
     # ajoute les colonnes pour retraitement ultérieurs
-    df_init = add_session_id(df_init, CUSTOM_SESSIONS)
+    df_init_features = add_session_id(df_init_features, CUSTOM_SESSIONS)
     # Sélectionner les colonnes qui ne sont pas dans excluded_columns
-    selected_columns = [col for col in df_init.columns if col not in excluded_columns]
+    selected_columns = [col for col in df_init_features.columns if col not in excluded_columns]
 
     selected_columnsByFiltering = [
 
@@ -1020,7 +1054,8 @@ if __name__ == "__main__":
     })
 
     results = train_and_evaluate_model(
-        df_init=df_init,
+        df_init_features=df_init_features,
+        df_init_candles=df_init_candles,
         config=config,
         weight_param=weight_param
     )

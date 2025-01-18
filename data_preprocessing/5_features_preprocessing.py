@@ -59,7 +59,7 @@ adjust_xaxis = adjust_xaxis_input == 'o'
 file_name = "Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort.csv"
 #file_name = "Step4_4_0_4TP_1SL_080919_091024_extractOnly220LastFullSession_OnlyShort.csv"
 file_name ="Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort.csv"
-#file_name ="Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnlyFullSession_OnlyShort.csv"
+file_name ="Step4_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyLong.csv"
 
 # Chemin du répertoire
 directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\4_0_5TP_1SL_newBB\merge"
@@ -260,10 +260,161 @@ def apply_optimized_slope_calculation(data: pd.DataFrame, window: int) -> pd.Ser
     return pd.Series(slopes, index=data.index)
 
 
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+import pandas as pd
+import numpy as np
+from numba import jit
+
+
+@jit(nopython=True)
+def calculate_slopes_and_r2_numba(close_values, session_starts, window):
+    """
+    Calcule les pentes et les coefficients R² pour une série temporelle de manière optimisée avec Numba.
+
+    Parameters:
+    -----------
+    close_values : np.ndarray
+        Valeurs de clôture des prix.
+    session_starts : np.ndarray
+        Masque indiquant les débuts de session.
+    window : int
+        Taille de la fenêtre pour le calcul.
+
+    Returns:
+    --------
+    np.ndarray, np.ndarray :
+        Deux tableaux numpy contenant respectivement les pentes et les coefficients R².
+    """
+    n = len(close_values)
+    slopes = np.full(n, np.nan)
+    r2s = np.full(n, np.nan)
+
+    # Pré-calculer les x pour toutes les fenêtres
+    x = np.arange(window)
+    x_mean = np.mean(x)
+    x_diff = x - x_mean
+    x_var = np.sum(x_diff ** 2)
+
+    for i in range(window - 1, n):
+        # Vérifier que la fenêtre est valide (pas de début de session à l'intérieur)
+        if np.any(session_starts[i - window + 1:i + 1]):
+            continue
+
+        # Extraire les données de la fenêtre
+        y = close_values[i - window + 1:i + 1]
+
+        # Calculer la pente (slope)
+        y_mean = np.mean(y)
+        y_diff = y - y_mean
+        slope = np.sum(x_diff * y_diff) / x_var
+        slopes[i] = slope
+
+        # Calculer le R²
+        ss_total = np.sum((y - y_mean) ** 2)
+        ss_residual = np.sum((y - (slope * x + y_mean)) ** 2)
+        r2s[i] = 1 - (ss_residual / ss_total) if ss_total > 0 else 0
+
+    return slopes, r2s
+
+
+def apply_optimized_slope_r2_calculation(data: pd.DataFrame, window: int) -> pd.DataFrame:
+    """
+    Applique le calcul optimisé des pentes et des coefficients R² avec Numba.
+
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame contenant les données.
+    window : int
+        Taille de la fenêtre pour le calcul.
+
+    Returns:
+    --------
+    pd.DataFrame : DataFrame contenant deux colonnes : slope et r2.
+    """
+
+
+    print(f"  apply_optimized_slope_r2_calculation(df, window) {window} ")
+    # Préparation des données numpy
+    close_values = data['close'].values
+    session_starts = (data['SessionStartEnd'] == 10).values
+
+    # Calcul des pentes et des coefficients R²
+    slopes, r2s = calculate_slopes_and_r2_numba(close_values, session_starts, window)
+
+    # Conversion en pandas DataFrame
+    results_df = pd.DataFrame({
+        f'linear_slope_{window}': slopes,
+        f'linear_slope_r2_{window}': r2s
+    }, index=data.index)
+
+    return results_df
+
+
 # Utilisation
-windows = [6, 14, 21, 30]
+windows = [6, 14, 21, 30,40,50]
 for window in windows:
-    features_df[f'linear_slope_{window}'] = apply_optimized_slope_calculation(df, window)
+    slope_r2_df = apply_optimized_slope_r2_calculation(df, window)
+    features_df = pd.concat([features_df, slope_r2_df], axis=1)
+
+
+def enhanced_close_to_sma_ratio(
+    data: pd.DataFrame,
+    window: int,
+) -> pd.DataFrame:
+
+    """
+    Calcule pour chaque point :
+      - le ratio (close - sma) / sma
+      - le z-score de ce ratio par rapport à son écart-type (rolling)
+
+    Gère les cas où std = 0 en utilisant :
+        diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+
+    :param data: DataFrame avec au moins la colonne 'close'
+    :param window: nombre de périodes pour le calcul rolling (moyenne + écart-type)
+    :param diffDivBy0: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
+    :param DEFAULT_DIV_BY0: booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
+    :param valueX: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
+    :return: DataFrame avec close_sma_ratio_{window} et close_sma_zscore_{window}
+    """
+
+    # Calcul de la SMA
+    sma = data['close'].rolling(window=window, min_periods=1).mean()
+
+    # Ratio (close - sma) / sma
+    ratio = (data['close'] - sma) / sma
+
+    # Écart-type (rolling) du ratio
+    std = ratio.rolling(window=window).std()
+
+    # Calcul du z-score en évitant la division par zéro.
+    # Si std != 0, on fait ratio / std
+    # Sinon, on applique la logique diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+    z_score_array = np.where(
+        std != 0,
+        ratio / std,
+        diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+    )
+
+    # Convertit le tableau en Series pour garder le même index
+    z_score = pd.Series(z_score_array, index=ratio.index)
+
+    # On renvoie un DataFrame avec deux colonnes
+    return pd.DataFrame({
+        f'close_sma_ratio_{window}': ratio,
+        f'close_sma_zscore_{window}': z_score
+    })
+
+
+windows_sma = [6, 14, 21, 30, 40, 50]
+for window in windows_sma:
+    results = enhanced_close_to_sma_ratio(df, window)
+    features_df[f'close_sma_ratio_{window}'] = results[f'close_sma_ratio_{window}']
+    features_df[f'close_sma_zscore_{window}'] = results[f'close_sma_zscore_{window}']
 
 import numpy as np
 from numba import jit
@@ -2579,7 +2730,27 @@ column_settings = {
     'linear_slope_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'linear_slope_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'linear_slope_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'linear_slope_prevSession': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
 }
 columns_to_process = list(column_settings.keys())
@@ -2983,7 +3154,7 @@ print(f"\n")
 
 print_notification("Ajout de  'timeStampOpening', class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
 # Colonnes à ajouter
-columns_to_add = ['timeStampOpening', 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd']
+columns_to_add = ['timeStampOpening', 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd','close','high','low']
 
 # Vérifiez que toutes les colonnes existent dans df
 missing_columns = [col for col in columns_to_add if col not in df.columns]
@@ -3004,7 +3175,7 @@ winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
 
 #winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
 
-print_notification("Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' ajoutées")
+print_notification("Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' , 'close' ajoutées")
 
 
 
