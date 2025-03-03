@@ -26,7 +26,7 @@ def format_comparison(label, value1, value2):
     else:
         return f"{label}: {Fore.GREEN}{value1} == {value2}{Style.RESET_ALL}"
 
-file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_4TP_1SL_04102024\merge\Step2_MergedAllFile_Step1_4_merged.csv"
+file_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\\444_0_6TP_1SL_newBB\\of_raw_candles_dataNew.csv"
 
 fields_blw = [
     "upTickVolBlwBidDesc", "downTickVolBlwBidDesc", "repeatUpTickVolBlwBidDesc",

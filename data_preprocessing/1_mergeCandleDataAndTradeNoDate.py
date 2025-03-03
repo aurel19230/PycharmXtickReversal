@@ -1,12 +1,10 @@
-import standardFunc_sauv
-from standardFunc_sauv import convert_to_unix_timestamp, convert_from_unix_timestamp, timestamp_to_date_utc, \
-    date_to_timestamp_utc
+from func_standard import convert_to_unix_timestamp, convert_from_unix_timestamp, timestamp_to_date_utc, \
+    date_to_timestamp_utc, print_notification
 import os
 import csv
 from datetime import datetime
 import numpy as np
 from numba import njit, prange
-from standardFunc_sauv import print_notification
 
 
 @njit(parallel=True)
@@ -35,7 +33,8 @@ def apply_20_10_logic_noNumba(data):
 
 @njit(parallel=True)
 def process_data_numba(candles_data, trades_data):
-    result = np.empty((len(candles_data), len(candles_data[0]) + 3), dtype=np.float64)
+    #result = np.empty((len(candles_data), len(candles_data[0]) + 3), dtype=np.float64)
+    result = np.empty((len(candles_data), len(candles_data[0]) + 7), dtype=np.float64)
 
     for i in prange(len(candles_data)):
         index = int(candles_data[i, 4])
@@ -43,6 +42,10 @@ def process_data_numba(candles_data, trades_data):
         if len(match) > 0:
             trade_result = int(match[0, 1])
             trade_pnl = float(match[0, 2])
+            tp1_pnl = float(match[0, 3])
+            tp2_pnl = float(match[0, 4])
+            tp3_pnl = float(match[0, 5])
+            sl_pnl = float(match[0, 6])
             if trade_result == 2:
                 trade_dir, trade_res = -1, 1
             elif trade_result == 1:
@@ -54,9 +57,11 @@ def process_data_numba(candles_data, trades_data):
             else:
                 trade_dir, trade_res = 0, 0
         else:
-            trade_dir, trade_res, trade_pnl = 0, 99, 0.0
+            trade_dir, trade_res, trade_pnl, tp1_pnl, tp2_pnl, tp3_pnl, sl_pnl = 0, 99, 0.0, 0.0, 0.0, 0.0, 0.0
 
-        result[i] = np.concatenate((candles_data[i], np.array([trade_dir, trade_res, trade_pnl], dtype=np.float64)))
+        #result[i] = np.concatenate((candles_data[i], np.array([trade_dir, trade_res, trade_pnl], dtype=np.float64)))
+        result[i] = np.concatenate((candles_data[i], np.array([trade_dir, trade_res, trade_pnl,tp1_pnl,
+                                                               tp2_pnl,tp3_pnl,sl_pnl], dtype=np.float64)))
 
     result = apply_20_10_logic_numba(result)
     return result
@@ -165,7 +170,8 @@ def process_single_file(directory, directoryMerge, suffix, add_date_column, deli
         writer = csv.writer(file, delimiter=delimiter)
         if add_date_column.lower() == 'd':
             headers = ['dateUTC'] + headers
-        headers.extend(['tradeDir', 'tradeResult', 'trade_pnl'])
+        headers.extend(['tradeDir', 'tradeResult', 'trade_pnl', 'tp1_pnl', 'tp2_pnl', 'tp3_pnl', 'sl_pnl'])
+        #headers.extend(['tradeDir', 'tradeResult', 'trade_pnl'])
         writer.writerow(headers)
         writer.writerows(merged_data)
 
@@ -179,7 +185,7 @@ def main():
         "Voulez-vous ajouter une colonne 'date' ? (Appuyez sur Entrée pour non, ou tapez 'd' pour oui) : ")
 
     # Répertoires
-    directory = ("C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB")
+    directory = ("C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/5_0_5TP_0SL")
 
     if os.path.exists(directory):
         if os.path.isdir(directory):

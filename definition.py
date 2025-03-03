@@ -45,6 +45,7 @@ class model_custom_objective(Enum):
     LGB_CUSTOM_OBJECTIVE_BINARY = 10
     LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY = 11
     LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY_LAMBDA = 12
+    XGB_CUSTOM_OBJECTIVE_PROFITBASED = 20
 
 
 class model_custom_metric(Enum):
@@ -57,7 +58,7 @@ class model_custom_metric(Enum):
     XGB_METRIC_MCC = 15
     XGB_METRIC_YOUDEN_J = 16
     XGB_METRIC_SHARPE_RATIO = 17
-    XGB_CUSTOM_METRIC_PROFITBASED = 18
+    XGB_CUSTOM_METRIC_PNL = 18
 
 class scalerChoice(Enum):
     SCALER_DISABLE = 0
@@ -97,14 +98,17 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
     X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
     # X_train_cv_pd reste un DataFrame
     X_train_cv_pd = data['X_train_no99_fullRange_pd'].iloc[train_pos]
-
     Y_train_cv = data['y_train_no99_fullRange'][train_pos].reshape(-1)
 
     X_val_cv = data['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
     # X_val_cv_pd reste un DataFrame
     X_val_cv_pd = data['X_train_no99_fullRange_pd'].iloc[val_pos]
-
     y_val_cv = data['y_train_no99_fullRange'][val_pos].reshape(-1)
+
+    y_pnl_data_train_cv = data['y_pnl_data_train_no99_fullRange'][train_pos].reshape(-1)
+    y_pnl_data_val_cv=data['y_pnl_data_train_no99_fullRange'][val_pos].reshape(-1)
+
+
 
     # Handle GPU/CPU conversion
     if config['device_'] != 'cpu':
@@ -115,15 +119,81 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
         X_val_cv = cp.asnumpy(X_val_cv)
         Y_train_cv = cp.asnumpy(Y_train_cv)
         y_val_cv = cp.asnumpy(y_val_cv)
+        y_pnl_data_train_cv=cp.asnumpy(y_pnl_data_train_cv);
+        y_pnl_data_val_cv=cp.asnumpy(y_pnl_data_val_cv);
     else:
         # Pas de conversion nécessaire si on est déjà sur CPU
         pass
 
-    return X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd, y_val_cv
+    return X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv
 
 def sigmoidCustom(x):
 # Supposons que x est déjà un tableau CuPy
   return 1 / (1 + cp.exp(-x))
+
+
+def calculate_profitBased(y_true, y_pred_threshold, metric_dict, config=None):
+    """
+    Calcule les métriques de profit en utilisant les valeurs PNL réelles des trades
+    avec des opérations vectorisées pour plus d'efficacité
+    """
+    # Conversion en numpy arrays pour un traitement efficace
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred_threshold)
+
+    # Vérification de la configuration
+    if config is None:
+        raise ValueError("config ne peut pas être None dans calculate_profitBased")
+
+    # Récupération des paramètres
+    penalty_per_fn = metric_dict.get('penalty_per_fn', config.get('penalty_per_fn', 0))
+    y_pnl_data_train_cv = config.get('y_pnl_data_train_cv', None)
+    y_pnl_data_val_cv = config.get('y_pnl_data_val_cv', None)
+
+    # Identification du jeu de données (train ou validation)
+    if len(y_true) == len(y_pnl_data_train_cv):
+        y_pnl_data = y_pnl_data_train_cv
+    elif len(y_true) == len(y_pnl_data_val_cv):
+        y_pnl_data = y_pnl_data_val_cv
+    else:
+        raise ValueError(f"Impossible d'identifier l'ensemble de données. Taille actuelle: {len(y_true)}, "
+                         f"Taille train: {len(y_pnl_data_train_cv)}, "
+                         f"Taille val: {len(y_pnl_data_val_cv)}")
+
+    # Vérification de l'alignement des données
+    if not (len(y_true) == len(y_pred) == len(y_pnl_data)):
+        raise ValueError(
+            f"Erreur d'alignement: y_true ({len(y_true)} lignes), y_pred ({len(y_pred)} lignes), y_pnl_data ({len(y_pnl_data)} lignes)")
+
+    # Création de masques booléens pour chaque cas (opérations vectorisées)
+    tp_mask = (y_true == 1) & (y_pred == 1)
+    fp_mask = (y_true == 0) & (y_pred == 1)
+    fn_mask = (y_true == 1) & (y_pred == 0)
+
+    # Comptage des événements
+    tp = np.sum(tp_mask)
+    fp = np.sum(fp_mask)
+    fn = np.sum(fn_mask)
+
+    # Calcul vectorisé des profits/pertes
+    # Pour les profits (TP), on prend les valeurs positives aux indices tp_mask
+    pnl_values = y_pnl_data.values if hasattr(y_pnl_data, 'values') else y_pnl_data
+
+    # Calcul du profit pour les vrais positifs (prend uniquement les valeurs positives)
+    tp_profits = np.sum(np.maximum(0, pnl_values[tp_mask])) if tp > 0 else 0
+
+    # Calcul des pertes pour les faux positifs (prend uniquement les valeurs négatives ou nulles)
+    fp_losses = np.sum(np.minimum(0, pnl_values[fp_mask])) if fp > 0 else 0
+
+    # Calcul de la pénalité pour les faux négatifs
+    fn_penalty = fn * penalty_per_fn
+
+    # Calcul du profit total
+    total_profit = tp_profits + fp_losses + fn_penalty
+
+    return float(total_profit), int(tp), int(fp)
+
+# Fonction sigmoid pour XGBoost
 def sigmoidCustom_cpu(x):
     """Custom sigmoid function."""
     x = np.array(x, dtype=np.float64)  # Conversion explicite
@@ -203,7 +273,14 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
         tuple: (pred_proba, predictions, (tn, fp, fn, tp), y_true_converted)
     """
     # Prédictions
-    pred_proba_log_odds = model.predict(X_data, iteration_range=(0, best_iteration),raw_score=True)
+    model_type = config['model_type']
+    if model_type == modelType.XGB:
+        import xgboost as xgb
+       # dData = xgb.DMatrix(X_data)
+        pred_proba_log_odds = model.predict(X_data, iteration_range=(0, best_iteration), output_margin=True)
+        #print("pred_proba_log_odds ",pred_proba_log_odds)
+    elif model_type == modelType.LGBM:
+        pred_proba_log_odds = model.predict(X_data, num_iteration=best_iteration, raw_score=True)
     #print(f"pred_proba_log_oddsMin: {np.min(pred_proba_log_odds)}, Max: {np.max(pred_proba_log_odds)}")
 
     # Conversion GPU si nécessaire

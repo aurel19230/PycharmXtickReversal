@@ -19,10 +19,11 @@ def lgb_weighted_logistic_objective(w_p: float, w_n: float):
 
 
 # Fonction auxiliaire pour le calcul du profit (équivalent à xgb_calculate_profitBased_gpu)
+"""
 def lgb_calculate_profitBased(y_true=None, y_pred_threshold=None, metric_dict=None,config=None):
     """
-    Calcule les métriques de profit pour LightGBM
-    """
+   # Calcule les métriques de profit pour LightGBM
+"""
     # Calcul des métriques de base
     tp = np.sum((y_true == 1) & (y_pred_threshold == 1))
     fp = np.sum((y_true == 0) & (y_pred_threshold == 1))
@@ -40,11 +41,12 @@ def lgb_calculate_profitBased(y_true=None, y_pred_threshold=None, metric_dict=No
     total_profit = (tp * profit_per_tp) + (fp * loss_per_fp) + (fn * penalty_per_fn)
 
     return float(total_profit), int(tp), int(fp)
-
+"""
 
 # Métrique personnalisée pour LightGBM
-def lgb_custom_metric_PNL(metric_dict=None,config=None):
-    def profit_metric(preds,train_data):
+# Métrique personnalisée pour LightGBM
+def lgb_custom_metric_PNL(metric_dict=None, config=None):
+    def profit_metric(preds, train_data):
         """
         LightGBM custom metric pour le profit
         """
@@ -63,7 +65,12 @@ def lgb_custom_metric_PNL(metric_dict=None,config=None):
         y_pred_threshold = (preds > threshold).astype(np.int32)
 
         # Calcul du profit et des métriques
-        total_profit, tp, fp = lgb_calculate_profitBased(y_true=y_true, y_pred_threshold=y_pred_threshold, metric_dict=metric_dict,config=config)
+        total_profit, tp, fp = calculate_profitBased(
+            y_true=y_true,
+            y_pred_threshold=y_pred_threshold,
+            metric_dict=metric_dict,
+            config=config
+        )
 
         # Le troisième paramètre (True) indique qu'une valeur plus élevée est meilleure
         return 'custom_metric_PNL', float(total_profit), True
@@ -87,11 +94,7 @@ def train_and_evaluate_lightgbm_model(
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
-        X_train_full=None,
-        df_init_candles=None,
-        is_log_enabled=False,
         log_evaluation=0,
-        nb_split_tscv=0
     ):
     """
     Train and evaluate a LightGBM model with custom metrics and objectives,
@@ -185,12 +188,17 @@ def train_and_evaluate_lightgbm_model(
     else:
         eval_scores = evals_result['eval']['auc']
         train_scores = evals_result['train']['auc']
+        exit(35)
 
     # Détermination de la meilleure itération
-    val_score_best = max(eval_scores)
-    val_score_bestIdx = eval_scores.index(val_score_best)
+    val_bestIdx_custom_metric_pnl = max(eval_scores)
+    val_score_bestIdx = eval_scores.index(val_bestIdx_custom_metric_pnl)
     best_iteration = val_score_bestIdx + 1
-    train_score = train_scores[val_score_bestIdx]
+    train_bestIdx_custom_metric_pnl = train_scores[val_score_bestIdx]
+
+    print(evals_result)
+    print(
+        f"best_iteration:{best_iteration} | val_bestIdx_custom_metric_pnl:{val_bestIdx_custom_metric_pnl} | best_iteration:{train_bestIdx_custom_metric_pnl}", )
 
     val_pred_proba, val_pred_proba_log_odds,val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = predict_and_compute_metrics(
         model=current_model,
@@ -217,7 +225,7 @@ def train_and_evaluate_lightgbm_model(
         'tn': tn_val,
         'fn': fn_val,
         'total_samples': len(y_val_cv),
-        'score': val_score_best,
+        'val_bestIdx_custom_metric_pnl': val_bestIdx_custom_metric_pnl,
         'best_iteration': best_iteration
     }
 
@@ -227,7 +235,7 @@ def train_and_evaluate_lightgbm_model(
         'tn': tn_train,
         'fn': fn_train,
         'total_samples': len(Y_train_cv),
-        'score': train_score
+        'train_bestIdx_custom_metric_pnl': train_bestIdx_custom_metric_pnl
     }
 
     # Calcul winrate et trades
@@ -236,21 +244,6 @@ def train_and_evaluate_lightgbm_model(
     tp_fp_sum_val = tp_val + fp_val
     tp_fp_sum_train = tp_train + fp_train
 
-    ratio_profitPerTrade_val = calculate_profit_ratio(
-        tp_val,
-        fp_val,
-        tp_fp_sum_val,
-        config['profit_per_tp'],
-        config['loss_per_fp']
-    )
-    # Calcul des ratios
-    ratio_profitPerTrade_train = calculate_profit_ratio(
-        tp_train,
-        fp_train,
-        tp_fp_sum_train,
-        config['profit_per_tp'],
-        config['loss_per_fp']
-    )
     # Calcul de l'écart en pourcentage de la distribution train vs sample
     train_trades_samples_perct=round(tp_fp_sum_train / tp_fp_tn_fn_sum_train * 100, 2) if tp_fp_tn_fn_sum_train != 0 else 0.00
     val_trades_samples_perct= round(tp_fp_sum_val / tp_fp_tn_fn_sum_val * 100,2) if tp_fp_tn_fn_sum_val != 0 else 0.00
@@ -269,16 +262,14 @@ def train_and_evaluate_lightgbm_model(
         'train_winrate': winrate_train,
         'train_trades': tp_fp_sum_train,
         'train_samples': tp_fp_tn_fn_sum_train,
-        'train_score': train_metrics['score'],
         'train_size': len(train_pos) if train_pos is not None else None,
         'train_trades_samples_perct':train_trades_samples_perct ,
 
-        'val_pred_proba_log_odds': val_pred_proba_log_odds,
         'val_metrics': val_metrics,
         'val_winrate': winrate_val,
         'val_trades': tp_fp_sum_val,
         'val_samples': tp_fp_tn_fn_sum_val,
-        'val_score': val_score_best,
+        'val_pred_proba_log_odds': val_pred_proba_log_odds,
         'val_size': len(val_pos) if val_pos is not None else None,
          'val_trades_samples_perct': val_trades_samples_perct,
 
@@ -321,7 +312,6 @@ def train_and_evaluate_lightgbm_model(
         'fold_stats': fold_stats,
         'evals_result': evals_result,
         'best_iteration': best_iteration,
-        'val_score_best': val_score_best,
         'val_score_bestIdx': val_score_bestIdx,
         'debug_info': debug_info,
     }

@@ -4,7 +4,7 @@ import re
 
 
 # Chemin spécifique pour les fichiers CSV
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_6TP_1SL\merge"
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\6_0_6TP_1SL_save_afternoon\merge"
 #merge les fichier terminant par _x dans l'ordre. Pour éviter les erreurs les _x sont à rajouter suite au merge du step 1
 
 #Diviser le chemin en ses composants

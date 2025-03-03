@@ -5,9 +5,9 @@ import os
 import time
 from func_standard import  print_notification
 
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\4_0_5TP_1SL_newBB\merge"
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_0SL\merge"
 
-file="Step2_4_0_5TP_1SL_newBB_080919_281124.csv"
+file="Step2_5_0_5TP_0SL_030124_270125.csv"
 
 file_path = os.path.join(directory, file)
 8

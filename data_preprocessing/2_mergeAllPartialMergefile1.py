@@ -123,7 +123,7 @@ def charger_et_traiter_fichiers(directory):
 
 
 def main():
-    DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\\\4_0_5TP_1SL_newBB\merge"
+    DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\\\5_0_5TP_0SL\merge"
 
     # Extraire le nom du répertoire de configuration
     path_components = DIRECTORY_PATH.split(os.sep)
