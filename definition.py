@@ -67,11 +67,47 @@ class scalerChoice(Enum):
     SCALER_MINMAX = 3  # Nouveau : échelle [0,1]
     SCALER_MAXABS = 4  # Nouveau : échelle [-1,1]
 
+class AutoFilteringOptions(Enum):
+    DISPLAY_MODE_NOFILTERING = 0
+    ENABLE_VIF_CORR_MI = 1
+    ENABLE_MRMR = 2
+    ENABLE_FISHER=3
+
+###############################################################################
+# Classe d'options de filtrage
+###############################################################################
+
+
 
 class ScalerMode(Enum):
     FIT_TRANSFORM = 0  # Pour l'entraînement : fit + transform
     TRANSFORM = 1
      # Pour le test : transform uniquement
+def check_label_pnl_alignment(data):
+    """
+    Vérifie que dans data, pour chaque échantillon où y_train_no99_fullRange == 1,
+    y_pnl_data_train_no99_fullRange > 0.
+    """
+    # Extraire les tableaux
+    y_labels = data['y_train_no99_fullRange']
+    y_pnl = data['y_pnl_data_train_no99_fullRange']
+
+    # Vérifier la même longueur
+    if len(y_labels) != len(y_pnl):
+        raise ValueError(f"check_label_pnl_alignment Taille différente: y_labels={len(y_labels)}, y_pnl={len(y_pnl)}")
+
+    # Créer un masque pour les labels == 1
+    mask_positive = (y_labels == 1)
+
+    # Vérifier que tous les PnL correspondants sont > 0
+    if not np.all(y_pnl[mask_positive] > 0):
+        # Récupérer les indices où la condition échoue
+        bad_indices = np.where(y_pnl[mask_positive] <= 0)[0]
+        raise ValueError(
+            f"Pour y_train_no99_fullRange==1, certains PnL ne sont pas > 0. Indices relatifs (dans les positifs)={bad_indices}"
+        )
+    else:
+        print("Vérification OK : tous les échantillons label=1 ont un PnL strictement > 0.")
 
 import numpy as np
 def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
@@ -90,10 +126,11 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
     val_pos : np.ndarray
         Positions des échantillons pour la validation.
 
-    Returns:
+    Returns:les
     --------
     dict : Contient les données transformées.
     """
+    #check_label_pnl_alignment(data)
     # Extract fold data
     X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
     # X_train_cv_pd reste un DataFrame
@@ -108,8 +145,6 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
     y_pnl_data_train_cv = data['y_pnl_data_train_no99_fullRange'][train_pos].reshape(-1)
     y_pnl_data_val_cv=data['y_pnl_data_train_no99_fullRange'][val_pos].reshape(-1)
 
-
-
     # Handle GPU/CPU conversion
     if config['device_'] != 'cpu':
         import cupy as cp
@@ -121,9 +156,11 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
         y_val_cv = cp.asnumpy(y_val_cv)
         y_pnl_data_train_cv=cp.asnumpy(y_pnl_data_train_cv);
         y_pnl_data_val_cv=cp.asnumpy(y_pnl_data_val_cv);
+
     else:
         # Pas de conversion nécessaire si on est déjà sur CPU
         pass
+
 
     return X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv
 
@@ -132,43 +169,119 @@ def sigmoidCustom(x):
   return 1 / (1 + cp.exp(-x))
 
 
-def calculate_profitBased(y_true, y_pred_threshold, metric_dict, config=None):
+def verify_alignment(y_true_class_binaire, y_pnl_data):
+    """
+    Vérifie l'alignement entre les classes et le signe des PnL théoriques:
+    - Si y_true_class_binaire == 1, alors y_pnl_data doit être > 0
+    - Si y_true_class_binaire == 0, alors y_pnl_data doit être < 0
+
+    Lève une ValueError si la condition n'est pas respectée.
+    """
+    import numpy as np
+
+    # Convertir en tableaux numpy si ce n'est pas déjà le cas
+    y_true_array = np.array(y_true_class_binaire)
+    y_pnl_array = np.array(y_pnl_data)
+
+    if np.any(y_pnl_array == 0):
+        zero_indices = np.where(y_pnl_array == 0)[0]
+        raise ValueError(
+            f"La variable y_pnl_array contient des valeurs exactement égales à 0 ce qui n'est pas possible {zero_indices}")
+
+    # Vérifier l'alignement des classes positives (y_true == 1)
+    misaligned_positives = np.where((y_true_array.astype(bool)) & (y_pnl_array < 0))[0]
+    #print(y_true_array.shape)
+    #print(y_pnl_array.shape)
+
+
+    if len(misaligned_positives) > 0:
+        raise ValueError(f"Désalignement détecté: y_true == 1 mais y_pnl_data < 0 aux indices {misaligned_positives}")
+
+    # Vérifier l'alignement des classes négatives (y_true == 0)
+    misaligned_negatives = np.where((~y_true_array.astype(bool)) & (y_pnl_array > 0))[0]
+
+    if len(misaligned_negatives) > 0:
+        raise ValueError(f"Désalignement détecté: y_true == 0 mais y_pnl_data > 0 aux indices {misaligned_negatives}")
+
+    #print("Vérification réussie: Les classes 0 et 1 sont correctement alignées avec le signe des PnL théoriques.")
+def calculate_profitBased(y_true_class_binaire, y_pred_threshold, y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None,
+                          metric_dict=None, config=None):
     """
     Calcule les métriques de profit en utilisant les valeurs PNL réelles des trades
     avec des opérations vectorisées pour plus d'efficacité
     """
+    """
+    unique_values, counts = np.unique(y_pnl_data_train_cv, return_counts=True)
+
+    # Créer un DataFrame pour un affichage plus clair
+    distribution_df = pd.DataFrame({
+        'Valeur': unique_values,
+        'Fréquence': counts,
+        'Pourcentage': (counts / len(y_pnl_data_train_cv) * 100).round(2)
+    })
+
+    # Trier par fréquence décroissante
+    distribution_df = distribution_df.sort_values(by='Fréquence', ascending=False)
+
+    # Afficher le nombre total de valeurs uniques
+    print(f"Nombre total de valeurs différentes: {len(unique_values)}")
+    
+    # Afficher la distribution
+    print("\nDistribution des valeurs:")
+    print(distribution_df)
+    """
     # Conversion en numpy arrays pour un traitement efficace
-    y_true = np.asarray(y_true)
+    y_true_class_binaire = np.asarray(y_true_class_binaire)
     y_pred = np.asarray(y_pred_threshold)
 
     # Vérification de la configuration
     if config is None:
         raise ValueError("config ne peut pas être None dans calculate_profitBased")
 
+
+
     # Récupération des paramètres
     penalty_per_fn = metric_dict.get('penalty_per_fn', config.get('penalty_per_fn', 0))
-    y_pnl_data_train_cv = config.get('y_pnl_data_train_cv', None)
-    y_pnl_data_val_cv = config.get('y_pnl_data_val_cv', None)
+    #y_pnl_data_train_cv = config.get('y_pnl_data_train_cv', None)
+    #y_pnl_data_val_cv_OrTest = config.get('y_pnl_data_val_cv_OrTest', None)
 
     # Identification du jeu de données (train ou validation)
-    if len(y_true) == len(y_pnl_data_train_cv):
+    if len(y_true_class_binaire) == len(y_pnl_data_train_cv):
         y_pnl_data = y_pnl_data_train_cv
-    elif len(y_true) == len(y_pnl_data_val_cv):
-        y_pnl_data = y_pnl_data_val_cv
+    elif len(y_true_class_binaire) == len(y_pnl_data_val_cv_OrTest):
+        y_pnl_data = y_pnl_data_val_cv_OrTest
     else:
-        raise ValueError(f"Impossible d'identifier l'ensemble de données. Taille actuelle: {len(y_true)}, "
+        raise ValueError(f"Impossible d'identifier l'ensemble de données. Taille actuelle: {len(y_true_class_binaire)}, "
                          f"Taille train: {len(y_pnl_data_train_cv)}, "
-                         f"Taille val: {len(y_pnl_data_val_cv)}")
+                         f"Taille val pour val de val croisée ou ensemble test pour entrainement final y_pnl_data_val_cv_OrTest: {len(y_pnl_data_val_cv_OrTest)}")
+
+    #print(f"Données conforme. Taille actuelle, y_true_class_binaire: {len(y_true_class_binaire)}, "
+        #        f"Nombre de 0 y_true_class_binaire y_true_class_binaire: {np.sum(y_true_class_binaire == 0)}, "
+        # f"Taille train, y_pnl_data_train_cv: {len(y_pnl_data_train_cv)}, "
+     #f"Taille val pour val de val croisée ou ensemble test pour entrainement final,y_pnl_data_val_cv_OrTest: {len(y_pnl_data_val_cv_OrTest)}")
 
     # Vérification de l'alignement des données
-    if not (len(y_true) == len(y_pred) == len(y_pnl_data)):
+    if not (len(y_true_class_binaire) == len(y_pred) == len(y_pnl_data)):
         raise ValueError(
-            f"Erreur d'alignement: y_true ({len(y_true)} lignes), y_pred ({len(y_pred)} lignes), y_pnl_data ({len(y_pnl_data)} lignes)")
+            f"Erreur d'alignement: y_true ({len(y_true_class_binaire)} lignes), y_pred ({len(y_pred)} lignes), y_pnl_data ({len(y_pnl_data)} lignes)")
+
+    # Vérification de l'absence de zéros dans y_true
+    if 0 in y_pnl_data_val_cv_OrTest:
+        nb_zeros = np.sum(y_pnl_data_val_cv_OrTest == 0)
+        raise ValueError(f"La variable y_true contient des zéros, ce qui n'est pas autorisé pour SL et TP. NB 0:{nb_zeros}")
+
+    try:
+        verify_alignment(y_true_class_binaire, y_pnl_data)  # y_true et y_pnl_data sont des séries ou tableaux
+        # Continuer avec le reste du traitement si la vérification est réussie
+    except ValueError as e:
+        print(f"Erreur: {e}")
+        # Gérer l'erreur en la relançant pour arrêter l'exécution
+        raise ValueError(f"Vérification échouée: {e}")
 
     # Création de masques booléens pour chaque cas (opérations vectorisées)
-    tp_mask = (y_true == 1) & (y_pred == 1)
-    fp_mask = (y_true == 0) & (y_pred == 1)
-    fn_mask = (y_true == 1) & (y_pred == 0)
+    tp_mask = (y_true_class_binaire == 1) & (y_pred == 1)
+    fp_mask = (y_true_class_binaire == 0) & (y_pred == 1)
+    fn_mask = (y_true_class_binaire == 1) & (y_pred == 0)
 
     # Comptage des événements
     tp = np.sum(tp_mask)
@@ -926,3 +1039,85 @@ def apply_slope_with_session_check(data, window):
             result[idx] = np.nan
 
     return result
+
+
+def compute_sample_weights(Y_train, y_val):
+    """Calculer les poids pour l'entraînement et la validation."""
+    N0 = np.sum(Y_train == 0)
+    N1 = np.sum(Y_train == 1)
+    N = len(Y_train)
+    w_0 = N / N0
+    w_1 = N / N1
+    sample_weights_train = np.where(Y_train == 1, w_1, w_0)
+    sample_weights_val = np.ones(len(y_val))
+    return sample_weights_train, sample_weights_val
+
+
+def get_best_iteration(evals_result, custom_metric_eval):
+    """
+    Extraction de la meilleure itération en fonction du custom metric.
+    Retourne : (best_iteration, best_idx, val_best, train_best)
+    """
+    if custom_metric_eval in (model_custom_metric.XGB_CUSTOM_METRIC_PNL,
+                              model_custom_metric.LGB_CUSTOM_METRIC_PNL):
+        eval_scores = evals_result['eval']['custom_metric_PNL']
+        train_scores = evals_result['train']['custom_metric_PNL']
+    else:
+        eval_scores = evals_result['eval']['auc']
+        train_scores = evals_result['train']['auc']
+        raise ValueError("Fonction metric non reconnue, impossible de continuer.")
+
+    val_best = max(eval_scores)
+    best_idx = eval_scores.index(val_best)
+    best_iteration = best_idx + 1
+    train_best = train_scores[best_idx]
+    return best_iteration, best_idx, val_best, train_best
+
+
+def compile_fold_stats(fold_num, best_iteration, train_pred_proba_log_odds, train_metrics, winrate_train,
+                       tp_fp_sum_train, tp_fp_tn_fn_sum_train, train_best, train_pos, train_trades_samples_perct,
+                       val_pred_proba_log_odds, val_metrics, winrate_val, tp_fp_sum_val, tp_fp_tn_fn_sum_val,
+                       val_best, val_pos, val_trades_samples_perct, ratio_difference,
+                       perctDiff_ratioTradeSample_train_val):
+    """Compilation des statistiques du fold dans un dictionnaire commun."""
+    return {
+        'fold_num': fold_num,
+        'best_iteration': best_iteration,
+        'train_pred_proba_log_odds': train_pred_proba_log_odds,
+        'train_metrics': train_metrics,
+        'train_winrate': winrate_train,
+        'train_trades': tp_fp_sum_train,
+        'train_samples': tp_fp_tn_fn_sum_train,
+        'train_bestIdx_custom_metric_pnl': train_best,
+        'train_size': len(train_pos) if train_pos is not None else None,
+        'train_trades_samples_perct': train_trades_samples_perct,
+        'val_pred_proba_log_odds': val_pred_proba_log_odds,
+        'val_metrics': val_metrics,
+        'val_winrate': winrate_val,
+        'val_trades': tp_fp_sum_val,
+        'val_samples': tp_fp_tn_fn_sum_val,
+        'val_bestIdx_custom_metric_pnl': val_best,
+        'val_size': len(val_pos) if val_pos is not None else None,
+        'val_trades_samples_perct': val_trades_samples_perct,
+        'perctDiff_winrateRatio_train_val': ratio_difference,
+        'perctDiff_ratioTradeSample_train_val': perctDiff_ratioTradeSample_train_val
+    }
+
+
+def compile_debug_info(model_weight_optuna, config, val_pred_proba, y_train_predProba):
+    """Construction du dictionnaire de debug."""
+    xp = np if config['device_'] != 'cuda' else cp
+    return {
+        'threshold_used': model_weight_optuna['threshold'],
+        'pred_proba_ranges': {
+            'val': {
+                'min': float(xp.min(val_pred_proba)),
+                'max': float(xp.max(val_pred_proba))
+            },
+            'train': {
+                'min': float(xp.min(y_train_predProba)),
+                'max': float(xp.max(y_train_predProba))
+            }
+        }
+    }
+

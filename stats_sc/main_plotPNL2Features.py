@@ -79,10 +79,10 @@ class RatioOptimizer:
             float: PNL total des trades filtrés
         """
         # Propositions d'Optuna (valeurs "brutes")
-        askbid_low_raw = trial.suggest_float('askbid_low', 0, 291)
-        askbid_high_raw = trial.suggest_float('askbid_high', 0, 291)
-        pullstack_low_raw = trial.suggest_float('pullstack_low', -63, 50)
-        pullstack_high_raw = trial.suggest_float('pullstack_high', -63, 50)
+        askbid_low_raw = trial.suggest_float('askbid_low', 0, 4)
+        askbid_high_raw = trial.suggest_float('askbid_high', 0, 4)
+        pullstack_low_raw = trial.suggest_float('pullstack_low', -0.3, 7)
+        pullstack_high_raw = trial.suggest_float('pullstack_high', -0.3, 7)
 
         # On trie pour obtenir (low <= high)
         askbid_low, askbid_high = sorted([askbid_low_raw, askbid_high_raw])
@@ -90,7 +90,7 @@ class RatioOptimizer:
 
         # Filtrer les trades
         trades_in_range = self.shorts_df[
-            (self.shorts_df['cumDOM_AskBid_avgRatio'].between(askbid_low, askbid_high)) &
+            (self.shorts_df['ratio_volRevMove_volImpulsMove'].between(askbid_low, askbid_high)) &
             (self.shorts_df['cumDOM_AskBid_pullStack_avgDiff_ratio'].between(pullstack_low, pullstack_high))
         ]
 
@@ -286,7 +286,11 @@ def main():
     optuna.logging.set_verbosity(optuna.logging.WARN)
 
     # Charger les données
-    csv_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_4TP_0SL\merge_old\Step5_5_0_4TP_0SL_050125_200125_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    import os
+    # Chemin vers ton fichier
+    file_name = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\\merge_I1_I2"
+    csv_path = os.path.join(directory_path, file_name)
 
     print("Chargement des données...")
     df = pd.read_csv(csv_path, sep=';', encoding='cp1252', low_memory=False)

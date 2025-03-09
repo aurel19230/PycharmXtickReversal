@@ -61,10 +61,10 @@ adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
 
-file_name = "Step4_5_0_5TP_0SL_030124_270125_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_0SL\merge"
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\UnerAu15dec22h\merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -161,6 +161,8 @@ features_df['deltaTimestampOpeningSession30index'] = features_df['deltaTimestamp
 features_df['deltaCustomSessionMin'] = df['deltaTimestampOpening'].apply(
     lambda x: get_custom_section(x, CUSTOM_SESSIONS)['start']
 )
+
+
 
 
 def get_custom_section_index(minutes: int, custom_sections: dict) -> int:
@@ -360,60 +362,60 @@ for window in windows:
     slope_r2_df = apply_optimized_slope_r2_calculation(df, window)
     features_df = pd.concat([features_df, slope_r2_df], axis=1)
 
-#
-# def enhanced_close_to_sma_ratio(
-#         data: pd.DataFrame,
-#         window: int,
-# ) -> pd.DataFrame:
-#     """
-#     Calcule pour chaque point :
-#       - le ratio (close - sma) / sma
-#       - le z-score de ce ratio par rapport à son écart-type (rolling)
-#
-#     Gère les cas où std = 0 en utilisant :
-#         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-#
-#     :param data: DataFrame avec au moins la colonne 'close'
-#     :param window: nombre de périodes pour le calcul rolling (moyenne + écart-type)
-#     :param diffDivBy0: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
-#     :param DEFAULT_DIV_BY0: booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
-#     :param valueX: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
-#     :return: DataFrame avec close_sma_ratio_{window} et close_sma_zscore_{window}
-#     """
+
+def enhanced_close_to_sma_ratio(
+         data: pd.DataFrame,
+         window: int,
+ ) -> pd.DataFrame:
+     """
+     Calcule pour chaque point :
+       - le ratio (close - sma) / sma
+       - le z-score de ce ratio par rapport à son écart-type (rolling)
+
+     Gère les cas où std = 0 en utilisant :
+         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+
+     :param data: DataFrame avec au moins la colonne 'close'
+     :param window: nombre de périodes pour le calcul rolling (moyenne + écart-type)
+     :param diffDivBy0: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
+     :param DEFAULT_DIV_BY0: booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
+     :param valueX: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
+     :return: DataFrame avec close_sma_ratio_{window} et close_sma_zscore_{window}
+     """
 #
 #     # Calcul de la SMA
-#     sma = data['close'].rolling(window=window, min_periods=1).mean()
+     sma = data['close'].rolling(window=window, min_periods=1).mean()
 #
 #     # Ratio (close - sma) / sma
-#     ratio = (data['close'] - sma)# / sma
+     ratio = (data['close'] - sma)# / sma
 #
 #     # Écart-type (rolling) du ratio
-#     std = ratio.rolling(window=window).std()
+     std = ratio.rolling(window=window).std()
 #
 #     # Calcul du z-score en évitant la division par zéro.
 #     # Si std != 0, on fait ratio / std
 #     # Sinon, on applique la logique diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-#     z_score_array = np.where(
-#         std != 0,
-#         ratio / std,
-#         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-#     )
+     z_score_array = np.where(
+         std != 0,
+         ratio / std,
+         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+     )
 #
 #     # Convertit le tableau en Series pour garder le même index
-#     z_score = pd.Series(z_score_array, index=ratio.index)
+     z_score = pd.Series(z_score_array, index=ratio.index)
 #
 #     # On renvoie un DataFrame avec deux colonnes
-#     return pd.DataFrame({
-#         f'close_sma_ratio_{window}': ratio,
-#         f'close_sma_zscore_{window}': z_score
-#     })
+     return pd.DataFrame({
+         f'close_sma_ratio_{window}': ratio,
+         f'close_sma_zscore_{window}': z_score
+     })
 
 
-# windows_sma = [6, 14, 21, 30, 40, 50]
-# for window in windows_sma:
-#     results = enhanced_close_to_sma_ratio(df, window)
-#     features_df[f'close_sma_ratio_{window}'] = results[f'close_sma_ratio_{window}']
-#     features_df[f'close_sma_zscore_{window}'] = results[f'close_sma_zscore_{window}']
+windows_sma = [6, 14, 21, 30]
+for window in windows_sma:
+     results = enhanced_close_to_sma_ratio(df, window)
+     features_df[f'close_sma_ratio_{window}'] = results[f'close_sma_ratio_{window}']
+     features_df[f'close_sma_zscore_{window}'] = results[f'close_sma_zscore_{window}']
 
 import numpy as np
 from numba import jit
@@ -533,14 +535,16 @@ def calculate_candle_rev_tick(df):
     Calcule la valeur de CANDLE_REV_TICK en fonction des conditions spécifiées, en déterminant
     dynamiquement le minimum incrément non nul entre les valeurs de la colonne 'close'.
 
+    Sélectionne 4 occurrences à partir de la 100e ligne du DataFrame, plutôt que les 4 premières.
+
     Args:
         df (pd.DataFrame): DataFrame contenant les colonnes 'candleDir', 'high', 'close'.
 
     Returns:
-        int: La valeur de CANDLE_REV_TICK si toutes les valeurs sont identiques pour les 4 premières occurrences.
+        int: La valeur de CANDLE_REV_TICK si toutes les valeurs sont identiques pour les 4 occurrences.
 
     Raises:
-        ValueError: Si les valeurs calculées diffèrent pour les 4 premières occurrences où candleDir == 1.
+        ValueError: Si les valeurs calculées diffèrent pour les 4 occurrences sélectionnées où candleDir == -1.
     """
     # Calculer la différence absolue entre les valeurs de 'close'
     df['close_diff'] = df['close'].diff().abs()
@@ -552,21 +556,34 @@ def calculate_candle_rev_tick(df):
     if pd.isna(minimum_increment):
         raise ValueError("Impossible de calculer le minimum incrément non nul.")
 
-    print(minimum_increment)
+    print(f"Minimum increment: {minimum_increment}")
+
     # Filtrer les lignes où candleDir == -1
     filtered_df = df[df['candleDir'] == -1]
 
-    # Calculer (high - close) * minimum_increment pour les 4 premières occurrences
-    values = ((filtered_df['high'] - filtered_df['close']) * (1 / minimum_increment)).iloc[1:5] + 1
+    # S'assurer qu'il y a au moins 100 lignes + 4 occurrences où candleDir == -1
+    if len(filtered_df) < 104:
+        raise ValueError(
+            f"Pas assez d'occurrences où candleDir == -1 (trouvé {len(filtered_df)}, besoin d'au moins 104)")
+
+    # Sélectionner 4 occurrences à partir de la 100e ligne
+    selected_rows = filtered_df.iloc[100:].head(4)
+
+    # Vérifier qu'on a bien 4 lignes
+    if len(selected_rows) < 4:
+        raise ValueError(
+            f"Pas assez d'occurrences à partir de la 100e ligne (trouvé {len(selected_rows)}, besoin de 4)")
+
+    # Calculer (high - close) * minimum_increment pour les 4 occurrences sélectionnées
+    values = ((selected_rows['high'] - selected_rows['close']) * (1 / minimum_increment)) + 1
 
     # Vérifier si toutes les valeurs sont identiques
     if not all(values == values.iloc[0]):
         raise ValueError(
-            "Les valeurs de (high - close) * minimum_increment diffèrent pour les 4 premières occurrences.")
+            "Les valeurs de (high - close) * minimum_increment diffèrent pour les 4 occurrences sélectionnées.")
 
     # Retourner la valeur commune
     return int(values.iloc[0])
-
 
 
 # Appliquer la fonction
@@ -915,8 +932,15 @@ features_df['cumDiffVolDeltaRatio'] = np.where(features_df['meanVolx'] != 0,
 
 # Nouvelles features - Features de Volume Profile:
 # Importance du POC
+volconZone_zoneReversal = np.where(df['candleDir'] == -1, df['VolAbv'], df['VolBlw']) + df['vol_XticksContZone']
+
+
 features_df['VolPocVolCandleRatio'] = np.where(df['volume'] != 0, df['volPOC'] / df['volume'],
                                                addDivBy0 if DEFAULT_DIV_BY0 else valueX)
+
+features_df['VolPocVolRevesalXContRatio'] = np.where(volconZone_zoneReversal != 0, df['volPOC'] / volconZone_zoneReversal,
+                                               addDivBy0 if DEFAULT_DIV_BY0 else valueX)
+
 features_df['pocDeltaPocVolRatio'] = np.where(df['volPOC'] != 0, df['deltaPOC'] / df['volPOC'],
                                               diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
@@ -1233,22 +1257,22 @@ column_settings = {
     'diffPriceClosePoc_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffPriceClosePoc_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffPriceClosePoc_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_4': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffPriceClosePoc_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffPriceClosePoc_0_5': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
     # 'diffPriceClosePoc_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'diffHighPrice_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffHighPrice_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_4': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffHighPrice_0_3': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffHighPrice_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffHighPrice_0_5': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
     # 'diffHighPrice_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'diffLowPrice_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffLowPrice_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffLowPrice_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_4': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_5': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffLowPrice_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffLowPrice_0_5': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     # 'diffLowPrice_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'diffPriceCloseVWAP': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, True)),  # ok
@@ -1256,16 +1280,16 @@ column_settings = {
 
     # Technical indicators
     'atr': (True, True, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'bandWidthBB': (True, True, 0.1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'perctBB': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'bandWidthBB': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'perctBB': (True, True, 12, 92, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'perct_VA6P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA6P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClose_VA6PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'ratio_delta_vol_VA6P': (True, True, 4, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffPriceClose_VA6PPoc': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA6PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA6PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'diffPriceClose_VA6PvaL': (True, True, 12, 88, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'perct_VA11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'ratio_delta_vol_VA11P': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffPriceClose_VA11PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA11PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA11PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
@@ -1275,7 +1299,7 @@ column_settings = {
     'diffPriceClose_VA16PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA16PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'perct_VA21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'ratio_delta_vol_VA21P': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffPriceClose_VA21PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA21PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
     'diffPriceClose_VA21PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
@@ -1296,7 +1320,7 @@ column_settings = {
     'poc_diff_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'poc_diff_ratio_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    'market_regimeADX': (False, True, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
+    'market_regimeADX': (True, False, 2, 99, toBeDisplayed_if_s(user_choice, True)),
     'market_regimeADX_state': (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
 
     'is_in_range_10_32': (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
@@ -1309,17 +1333,19 @@ column_settings = {
 
     'diffVolCandle_0_1Ratio': (False, True, 1, 98.5, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffVolDelta_0_1Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_0_0Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffVolDelta_0_0Ratio': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
 
-    'diffVolDelta_1_1Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_2_2Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffVolDelta_1_1Ratio': (True, True, 2.5, 97.5, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'diffVolDelta_2_2Ratio': (True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffVolDelta_3_3Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'cumDiffVolDeltaRatio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     # Volume profile features
-    'VolPocVolCandleRatio': (False, False, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'pocDeltaPocVolRatio': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'VolPocVolCandleRatio': (True, True, 2, 65, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'VolPocVolRevesalXContRatio': (True, True, 2, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
+
+    'pocDeltaPocVolRatio': (True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
     'VolAbv_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
     'VolBlw_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
 
@@ -1363,26 +1389,27 @@ column_settings = {
     #'linear_slope_r2_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     #'linear_slope_r2_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'linear_slope_r2_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'linear_slope_prevSession': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_prevSession': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_ratio_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_ratio_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_ratio_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_ratio_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     # 'close_sma_ratio_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     # 'close_sma_ratio_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_zscore_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_zscore_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_zscore_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+     'close_sma_zscore_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     # 'close_sma_zscore_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     # 'close_sma_zscore_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'diffPriceCloseVAH_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'diffPriceCloseVAL_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'ratio_delta_vol_VA_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
     # Ratios de volume et de mouvement
-    'ratio_volRevMove_volImpulsMove': (False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),      # 1 - Ratio volume reversion/impulsion
+    'ratio_volRevMove_volImpulsMove': (False, True, 0.0, 75, toBeDisplayed_if_s(user_choice, False)),      # 1 - Ratio volume reversion/impulsion
     'ratio_deltaImpulsMove_volImpulsMove': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 2 - Delta/Volume ratio pour mouvement impulsif
-    'ratio_deltaRevMove_volRevMove': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),       # 3 - Delta/Volume ratio pour mouvement de reversion
+    'ratio_deltaRevMove_volRevMove': (True, True, 3, 80, toBeDisplayed_if_s(user_choice, False)),       # 3 - Delta/Volume ratio pour mouvement de reversion
 
     # Ratios de zones
     'ratio_volZone1_volExtrem': (False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),           # 3.1 - Ratio volume Zone1/Extreme
@@ -1401,17 +1428,17 @@ column_settings = {
     'imbType_contZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),                     # 8 - Type d'imbalance zone continuation
 
     # Ratios détaillés de zones
-    'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 9.09
-    'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),    # 9.10
+    'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': (False, True, 0.0, 80, toBeDisplayed_if_s(user_choice, False)), # 9.09
+    'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': (False, True, 0.0, 97.5, toBeDisplayed_if_s(user_choice, False)),    # 9.10
     'ratio_deltaRevMoveZone1_volRevMoveZone1': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),            # 9.11
-    'ratio_deltaRevMoveExtrem_volRevMoveExtrem': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),          # 9.12
+    'ratio_deltaRevMoveExtrem_volRevMoveExtrem': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),          # 9.12
     'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 9.13
     'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),         # 9.14
     'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 9.15
 
     # Métriques DOM et VA
     'cumDOM_AskBid_avgRatio': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),                # 10 - Ratio moyen Ask/Bid cumulé
-    'cumDOM_AskBid_pullStack_avgDiff_ratio': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 11 - Ratio différence moyenne pull stack
+    'cumDOM_AskBid_pullStack_avgDiff_ratio': (True, True, 2, 99, toBeDisplayed_if_s(user_choice, False)), # 11 - Ratio différence moyenne pull stack
     'delta_impulsMove_XRevZone_bigStand_extrem': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 12
     'delta_revMove_XRevZone_bigStand_extrem': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),    # 13
 
@@ -1421,16 +1448,16 @@ column_settings = {
     'ratio_volRevZone_VolCandle': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),           # 16 - Ratio volume reversion/bougie
     'ratio_deltaRevZone_VolCandle': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),         # 17 - Ratio delta reversion/volume bougie
 
-     'sc_reg_slope_5P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)), # generated bu sierra chart      18
-     'sc_reg_std_5P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart         19
-     'sc_reg_slope_10P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_std_10P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_slope_15P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart      20
-     'sc_reg_std_15P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart        21
-     'sc_reg_slope_30P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_std_30P': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
+     'sc_reg_slope_5P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)), # generated bu sierra chart      18
+     'sc_reg_std_5P_2': (False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart         19
+     'sc_reg_slope_10P_2': (False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
+     'sc_reg_std_10P_2': (False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
+     'sc_reg_slope_15P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart      20
+     'sc_reg_std_15P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart        21
+     'sc_reg_slope_30P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
+     'sc_reg_std_30P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
 # Temps
-    'timeElapsed2LastBar': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),                   # 22 - Temps écoulé depuis dernière barre
+    'timeElapsed2LastBar': (False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),                   # 22 - Temps écoulé depuis dernière barre
     **absorption_settings  # Fusionner les dictionnaires
 }
 
@@ -1855,7 +1882,7 @@ print_notification(
     "Ajout de  'timeStampOpening', class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
 # Colonnes à ajouter
 columns_to_add = ['timeStampOpening', 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd',
-                  'close', 'high', 'low','trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl']
+                  'close', 'high', 'low','trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl','trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric']
 
 # Vérifiez que toutes les colonnes existent dans df
 missing_columns = [col for col in columns_to_add if col not in df.columns]
@@ -1877,7 +1904,7 @@ winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
 
 print_notification(
     "Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' , 'close', "
-    "'trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl' ajoutées")
+    "'trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl','trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric' ajoutées")
 
 file_without_extension = os.path.splitext(file_name)[0]
 file_without_extension = file_without_extension.replace("Step4", "Step5")

@@ -82,7 +82,7 @@ CUSTOM_SESSIONS = {
         "start": 875,
         "end": 925,
         "session_type_index": 3,
-        "selected": False,
+        "selected": True,
         "description": "12:35-13:25",
     },
     "OpenMoringUS": {  # 13h30 = 810 minutes -> 805-815
@@ -96,28 +96,28 @@ CUSTOM_SESSIONS = {
         "start": 935,
         "end": 1065,
         "session_type_index": 3,
-        "selected": False,
+        "selected": True,
         "description": "13:35-15:45",
     },
     "AfternonUS": {
         "start": 1065,
         "end": 1195,
         "session_type_index": 4,
-        "selected": False,
+        "selected": True,
         "description": "15:45-17:55",
     },
     "Evening": {
         "start": 1195,
         "end": 1280,
         "session_type_index": 5,
-        "selected": False,
+        "selected": True,
         "description": "17:55-19:20",
     },
     "Close": {
         "start": 1280,
         "end": 1380,
         "session_type_index": 6,
-        "selected": False,
+        "selected": True,
         "description": "19:20-21:00",
     }
 }
@@ -1868,19 +1868,90 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
     print(f"Analyse terminée. Les résultats ont été sauvegardés dans le dossier '{output_dir}'.")
 
 
-def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None, results_directory=None):
-    # Gestion des valeurs NaN
-    selected_columns = config.get('selected_columns', None)
+def check_original_alignment(y_train_label, df_pnl_data_train):
+    """
+    Vérifie si les données d'origine y_train_label et df_pnl_data_train sont alignées.
 
-    df_filtered = sessions_selection(df_init_features, CUSTOM_SESSIONS_=CUSTOM_SESSIONS_,
-                                     results_directory=results_directory)
+    1. Vérifie que les longueurs sont identiques.
+    2. Si ce sont des pandas Series, vérifie que leurs indices sont identiques.
+    3. Vérifie la cohérence métier :
+       - Pour chaque échantillon où y_train_label == 1, la valeur correspondante dans df_pnl_data_train doit être > 0.
+       - Pour chaque échantillon où y_train_label == 0, la valeur correspondante dans df_pnl_data_train doit être < 0.
 
+    Parameters
+    ----------
+    y_train_label : np.ndarray ou pd.Series
+        Tableau ou Series des labels d'entraînement.
+    df_pnl_data_train : np.ndarray ou pd.Series
+        Tableau ou Series des valeurs pnl correspondantes.
+
+    Raises
+    ------
+    ValueError : Si une des vérifications échoue.
+    """
+    # Vérifier les longueurs
+    if len(y_train_label) != len(df_pnl_data_train):
+        raise ValueError("Les longueurs de y_train_label et df_pnl_data_train sont différentes.")
+
+    # Si ce sont des Series, vérifier que leurs index sont identiques
+    if isinstance(y_train_label, pd.Series) and isinstance(df_pnl_data_train, pd.Series):
+        if not y_train_label.index.equals(df_pnl_data_train.index):
+            raise ValueError("Les indices des Series ne sont pas identiques.")
+
+    # Convertir en arrays pour faciliter la vérification métier
+    y_array = y_train_label if isinstance(y_train_label, np.ndarray) else y_train_label.to_numpy()
+    pnl_array = df_pnl_data_train if isinstance(df_pnl_data_train, np.ndarray) else df_pnl_data_train.to_numpy()
+
+    # Vérifier la cohérence métier
+    mask_positive = (y_array == 1)
+    mask_zero = (y_array == 0)
+
+    if not np.all(pnl_array[mask_positive] > 0):
+        bad_indices = np.where(pnl_array[mask_positive] <= 0)[0]
+        raise ValueError(f"Pour certains indices où y_train_label==1, le pnl n'est pas > 0: indices {bad_indices}")
+
+    if not np.all(pnl_array[mask_zero] < 0):
+        bad_indices = np.where(pnl_array[mask_zero] >= 0)[0]
+        raise ValueError(f"Pour certains indices où y_train_label==0, le pnl n'est pas < 0: indices {bad_indices}")
+
+    print("Les données d'origine sont alignées et cohérentes.")
+
+
+def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None,
+                 results_directory=None):
+    """
+    Initialise et prépare les données pour l'entraînement et l'évaluation d'un modèle de trading.
+
+    Args:
+        df_init_features: DataFrame avec les caractéristiques brutes
+        nanvalue_to_newval: Valeur à utiliser pour remplacer les NaN
+        config: Dictionnaire de configuration
+        CUSTOM_SESSIONS_: Définition des sessions de trading à utiliser
+        results_directory: Répertoire pour sauvegarder les résultats
+
+    Returns:
+        Tuple contenant les ensembles de données préparés
+    """
+    # Récupération des colonnes sélectionnées manuellement depuis la configuration
+    selected_columns_manual = config.get('selected_columns_manual', None)
+    if selected_columns_manual is None:
+        raise ValueError("La configuration doit contenir la clé 'selected_columns_manual'.")
+
+    # Filtrage des données par sessions de trading si activé
+    if (config['enable_script_CUSTOM_SESSIONS'] == True):
+        df_filtered = sessions_selection(df_init_features, CUSTOM_SESSIONS_=CUSTOM_SESSIONS_,
+                                         results_directory=results_directory)
+    else:
+        df_filtered = df_init_features
+
+    # Gestion des valeurs NaN dans le dataset
     if nanvalue_to_newval is not None:
         df_filtered = df_filtered.fillna(nanvalue_to_newval).infer_objects(copy=False)
         nan_value = nanvalue_to_newval
     else:
         nan_value = np.nan
 
+    # Division des données en ensembles d'entraînement et de test
     print("Division des données en ensembles d'entraînement et de test...")
     try:
         test_size_ratio = config.get('test_size_ratio', 0.8)
@@ -1891,60 +1962,75 @@ def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUS
         print(f"Erreur lors de la division des sessions : {e}")
         sys.exit(1)
 
+    # Affichage du nombre de sessions dans chaque ensemble
     print(f"Nombre de session dans x_train  {nb_SessionTrain}  ")
     print(f"Nombre de session dans x_test  {nb_SessionTest}  ")
 
-    # On crée une copie de selected_columns pour ne pas modifier la liste originale
-    columns_to_use = selected_columns.copy()
+    # Création d'une copie des colonnes sélectionnées pour ne pas modifier la liste originale
+    columns_to_use = selected_columns_manual.copy()
 
-    # Création des versions "full" avec les colonnes sélectionnées
+    # Création des versions "full" avec toutes les colonnes (avant filtrage des classes 99)
     X_train_full = train_df[:]
     y_train_full_label = train_df['class_binaire']
-    df_pnl_data_train_full=train_df['trade_pnl']
     X_test_full = test_df[:]
     y_test_full_label = test_df['class_binaire']
-    df_pnl_data_test_full=test_df['trade_pnl']
 
+    # Sélection des données PnL (théoriques ou réelles selon la configuration)
+    if (config['use_pnl_theoric']):
+        df_pnl_data_train_full = train_df['trade_pnl_theoric']
+        df_pnl_data_test_full = test_df['trade_pnl_theoric']
+    else:
+        df_pnl_data_train_full = train_df['trade_pnl']
+        df_pnl_data_test_full = test_df['trade_pnl']
+        # À vérifier - code d'arrêt si non théorique
+        exit(98)
 
-    # Création des versions filtrées (sans classe 99)
+    # Création des versions filtrées (sans classe 99, qui représente les trades hors sessions sélectionnées)
+    # Ensemble d'entraînement
     mask_train = y_train_full_label != 99
     X_train = X_train_full[mask_train]
-    X_train = X_train[columns_to_use]
+    X_train = X_train[columns_to_use]  # Application de la sélection de colonnes
     y_train_label = y_train_full_label[mask_train]
-    df_pnl_data_train= df_pnl_data_train_full[mask_train]
+    df_pnl_data_train = df_pnl_data_train_full[mask_train]
 
+    # Ensemble de test
     mask_test = y_test_full_label != 99
     X_test = X_test_full[mask_test]
-    X_test = X_test[columns_to_use]
+    X_test = X_test[columns_to_use]  # Application de la sélection de colonnes
     y_test_label = y_test_full_label[mask_test]
-    df_pnl_data_test= df_pnl_data_test_full[mask_test]
+    df_pnl_data_test = df_pnl_data_test_full[mask_test]
 
+    # Vérification de l'alignement entre les classes et les PnL
+    y_train_label_aligned = y_train_full_label[mask_train]
+    df_pnl_data_train_aligned = df_pnl_data_train_full[mask_train]
+    check_original_alignment(y_train_label_aligned, df_pnl_data_train_aligned)
 
-    # Test d'alignement des données
+    # Test d'alignement des données d'entraînement (vérification des longueurs)
     if not (len(X_train) == len(y_train_label) == len(df_pnl_data_train)):
         raise ValueError(
             f"Erreur d'alignement: X_train ({len(X_train)} lignes), y_train_label ({len(y_train_label)} lignes), train_df ({len(train_df)} lignes), df_pnl_data_train ({len(df_pnl_data_train)} lignes)")
     else:
         print(f"Alignement vérifié: {len(X_train)} lignes pour tous les tableaux")
 
-    # Test d'alignement des données
+    # Test d'alignement des données de test (vérification des longueurs)
     if not (len(X_test) == len(y_test_label) == len(df_pnl_data_test)):
         raise ValueError(
             f"Erreur d'alignement: X_test ({len(X_test)} lignes), y_train_test ({len(y_test_label)} lignes), test_df ({len(test_df)} lignes), df_pnl_data_test ({len(df_pnl_data_test)} lignes)")
     else:
         print(f"Alignement vérifié: {len(X_test)} lignes pour tous les tableaux")
 
-    # Vérifier si y_train_label = 1 quand trade_pnl > 0 et y_train_label = 0 quand trade_pnl <= 0
+    # Vérification de la cohérence entre classes et PnL pour l'entraînement
+    # y_train_label doit être 1 quand trade_pnl > 0 et 0 quand trade_pnl <= 0
     condition_respectee = ((y_train_label == 1) == (df_pnl_data_train > 0)).all()
 
     if condition_respectee:
         print("La condition est respectée pour tous les exemples")
     else:
-        # Afficher le nombre de cas où la condition n'est pas respectée
+        # Affichage des cas non conformes
         nb_non_conforme = ((y_train_label == 1) != (df_pnl_data_train > 0)).sum()
         print(f"La condition n'est pas respectée pour {nb_non_conforme} exemples")
 
-        # Afficher quelques exemples où la condition n'est pas respectée
+        # Affichage de quelques exemples non conformes
         indices_non_conformes = ((y_train_label == 1) != (df_pnl_data_train['trade_pnl'] > 0))
         exemples_non_conformes = pd.DataFrame({
             'y_train_label': y_train_label[indices_non_conformes],
@@ -1952,26 +2038,27 @@ def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUS
         })
         print("\nVoici quelques exemples non conformes:")
         print(exemples_non_conformes.head())
+        exit(56)  # Arrêt si incohérence détectée
 
-    # Vérifier si y_test_label = 1 quand trade_pnl > 0 et y_test_label = 0 quand trade_pnl <= 0
+    # Vérification similaire pour les données de test
     condition_respectee_test = ((y_test_label == 1) == (df_pnl_data_test > 0)).all()
 
     if condition_respectee_test:
         print("La condition est respectée pour tous les exemples de test")
     else:
-        # Afficher le nombre de cas où la condition n'est pas respectée
+        # Affichage des cas non conformes
         nb_non_conforme_test = ((y_test_label == 1) != (df_pnl_data_test['trade_pnl'] > 0)).sum()
         print(f"La condition n'est pas respectée pour {nb_non_conforme_test} exemples de test")
 
-        # Afficher quelques exemples où la condition n'est pas respectée
-        indices_non_conformes_test = ((y_test_label == 1) != (df_pnl_data_test> 0))
+        # Affichage de quelques exemples non conformes
+        indices_non_conformes_test = ((y_test_label == 1) != (df_pnl_data_test > 0))
         exemples_non_conformes_test = pd.DataFrame({
             'y_test_label': y_test_label[indices_non_conformes_test],
             'trade_pnl': df_pnl_data_test[indices_non_conformes_test]
         })
         print("\nVoici quelques exemples non conformes dans les données de test:")
         print(exemples_non_conformes_test.head())
-
+        exit(57)  # Arrêt si incohérence détectée
 
     # ===== Gestion des colonnes temporelles pour le logging et la validation croisée =====
     # Ces colonnes sont nécessaires pour certains modes de validation croisée
@@ -1984,25 +2071,20 @@ def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUS
     for col in temporal_columns:
         if col not in X_train_full.columns:
             # Vérification de la présence de la colonne dans le DataFrame initial
-            # df_init_features contient toutes les colonnes d'origine avant la sélection des features
             if col not in df_init_features.columns:
                 raise ValueError(
                     f"La colonne '{col}' n'est pas présente dans df_init_features. Cette colonne est nécessaire pour les logs temporels et la validation croisée.")
 
             # Création d'une copie de X_train_full lors de la première modification
-            # pour éviter les modifications involontaires sur le DataFrame d'origine
             if isinstance(X_train_full, pd.DataFrame) and not X_train_full.columns.empty:
                 X_train_full = X_train_full.copy()
 
             # Ajout de la colonne en respectant l'indexation de X_train_full
-            # On utilise .loc pour garantir un alignement correct des indices
-            # entre df_init_features et X_train_full
             X_train_full[col] = df_init_features.loc[X_train_full.index, col]
             print(f"Colonne '{col}' ajoutée à X_train_full pour les logs temporels et la validation croisée")
 
     # ===== Vérification de la cohérence des distributions de classes =====
-    # Compare les proportions de classes entre les différents ensembles de données
-    # pour s'assurer qu'il n'y a pas d'incohérence dans la séparation des données
+    # Compare les proportions de classes entre les différents ensembles
 
     def get_class_counts(y):
         """Retourne un tuple (count_0, count_1) pour un array/series donné"""
@@ -2010,11 +2092,11 @@ def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUS
             return (y == 0).sum(), (y == 1).sum()
         return (y == 0).sum(), (y == 1).sum()
 
-    # Vérification des ensembles complets
+    # Vérification des ensembles complets (avec 99)
     counts_train_full = get_class_counts(y_train_full_label)
     counts_test_full = get_class_counts(y_test_full_label)
 
-    # Vérification des ensembles réduits
+    # Vérification des ensembles réduits (sans 99)
     counts_train = get_class_counts(y_train_label)
     counts_test = get_class_counts(y_test_label)
 
@@ -2029,8 +2111,107 @@ def init_dataSet(df_init_features=None,nanvalue_to_newval=None, config=None, CUS
     """
         raise ValueError(error_msg)
 
+    # Vérification que les valeurs de X_test sont dans les bornes observées dans X_train
+    try:
+        check_lower_higher_bound_consistency(X_train, X_test, max_values_to_show=10)
+        print("\n Vérification des bornes réussie sur x_train et x_test réussi")
+    except ValueError as e:
+        raise ValueError(f"Erreur: {e}")
+
+    # Affichage des dimensions après filtrage manuel
+    print("=" * 60)
+    print(f"Shape de X_train après filtrage mannuel des features: {X_train.shape}")
+    print(f"Shape de X_test  après filtrage mannuel des features: {X_test.shape}")
+    print("=" * 60)
+
+
+    # Liste des colonnes à vérifier
+
+
+
+    # Affichage des informations sur les features après exclusion manuelle
+    print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
+    displaytNan_vifMiCorr_mRMR_Filtering(X=X_train_full, name="X_train_full",
+                                   config=config, auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING)
+    print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
+    displaytNan_vifMiCorr_mRMR_Filtering(X=X_train, name="X_train",
+                                   config=config, auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING)
+
+    columns_to_check = ['date', 'trade_category']
+
+    # Vérifier leur présence dans selected_columns_manual
+    for col in columns_to_check:
+        if col in X_train.columns:
+            print(f"✅ La colonne '{col}' est bien présente dans X_train.")
+        else:
+            print(f"❌ La colonne '{col}' n'est PAS présente dans X_train.")
+
+
+
+    # Affichage des valeurs NaN dans les ensembles de données
+    print(
+        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
+    print(
+        f"Dimensions de X_train: {X_train.shape} (lignes, colonnes) | Dimensions de X_test: {X_test.shape} (lignes, colonnes)")
+    print(f"Nb de features après exlusion manuelle: {len(selected_columns_manual)}\n")
+
+    # Nettoyage des valeurs NaN et Inf si demandé dans la configuration
+    if config["remove_inf_nan_afterFeaturesSelections"] == True:
+        X_train, y_train_label,df_pnl_data_train, mask_train = remove_nan_inf(X=X_train,y= y_train_label,df_pnl_data=df_pnl_data_train, dataset_name="train")
+        X_test, y_test_label,df_pnl_data_test ,mask_test = remove_nan_inf(X=X_test ,y=y_test_label,df_pnl_data= df_pnl_data_test,dataset_name="test")
+
+    # Application éventuelle du scaling (normalisation/standardisation) des features
+    #ATTENTION : préférable de le faire pour la mutuelle information et mRMR
+    #Approche par mRMR (minimum Redundancy Maximum Relevance)
+
+    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+
+    if chosen_scaler != scalerChoice.SCALER_DISABLE:
+        print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+        # Appliquer le scaling
+        X_train, X_test, y_train_label, y_test_label, scaler, scaler_params = apply_data_feature_scaling(
+            X_train, X_test, y_train_label, y_test_label,
+            mask_train, mask_test,
+            chosen_scaler=chosen_scaler,
+            results_directory=results_directory,
+            config=config
+        )
+    else:
+        print("\n-- Pas de scaler actif ---\n")
+
+
+    # Filtrage automatique des features basé sur VIF, corrélation et information mutuelle (si activé)
+    auto_filtering_mode = config.get('auto_filtering_mode', None)
+    is_compute_vif = config.get('compute_vif', True)  # Par défaut True pour garder le comportement d'origine
+
+    if auto_filtering_mode!=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING:
+        if chosen_scaler == scalerChoice.SCALER_DISABLE:
+            print(f"\n!!!!!!!!!!!!!!!!!!!!!! POur la mutuelle information et MRMR il est préférable de normaliser les données  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorr_mRMR_Filtering(
+            X=X_train, Y=y_train_label,
+            name="X_train", config=config,
+            auto_filtering_mode=auto_filtering_mode,is_compute_vif=is_compute_vif
+        )
+        print("=" * 60)
+        print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
+        print(
+            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
+        print("=" * 60)
+    else:
+        # Pas de filtrage automatique, on garde les features sélectionnées manuellement
+        selected_columns_afterVifCorrMiFiltering = selected_columns_manual
+        print("\nRésumé:")
+        print(f"Nombre total de features filtrées manuellement: {len(selected_columns_manual)}")
+        print(
+            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
+
+    # Application de la sélection finale des features sur les colonnes de celles_ci.
+    X_train = X_train[selected_columns_afterVifCorrMiFiltering]
+    X_test = X_test[selected_columns_afterVifCorrMiFiltering]
+
+    # Retour des ensembles de données préparés
     return (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
-            X_train, y_train_label, X_test, y_test_label,df_pnl_data_train,df_pnl_data_test,
+            X_train, y_train_label, X_test, y_test_label, df_pnl_data_train, df_pnl_data_test,
             nb_SessionTrain, nb_SessionTest, nan_value)
 
 
@@ -2413,7 +2594,7 @@ def best_modellastFold_analyse( X_test=None, y_test_label=None,
     """
 def reTrain_finalModel_analyse(
                              X_train=None, X_train_full=None, X_test=None, X_test_full=None,
-                             y_train_label_=None, y_test_label_=None,
+                             y_train_label_=None, y_test_label_=None, y_pnl_data_train=None,y_pnl_data_test=None,
                              nb_SessionTest=None, nan_value=None, feature_names=None,
                              config=None, weight_param=None, bestResult_dict=None,is_log_enabled=False):
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
@@ -2444,14 +2625,17 @@ def reTrain_finalModel_analyse(
     print(f"Période de test : du {timestamp_to_date_utc(start_time_test)} au {timestamp_to_date_utc(end_time_test)}")
     print(f"Nombre de sessions test : {num_sessions_test}\n")
 
-
-
-
+    #config.update({
+    #   'y_pnl_data_train_cv': y_train_label_,
+    #   'y_pnl_data_val_cv_OrTest': y_test_label_
+    #})
     results = train_and_evaluate_lightgbm_model(
         X_train_cv=X_train,
         X_val_cv=X_test,
-        Y_train_cv=y_train_label_,
+        y_train_cv=y_train_label_,
         y_val_cv=y_test_label_,
+        y_pnl_data_train_cv=y_pnl_data_train,
+        y_pnl_data_val_cv_OrTest=y_pnl_data_test,
         params=params_optuna,
         model_weight_optuna=model_weight_optuna_best,
         config=config,
@@ -2459,9 +2643,7 @@ def reTrain_finalModel_analyse(
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
-        X_train_full=X_train_full,
-        is_log_enabled=is_log_enabled,
-        log_evaluation=10
+        log_evaluation=5
     )
 
     final_model=results['current_model']
@@ -2470,8 +2652,8 @@ def reTrain_finalModel_analyse(
     print(f"Sur X_Test :")
     print(f"  - Meilleur nombre d'itérations : {final_model.best_iteration}")
     print(f"  - Meilleur score : {final_model.best_score}")
-    print(f"        - soit PNL {results['eval_metrics']['score']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
-    print(f"        - Rappel sur train: PNL de {results['train_metrics']['score']} | pour {results['train_metrics']['total_samples']}  samples")
+    print(f"        - soit PNL {results['eval_metrics']['val_bestIdx_custom_metric_pnl']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
+    print(f"        - Rappel sur train: PNL de {results['train_metrics']['train_bestIdx_custom_metric_pnl']} | pour {results['train_metrics']['total_samples']}  samples")
     # Création du nom de fichier avec timestamp
     current_time = datetime.now()
     timestamp = current_time.strftime("%y%m%d_%H_%M_%S")  # Format: YYMMDD_HH_MM_SS
@@ -3156,18 +3338,32 @@ def print_warning(message):
     print(f"\033[91m/!\ Warning: {message}\033[0m")
 
 
-def sessions_selection(df, selected_sessions=None, CUSTOM_SESSIONS_=None,
-                       results_directory=None):
+def sessions_selection(df, selected_sessions=None, CUSTOM_SESSIONS_=None, results_directory=None):
     """
     Met class_binaire à 99 pour les sessions NON sélectionnées et analyse la distribution.
     """
-
     if results_directory is None:
         print_warning("Le répertoire 'results_directory' est None")
 
+    # Comptage AVANT filtrage
+    original_success_count = len(df[df['class_binaire'] == 1])
+    original_failure_count = len(df[df['class_binaire'] == 0])
+    original_total_count = original_success_count + original_failure_count
+    original_win_rate = (original_success_count / original_total_count * 100) if original_total_count > 0 else 0
+
+    print("\n" + "=" * 50)
+    print("STATISTIQUES AVANT FILTRAGE PAR SESSIONS")
+    print("=" * 50)
+    print(f"Total trades dans le dataset original: {original_total_count}")
+    print(f"Trades réussis (1): {original_success_count}")
+    print(f"Trades échoués (0): {original_failure_count}")
+    print(f"Win Rate: {original_win_rate:.2f}%")
+    print("=" * 50 + "\n")
+
     df_filtered = df.copy()
     timestamps = df['deltaTimestampOpening'].values
-    print(df_filtered.shape)
+    print(f"Dimensions du DataFrame original: {df_filtered.shape}")
+
     if CUSTOM_SESSIONS_ is not None:
         # Sélection des périodes activées
         selected_periods = [
@@ -3227,24 +3423,31 @@ def sessions_selection(df, selected_sessions=None, CUSTOM_SESSIONS_=None,
     mask_selected = create_mask_numba(timestamps, periods_starts, periods_ends)
     df_filtered.loc[~mask_selected, 'class_binaire'] = 99
 
-    # Comptage des trades dans df_filtered
+
+    # Après avoir appliqué le masque de filtrage
+    print("\n" + "="*50)
+    print("STATISTIQUES APRÈS FILTRAGE PAR SESSIONS")
+    print("="*50)
     success_filtered = len(df_filtered[df_filtered['class_binaire'] == 1])
     failure_filtered = len(df_filtered[df_filtered['class_binaire'] == 0])
     filtered_99 = len(df_filtered[df_filtered['class_binaire'] == 99])
     total_filtered = success_filtered + failure_filtered
+    filtered_win_rate = (success_filtered / total_filtered * 100) if total_filtered > 0 else 0
 
-    print("\nNombre de trades dans df_filtered:")
-    print(f"df_filtered-> Trades réussis (1): {success_filtered}")
-    print(f"df_filtered-> Trades échoués (0): {failure_filtered}")
-    print(f"df_filtered-> Trades filtrés (99): {filtered_99}")
-    print(f"df_filtered-> Total trades: {total_filtered}")
+    print(f"Trades réussis (1): {success_filtered} (avant: {original_success_count}, différence: {success_filtered - original_success_count})")
+    print(f"Trades échoués (0): {failure_filtered} (avant: {original_failure_count}, différence: {failure_filtered - original_failure_count})")
+    print(f"Trades filtrés (99): {filtered_99}")
+    print(f"Total trades après filtrage: {total_filtered} (avant: {original_total_count})")
+    print(f"Win Rate après filtrage: {filtered_win_rate:.2f}% (avant: {original_win_rate:.2f}%)")
+    print(f"Pourcentage de données conservées: {(total_filtered/original_total_count*100):.2f}%")
+    print("="*50)
 
     # Vérification de cohérence
     if total_filtered != cum_total_count:
         print("\nATTENTION: Incohérence détectée!")
         print(f"Total des trades filtrés ({total_filtered}) != ")
         print(f"Somme des trades par période ({cum_total_count})")
-
+        exit(111)
     # Analyser et visualiser la distribution
     fig, stats = analyze_trade_distribution(df, df_filtered, CUSTOM_SESSIONS_)
 
@@ -3331,10 +3534,9 @@ def calculate_global_ecart(
     return ecart_global
 
 
-def calculate_normalized_objectives(
+def calculate_normalized_pnl_objectives(
         tp_train_list, fp_train_list, tp_val_list, fp_val_list,
         scores_train_list, scores_val_list, fold_stats,
-        scale_objectives=False,
         use_imbalance_penalty=True,
         use_trade_weighting_for_ecart=True  # Activer ou non la pondération
 ):
@@ -3370,8 +3572,8 @@ def calculate_normalized_objectives(
         val_winrate = tp_val_list[i] / val_trades
 
         fold_metrics.append({
-            'winrate_diff': abs(train_winrate - val_winrate),
-            'n_trades': val_trades,
+            'winrate_diff': abs(train_winrate - val_winrate), #modifier cela car nous l'avons deja calculé vec perctDiff_winrateRatio_train_val' (pourcentatge de différence des ratio)
+            'n_trades_val': val_trades,
             'val_pnl': scores_val_list[i]
         })
 
@@ -3379,14 +3581,16 @@ def calculate_normalized_objectives(
     total_pnl = sum(m['val_pnl'] for m in fold_metrics)
     avg_pnl = total_pnl / len(fold_metrics) if fold_metrics else float('-inf')
 
+    print(f"total_pnl:{total_pnl}  avg_pnl:{avg_pnl}  ")
+
     ecart_global = calculate_global_ecart(
         tp_train_list, fp_train_list, tp_val_list, fp_val_list,
         use_trade_weighting=use_trade_weighting_for_ecart
     )
 
     # Pénalité d'imbalance si activée
-    max_trades = max(m['n_trades'] for m in fold_metrics)
-    min_trades = max(min(m['n_trades'] for m in fold_metrics), 1e-8)
+    max_trades = max(m['n_trades_val'] for m in fold_metrics)
+    min_trades = max(min(m['n_trades_val'] for m in fold_metrics), 1e-8)
     imbalance_penalty = 1 + math.log(max_trades / min_trades)
 
     if use_imbalance_penalty:
@@ -3395,23 +3599,7 @@ def calculate_normalized_objectives(
     else:
         pnl_norm_objective = avg_pnl
         ecart_train_val = ecart_global
-
-    # Normalisation des objectifs si activée
-    if scale_objectives:
-        pnl_range = (-100, 100)  # Plage ajustable pour le PnL
-        winrate_diff_range = (0, 1)
-
-        pnl_norm_objective = normalize_to_range(
-            pnl_norm_objective,
-            old_min=pnl_range[0],
-            old_max=pnl_range[1]
-        )
-
-        ecart_train_val = normalize_to_range(
-            ecart_train_val,
-            old_min=winrate_diff_range[0],
-            old_max=winrate_diff_range[1]
-        )
+    print(f"pnl_norm_objective:{pnl_norm_objective} ")
 
     return {
         'pnl_norm_objective': pnl_norm_objective,
@@ -4434,7 +4622,8 @@ def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_s
     for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
         fold_raw_data = prepare_fold_data(X_train, y_train_label, train_pos, val_pos)
 
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv = prepare_dataSplit_cv_train_val(
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv, \
+            = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
         raw_metrics = compute_raw_train_dist(
@@ -4455,7 +4644,7 @@ def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_s
 
 raw_metrics_cache = {}
 
-def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, df_pnl_data_train=None,df_init_candles=None,trial=None, params=None,
+def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_pnl_data_train=None,df_init_candles=None,trial=None, params=None,
                          model_weight_optuna=None, cv=None, nb_split_tscv=None,
                          model=None, is_log_enabled=False, config=None, **kwargs):
     """
@@ -4476,7 +4665,7 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, df
         metrics_dict = initialize_metrics_dict(nb_split_tscv,config)
 
         # Préparation données GPU - Interface commune
-        data = prepare_data(X_train, y_train_label,df_pnl_data_train=df_pnl_data_train,config=config)
+        data = prepare_data(X_train, y_train_label,y_pnl_data_train=y_pnl_data_train,config=config)
 
         # Sélection du processor de fold selon le framework
         fold_processor = select_fold_processor(model)
@@ -4550,7 +4739,7 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, df
             cleanup_gpu_memory(data)
 
 
-def prepare_data(X_train=None, y_train_label=None,df_pnl_data_train=None, config=None):
+def prepare_data(X_train=None, y_train_label=None,y_pnl_data_train=None, config=None):
     """Prépare les données pour l'entraînement sur CPU ou GPU.
 
     Args:
@@ -4567,14 +4756,14 @@ def prepare_data(X_train=None, y_train_label=None,df_pnl_data_train=None, config
     if config['device_'] == 'cpu':
         X_processed = X_train.values
         y_processed = y_train_label.values
-        trade_pnl_data_processed=df_pnl_data_train.values
+        trade_pnl_data_processed=y_pnl_data_train.values
 
     else:
         X_processed = cp.asarray(X_train.values, dtype=cp.float32)
         # Vérifie le type de y_train_label avant conversion
         y_values = y_train_label.values if isinstance(y_train_label, pd.Series) else y_train_label
         y_processed = cp.asarray(y_values, dtype=cp.int32)
-        y_valuesPnl= df_pnl_data_train.values if isinstance(df_pnl_data_train, pd.Series) else df_pnl_data_train
+        y_valuesPnl= y_pnl_data_train.values if isinstance(y_pnl_data_train, pd.Series) else y_pnl_data_train
         trade_pnl_data_processed = cp.asarray(y_valuesPnl, dtype=cp.int32)
 
 
@@ -4586,7 +4775,7 @@ def prepare_data(X_train=None, y_train_label=None,df_pnl_data_train=None, config
         'X_train_no99_fullRange_pd': X_train,
         'y_train_no99_fullRange_pd': y_train_label,
         'y_pnl_data_train_no99_fullRange':trade_pnl_data_processed,
-        'y_train_trade_pnl_no99_fullRange_pd':df_pnl_data_train,
+        'y_train_trade_pnl_no99_fullRange_pd':y_pnl_data_train,
     }
 
 
@@ -4610,14 +4799,11 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
     which returns the full set of metrics and debug_info.
     """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv = prepare_dataSplit_cv_train_val(
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
-        #for a later use in custom metric to compute the pnl we store in config
-        config.update({
-            'y_pnl_data_train_cv': y_pnl_data_train_cv,
-            'y_pnl_data_val_cv': y_pnl_data_val_cv
-        })
+
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -4625,15 +4811,46 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
             **calculate_fold_stats(y_val_cv, "val",config)
         }
 
+        #mask_positive = (Y_train_cv == 1)
+        #print(Y_train_cv[mask_positive])
+        #print(len(Y_train_cv) == len(y_pnl_data_train_cv))
+        #print(y_pnl_data_train_cv[mask_positive])
+        # Vérifier que pour ces indices, les pnl sont > 0
+        # if not np.all(y_pnl_data_train_cv[mask_positive] > 0):
+            # Récupérer les indices où la condition échoue pour fournir un message plus précis
+        #  bad_indices = np.where(y_pnl_data_train_cv[mask_positive] <= 0)[0]
+        # raise ValueError(
+        #      f"Incohérence (label=1, pnl ≤ 0) trouvée aux indices {bad_indices}")
+        #else:
+        #   print(
+        #    "dans train_and_evaluate_model Vérification OK (au moins pour pnl theoric) : Pour tous les indices où y_train_label == 1, df_pnl_data_train est > 0.")
+
+        # Créer un masque pour les valeurs égales à 0
+        #mask_zero = (Y_train_cv == 0)
+
+        # Vérifier que pour ces indices, les pnl sont < 0
+        # if not np.all(y_pnl_data_train_cv[mask_zero] < 0):
+        #     # Récupérer les indices où la condition échoue
+        #   bad_indices = np.where(y_pnl_data_train_cv[mask_zero] >= 0)[0]
+        #   raise ValueError(
+        #       f"Erreur d'alignement : pour y_train_label==0, certains df_pnl_data_train ne sont pas < 0 aux indices {bad_indices}")
+        # else:
+        #   print(
+        #      "dans train_and_evaluate_model Vérification OK (au moins pour pnl theoric) : Pour tous les indices où y_train_label == 0, df_pnl_data_train est < 0.")
+
+
+        #for a later use, in this fold in custom metric to compute the pnl we store in config
+        # config.update({
+        #  'y_pnl_data_train_cv': y_pnl_data_train_cv,
+        #  'y_pnl_data_val_cv_OrTest': y_pnl_data_val_cv
+        # })
         fold_results = train_and_evaluate_lightgbm_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
-            X_train_cv_pd=X_train_cv_pd,
-            X_val_cv_pd=X_val_cv_pd,
-            Y_train_cv=Y_train_cv,
+            y_train_cv=Y_train_cv,
             y_val_cv=y_val_cv,
-            df_init_candles=df_init_candles,
-            data=data,
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
             params=params,
             model_weight_optuna=model_weight_optuna,
             config=config,
@@ -4642,9 +4859,8 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
-            X_train_full=X_train_full,
-            is_log_enabled=is_log_enabled,
-            nb_split_tscv=nb_split_tscv
+            log_evaluation=0,
+
         )
 
         # Retourner le résultat tel quel
@@ -4665,13 +4881,14 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
        which returns the full set of metrics and debug_info.
        """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv = prepare_dataSplit_cv_train_val(
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
         # for a later use in custom metric to compute the pnl we store in config
         config.update({
             'y_pnl_data_train_cv': y_pnl_data_train_cv,
-            'y_pnl_data_val_cv': y_pnl_data_val_cv
+            'y_pnl_data_val_cv_OrTest': y_pnl_data_val_cv,
         })
 
         # Calculate initial fold statistics
@@ -4683,12 +4900,10 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
         fold_results = train_and_evaluate_xgb_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
-            X_train_cv_pd=X_train_cv_pd,
-            X_val_cv_pd=X_val_cv_pd,
+
             Y_train_cv=Y_train_cv,
             y_val_cv=y_val_cv,
-            df_init_candles=df_init_candles,
-            data=data,
+
             params=params,
             model_weight_optuna=model_weight_optuna,
             config=config,
@@ -4697,9 +4912,6 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
-            X_train_full=X_train_full,
-            is_log_enabled=is_log_enabled,
-            nb_split_tscv=nb_split_tscv
         )
 
         # Retourner le résultat tel quel
@@ -5548,12 +5760,14 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         "best_params": best_trial.params,
         'selected_feature_names': best_trial.user_attrs.get('selected_feature_names', None),
         'use_of_rfe_in_optuna': best_trial.user_attrs.get('use_of_rfe_in_optuna', None),
-
+        'perctDiff_winrateRatio_train_val':best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None),
+        'ecart_train_val': best_trial.user_attrs.get('ecart_train_val', None), # for pareto analysis. We compute a specific metric including trade ratio for weithing the impact
         'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None
        # 'ecart_train_val': best_trial.values[1] if len(best_trial.values) > 1 else None
     }
     study.set_user_attr('bestResult_dict', bestResult_dict)
-
+    if bestResult_dict["perctDiff_winrateRatio_train_val"] is None:
+        raise ValueError("perctDiff_winrateRatio_train_val ne peut pas être None dans bestResult_dict")
     winrates_val_by_fold_ = best_trial.user_attrs.get('winrates_val_by_fold', None)
     winrates_val_by_fold_formatted_ = [f"{x:.3f}" for x in winrates_val_by_fold_] if winrates_val_by_fold_ else None
 
@@ -5759,14 +5973,14 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
             exit(99)
     else:
         print("train_pred_proba_log_odds ou val_pred_proba_log_odds est None ou n'est pas disponible.")
-        exit(88)
+
     method_name_cv = method_names_cv.get(cv_method, "UNKNOWN")
     use_imbalance_penalty = best_trial.user_attrs.get('use_imbalance_penalty', False)
     print(f"\n   {Fore.BLUE}##Meilleur essai jusqu'à present: {bestResult_dict['best_optunaTrial_number']}, "
           f"Methode=> Optuna: '{method_name_pareto} | CV: '{method_name_cv} |  Objective loss Fct : {config.get('custom_objective_lossFct', None)} | \n"
           f"use_imbalance_penalty: {'Activé' if use_imbalance_penalty else 'Désactivé'}' |"
           f"scaler_choice: {config.get('scaler_choice', 0)} | model:{config.get('model_type', 0)} |"
-          f"enable_vif_corr_mi: { config.get('enable_vif_corr_mi', 0)} ##{Style.RESET_ALL}")
+          f"auto_filtering_mode: { config.get('auto_filtering_mode', 0)} ##{Style.RESET_ALL}")
     if config['use_optuna_constraints_func'] == True:
 
         #nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
@@ -5783,6 +5997,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
                                f"    - ratioWinrate_train_val <= {config['config_constraint_ratioWinrate_train_val']} (max: {max(best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', []))}) - {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)})\n"
                                f"    - min_trades >= {config['config_constraint_min_trades_threshold_by_Fold']} (min: {min(best_trial.user_attrs.get('nb_trades_val_by_fold', []))}) - {best_trial.user_attrs.get('nb_trades_val_by_fold', None)})\n"
                                f"    - winrate >= {config['config_constraint_winrates_val_by_fold']} (min: {min(best_trial.user_attrs.get('winrates_val_by_fold', []))}) - {best_trial.user_attrs.get('winrates_val_by_fold', None)})\n"+ Style.RESET_ALL)
+
         else:
             print(Fore.RED + "\u2717 Some constraints not respected:" + Style.RESET_ALL)
             # Application pour chaque contrainte
@@ -5827,7 +6042,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     if optuna_objective_type_value != optuna_doubleMetrics.DISABLE:
         print(
             f"    =>Objective 2: score différence par trade (train - val) -> {bestResult_dict['best_pnl_perTrade_diff']:.4f}\n"
-            f"      score ecart_train_val   -> {bestResult_dict['config_constraint_ratioWinrate_train_val']}")
+            f"      score ecart_train_val   -> {bestResult_dict['perctDiff_winrateRatio_train_val']}")
     if (bestResult_dict['use_of_rfe_in_optuna'] != rfe_param.NO_RFE):
         print(
             f"    =>Nombre de features sélectionnées par RFECVCV: {len(bestResult_dict['selected_feature_names'])}, Noms des features: {', '.join(bestResult_dict['selected_feature_names'])}")
@@ -5860,7 +6075,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     print(f"     -% de trades (tp+fp)           : {metrics['tp_fp_percentage_train']:.2f}%")
     print(f"     -Différence (TP - FP)          : {metrics['tp_fp_diff_train']}")
     print(
-        f"     -PNL                           : {metrics['cummulative_pnl_train']},         Original: {metrics['scores_ens_train_list_formatted']}")
+        f"     -PNL                           : {metrics['cummulative_pnl_train']},             Split: {metrics['scores_ens_train_list_formatted']}")
     print(
         f"                                                    Winrate train %: {[f'{p:.2f}%' for p in metrics['winrates_train_by_fold']]}")
     print(
@@ -5884,7 +6099,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     print(f"     -% de trades (tp+fp)           : {metrics['tp_fp_percentage_val']:.2f}%")
     print(f"     -Différence (TP - FP)          : {metrics['tp_fp_diff_val']}")
     print(
-        f"     -PNL                           : {metrics['cummulative_pnl_val']},         Original: {metrics['scores_ens_val_list_formatted']}")
+        f"     -PNL                           : {metrics['cummulative_pnl_val']},             Split: {metrics['scores_ens_val_list_formatted']}")
     print(
         f"                                                     Winrate val %: {[f'{p:.2f}%' for p in metrics['winrates_val_by_fold']]}")
 
@@ -5922,6 +6137,10 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
                         results_directory, config,bestResult_dict)
 
     study_optuna.set_user_attr('bestResult_dict', bestResult_dict)
+
+    # Vérification de l'option use_pnl_theoric
+    #if metrics['cummulative_pnl_val'] > 8000 and contraints_reached:
+    #    raise ValueError("INFO : cummulative_pnl_val > 12000")
 
 
 
@@ -6068,6 +6287,130 @@ def calculate_vif(df):
     return vif_data
 
 
+import numpy as np
+import pandas as pd
+from numpy.linalg import LinAlgError
+
+
+def fast_vif(df):
+    """
+    Calcul rapide du VIF en utilisant l'inversion de la matrice de corrélation.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant uniquement les colonnes numériques
+
+    Returns:
+        pd.DataFrame: DataFrame contenant les features et leurs valeurs VIF correspondantes
+    """
+    df_numeric = df.select_dtypes(include=[np.number])
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = df_numeric.columns
+
+    try:
+        X = df_numeric.values
+        corr_matrix = np.corrcoef(X, rowvar=False)  # Matrice de corrélation
+        inv_corr_matrix = np.linalg.inv(corr_matrix)  # Inversion de la matrice
+
+        vif_data["VIF"] = np.diag(inv_corr_matrix)  # Extraction des VIFs depuis la diagonale
+    except LinAlgError:
+        vif_data["VIF"] = np.nan  # En cas de problème d'inversion de matrice
+
+    return vif_data
+import numpy as np
+import pandas as pd
+
+import numpy as np
+import pandas as pd
+from functools import reduce
+
+
+def compute_vif_fast(df, threshold):
+    """
+    Processus rapide de filtrage des features basé sur le VIF, avec gestion des labels et erreurs cohérente.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant uniquement les features numériques.
+        threshold (float): Seuil VIF au-delà duquel une feature est considérée comme trop colinéaire.
+
+    Returns:
+        pd.DataFrame: DataFrame contenant l'historique des VIF et le statut final des features.
+    """
+    df_numeric = df.select_dtypes(include=[np.number]).copy()
+    if df_numeric.empty:
+        print("⚠️ Aucune colonne numérique dans le dataset. Retour d'un DataFrame vide.")
+        return pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
+
+    vif_dfs = []
+    removed_features = []
+    retained_features = df_numeric.columns.tolist()
+    iteration_count = 1
+
+    with np.errstate(divide='ignore', invalid='ignore'):  # Supprime les warnings division par zéro
+        while True:
+            try:
+                vif_df = fast_vif(df_numeric)
+                vif_df.columns = ['Feature', f'VIF{iteration_count}']
+                vif_df[f'VIF{iteration_count}'] = pd.to_numeric(vif_df[f'VIF{iteration_count}'], errors='coerce')
+                vif_dfs.append(vif_df)
+
+                max_vif = vif_df[f'VIF{iteration_count}'].max()
+                if pd.isna(max_vif) or max_vif <= threshold:
+                    break
+
+                # Identifier la feature à supprimer
+                max_feature = vif_df.loc[vif_df[f'VIF{iteration_count}'].idxmax(), 'Feature']
+                print(f"[Itération {iteration_count}] Max VIF = {max_vif:.2f}, on retire {max_feature}")
+
+                # Suppression de la feature ayant le plus haut VIF
+                df_numeric.drop(columns=[max_feature], inplace=True)
+                removed_features.append(max_feature)
+                retained_features.remove(max_feature)
+
+                iteration_count += 1
+            except Exception as e:
+                print(f"⚠️ Erreur lors du calcul du VIF à l'itération {iteration_count}: {str(e)}")
+                break
+
+    # Si aucun calcul VIF n'a été effectué avec succès
+    if not vif_dfs:
+        vif_full = pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
+        return vif_full
+
+    # Construire un DataFrame avec l'historique des VIF
+    vif_full = reduce(lambda left, right: pd.merge(left, right, on='Feature', how='outer'), vif_dfs)
+
+    # Assurer que toutes les features originales sont dans le résultat
+    missing_features = set(df.columns) - set(vif_full['Feature'])
+    if missing_features:
+        missing_df = pd.DataFrame({'Feature': list(missing_features)})
+        for col in vif_full.columns:
+            if col != 'Feature':
+                missing_df[col] = 'n.a'
+        vif_full = pd.concat([vif_full, missing_df], ignore_index=True)
+
+    # Définir le statut de chaque feature
+    vif_full['Status'] = vif_full['Feature'].apply(
+        lambda x: 'Conservé' if x in retained_features else 'Non conservé'
+    )
+
+    # Nettoyage des valeurs manquantes dans l'historique des VIF
+    vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
+    for col in vif_columns:
+        vif_full[col] = vif_full[col].astype(object)
+
+    for feature in vif_full['Feature']:
+        feature_mask = vif_full['Feature'] == feature
+        for idx, col in enumerate(vif_columns):
+            if pd.isna(vif_full.loc[feature_mask, col]).values[0]:
+                vif_full.loc[feature_mask, col] = 'n.a'
+
+    # Réorganiser les colonnes pour un affichage cohérent
+    vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
+    vif_full = vif_full[['Feature'] + vif_columns_sorted + ['Status']]
+
+    return vif_full
+
+
 def compute_vif_and_remove_multicollinearity(df, threshold):
     """
     Processus itératif de filtrage des features basé sur le VIF.
@@ -6081,33 +6424,77 @@ def compute_vif_and_remove_multicollinearity(df, threshold):
     Returns:
         pd.DataFrame: DataFrame contenant l'historique des valeurs VIF et le statut final des features
     """
+    # Sélectionner uniquement les colonnes numériques
     X_train_bis = df.select_dtypes(include=[np.number]).copy()
+
+    # Nettoyer les valeurs infinies et NaN
+    X_train_bis = X_train_bis.replace([np.inf, -np.inf], np.nan)
+
+    # Remplacer les NaN par la moyenne de chaque colonne
+    for col in X_train_bis.columns:
+        if X_train_bis[col].isna().any():
+            col_mean = X_train_bis[col].mean()
+            # Si la moyenne est NaN (tous les éléments sont NaN), utiliser 0
+            if pd.isna(col_mean):
+                X_train_bis = X_train_bis.drop(columns=[col])
+                print(f"Colonne supprimée car toutes valeurs sont NaN: {col}")
+            else:
+                X_train_bis[col] = X_train_bis[col].fillna(col_mean)
+
     vif_dfs = []
-    iteration = 1
+    iteration_count = 1  # Initialisation du compteur
     removed_features = []
     retained_features = X_train_bis.columns.tolist()
 
-    # Boucle itérative de suppression des features avec VIF élevé
-    while True:
-        vif_df = calculate_vif(X_train_bis)
-        vif_df.columns = ['Feature', f'VIF{iteration}']
-        vif_df[f'VIF{iteration}'] = pd.to_numeric(vif_df[f'VIF{iteration}'], errors='coerce')
-        vif_dfs.append(vif_df)
+    # Boucle itérative avec gestion des avertissements
+    with np.errstate(divide='ignore', invalid='ignore'):
+        while True:
+            try:
+                vif_df = calculate_vif(X_train_bis)
+                vif_df.columns = ['Feature', f'VIF{iteration_count}']
+                vif_df[f'VIF{iteration_count}'] = pd.to_numeric(vif_df[f'VIF{iteration_count}'], errors='coerce')
+                vif_dfs.append(vif_df)
 
-        max_vif = vif_df[f'VIF{iteration}'].max()
-        if pd.isna(max_vif) or max_vif <= threshold:
-            break
-        else:
-            # Suppression de la feature avec le VIF le plus élevé
-            max_feature = vif_df.loc[vif_df[f'VIF{iteration}'].idxmax(), 'Feature']
-            X_train_bis = X_train_bis.drop(columns=[max_feature])
-            removed_features.append(max_feature)
-            retained_features.remove(max_feature)
-            iteration += 1
+                max_vif = vif_df[f'VIF{iteration_count}'].max()
+                if pd.isna(max_vif) or max_vif <= threshold:
+                    break
+                else:
+                    max_feature = vif_df.loc[vif_df[f'VIF{iteration_count}'].idxmax(), 'Feature']
+                    print(
+                        f"[Itération {iteration_count}] Max VIF = {max_vif}, on retire {max_feature}")  # Ajout du print
+                    X_train_bis = X_train_bis.drop(columns=[max_feature])
+                    removed_features.append(max_feature)
+                    retained_features.remove(max_feature)
+                    iteration_count += 1
+            except Exception as e:
+                print(f"Erreur lors du calcul VIF: {str(e)}")
+                break
+
+    # Si aucun calcul VIF n'a été effectué avec succès
+    if not vif_dfs:
+        vif_full = pd.DataFrame({'Feature': df.columns})
+        vif_full[f'VIF1'] = 'n.a'
+        vif_full['Status'] = 'Non calculé'
+        return vif_full
 
     # Construction du DataFrame de résultat avec l'historique VIF
     vif_full = reduce(lambda left, right: pd.merge(left, right, on='Feature', how='outer'), vif_dfs)
-    vif_full['Status'] = vif_full['Feature'].apply(lambda x: 'Conservé' if x in retained_features else 'Non conservé')
+
+    # Assurer que toutes les features originales sont dans le résultat
+    missing_features = set(df.columns) - set(vif_full['Feature'])
+    if missing_features:
+        missing_df = pd.DataFrame({'Feature': list(missing_features)})
+        for col in vif_full.columns:
+            if col != 'Feature':
+                missing_df[col] = 'n.a'
+        vif_full = pd.concat([vif_full, missing_df], ignore_index=True)
+
+    # Définir le statut
+    vif_full['Status'] = vif_full['Feature'].apply(
+        lambda x: 'Conservé' if x in retained_features else
+        'Non conservé' if x in removed_features else
+        'Non calculé'
+    )
 
     # Gestion des valeurs manquantes dans l'historique VIF
     vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
@@ -6161,46 +6548,369 @@ def compute_and_keep_correled(merged_X_Y):
 
     return corr_df
 
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
-def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="name dataset",
-                                   config=None, enable_vif_corr_mi=False):
+
+###############################################################################
+# Fonction mRMR - Minimum Redundancy Maximum Relevance
+###############################################################################
+def compute_mRMR_filtering(X, Y, config):
+    """
+    Implémentation simple de la méthode mRMR (Minimum Redundancy Maximum Relevance).
+
+    Args:
+        X (pd.DataFrame): DataFrame des features (numériques ou encodées).
+        Y (pd.Series): Série cible (peut être catégorielle ou continue).
+        config (dict):
+            - mrmr_n_features (int) : Nombre maximum de features à sélectionner.
+            - mrmr_score_threshold (float) : Seuil minimum pour le score mRMR
+                                             (pertinence - redondance).
+            - mi_method (str) : "classif" ou "regression" pour forcer le type
+                                de calcul de l'information mutuelle.
+              Si non spécifié, la fonction détermine automatiquement le mode
+              en fonction de la nature de Y.
+            - verbose (bool) : Si True, affiche la progression du traitement.
+
+    Returns:
+        selected (list): Liste des features retenues par la méthode mRMR.
+        mrmr_scores (dict): Dictionnaire {feature: score_mRMR_final}.
+                            Note : Certaines features peuvent rester à 0.0
+                            si elles n'ont jamais été évaluées ou sélectionnées.
+    """
+    import numpy as np
+    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+    from tqdm import tqdm
+    import time
+
+    # Paramètres par défaut
+    n_features_to_select = config.get("mrmr_n_features", X.shape[1])
+    score_threshold = config.get("mrmr_score_threshold", -np.inf)
+    verbose = True
+
+    if verbose:
+        print(f"🔍 Démarrage de la sélection mRMR (max {n_features_to_select} features)")
+        start_time = time.time()
+
+    # 1) Détermination automatique du type de mutual_info (classif ou regression)
+    if "mi_method" in config:
+        mi_method = config["mi_method"]
+    else:
+        # Détermination automatique si la cible est plutôt discrète/catégorielle
+        if (Y.nunique() <= 20 or Y.dtype == 'object' or
+                Y.dtype == 'category' or np.issubdtype(Y.dtype, np.integer)):
+            mi_method = "classif"
+        else:
+            mi_method = "regression"
+
+    if verbose:
+        print(f"✓ Méthode d'information mutuelle : {mi_method}")
+
+    # 2) Calcul de la pertinence : MI(feature; cible)
+    if verbose:
+        print("📊 Calcul de la pertinence (MI entre features et cible)...")
+
+    if mi_method == "classif":
+        relevance = mutual_info_classif(X, Y, random_state=0)
+    else:
+        relevance = mutual_info_regression(X, Y, random_state=0)
+
+    features = X.columns.tolist()
+    relevance_dict = {f: mi for f, mi in zip(features, relevance)}
+
+    if verbose:
+        print(f"✓ Pertinence calculée pour {len(features)} features")
+
+    # 3) Calcul de la matrice de redondance : MI(feature_i; feature_j)
+    n = len(features)
+    mi_matrix = np.zeros((n, n))
+
+    if verbose:
+        print(f"🔄 Calcul de la matrice de redondance ({n}x{n})...")
+        # Nombre total de paires à calculer
+        total_pairs = n * (n - 1) // 2
+        pbar = tqdm(total=total_pairs, desc="Calcul MI", disable=not verbose)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            # On utilise mutual_info_regression comme mesure "générique".
+            xi = X.iloc[:, i].values.reshape(-1, 1)
+            xj = X.iloc[:, j].values
+            mi_val = mutual_info_regression(xi, xj, random_state=0)[0]
+            mi_matrix[i, j] = mi_val
+            mi_matrix[j, i] = mi_val
+
+            if verbose:
+                pbar.update(1)
+
+    if verbose:
+        pbar.close()
+        print(f"✓ Matrice de redondance calculée")
+
+    # 4) Sélection mRMR itérative
+    selected = []
+    remaining = features.copy()
+
+    # Dictionnaire pour stocker le score mRMR de chaque feature
+    mrmr_scores = {f: 0.0 for f in features}
+
+    if verbose:
+        print("🔎 Début de la sélection itérative des features...")
+        selection_progress = tqdm(total=min(n_features_to_select, len(features)),
+                                  desc="Features sélectionnées", disable=not verbose)
+
+    # -- 4.1) Sélection initiale : la feature la plus pertinente
+    best_feature = max(remaining, key=lambda f: relevance_dict[f])
+    init_score = relevance_dict[best_feature]  # score = pertinence, redondance=0 (aucun feature sélectionné avant)
+
+    # Si même la feature la plus pertinente est en dessous du seuil, on s'arrête
+    if init_score < score_threshold:
+        if verbose:
+            print(f"⚠️ Arrêt: le score initial ({init_score:.4f}) est inférieur au seuil ({score_threshold})")
+        return [], mrmr_scores
+
+    selected.append(best_feature)
+    remaining.remove(best_feature)
+
+    # On enregistre son score mRMR initial (qui est égal à la pertinence à ce stade)
+    mrmr_scores[best_feature] = init_score
+
+    if verbose:
+        selection_progress.update(1)
+        print(f"  → Première feature sélectionnée: {best_feature} (score: {init_score:.4f})")
+
+    # -- 4.2) Boucle de sélection itérative
+    while remaining and len(selected) < n_features_to_select:
+        best_score = -np.inf
+        best_candidate = None
+
+        # Pour chaque feature restante, on calcule le score = pertinence - redondance_moyenne
+        for f in remaining:
+            rel = relevance_dict[f]
+            idx_f = features.index(f)
+            # Moyenne des MI entre f et les features déjà sélectionnées
+            redundancy = np.mean([mi_matrix[idx_f, features.index(s)] for s in selected])
+            mrmr_score = rel - redundancy
+
+            # Mise à jour du meilleur candidat
+            if mrmr_score > best_score:
+                best_score = mrmr_score
+                best_candidate = f
+
+        # Vérification du score par rapport au seuil
+        if best_candidate is None or best_score < score_threshold:
+            if verbose:
+                print(f"⚠️ Arrêt: aucune feature ne dépasse le seuil ({score_threshold})")
+            break
+
+        # Sélection de la feature best_candidate
+        selected.append(best_candidate)
+        remaining.remove(best_candidate)
+        mrmr_scores[best_candidate] = best_score
+
+        if verbose:
+            selection_progress.update(1)
+            if len(selected) % 5 == 0 or len(selected) == n_features_to_select:
+                print(f"  → {len(selected)}/{n_features_to_select} features sélectionnées")
+
+    if verbose:
+        selection_progress.close()
+        elapsed_time = time.time() - start_time
+        print(f"✅ Sélection terminée: {len(selected)} features retenues en {elapsed_time:.2f} secondes")
+        # Afficher les 5 meilleures features et leurs scores
+        top_features = sorted([(f, s) for f, s in mrmr_scores.items() if s > 0],
+                              key=lambda x: x[1], reverse=True)[:5]
+        print("📊 Top 5 features sélectionnées:")
+        for i, (feature, score) in enumerate(top_features, 1):
+            print(f"  {i}. {feature}: {score:.4f}")
+
+    # Retourne la liste des features retenues et le dictionnaire de scores
+    return selected, mrmr_scores
+
+
+
+###############################################################################
+# Calcule les scores de Fisher (ANOVA F-Test)
+###############################################################################
+from sklearn.feature_selection import f_classif
+def fisher_score_feature_selection(X: pd.DataFrame, Y: pd.Series, name: str, config: dict) -> pd.DataFrame:
+    """
+    Calcule les scores de Fisher (ANOVA F-Test) pour classer les features selon leur importance
+    à prédire la cible Y.
+
+    Args:
+        X (pd.DataFrame): DataFrame des features à analyser.
+        Y (pd.Series): Série cible à prédire (classification).
+        name (str): Nom du dataset ou contexte (pour affichage/log).
+        config (dict): Configuration avec les clés suivantes:
+            - "fisher_top_n_features" (int, optionnel): Nombre maximal de features à retourner.
+              Si None, retourne toutes les features.
+
+    Returns:
+        pd.DataFrame: DataFrame avec les colonnes suivantes :
+            - "Feature": nom des features.
+            - "Fisher_Score": le score Fisher associé à chaque feature.
+            - "p-value": la p-value correspondante, indiquant la significativité statistique.
+            Trié par Fisher Score décroissant.
+    """
+    fisher_top_n = config.get("fisher_top_n_features", None)
+
+    # Calcul du Fisher Score (ANOVA F-test)
+    fisher_scores, p_values = f_classif(X, Y)
+
+    # DataFrame des résultats
+    fisher_df = pd.DataFrame({
+        'Feature': X.columns,
+        'Fisher_Score': fisher_scores,
+        'p-value': p_values
+    })
+
+    # Trier par Fisher Score décroissant
+    fisher_df.sort_values(by='Fisher_Score', ascending=False, inplace=True)
+
+    # Sélection des top_n si spécifié
+    if fisher_top_n is not None:
+        fisher_df = fisher_df.head(fisher_top_n)
+
+    fisher_df.reset_index(drop=True, inplace=True)
+
+    print(f"\nFisher Score Feature Selection [{name}]:")
+    print(fisher_df)
+
+    return fisher_df
+
+
+import numpy as np
+import pandas as pd
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+import numpy as np
+import pandas as pd
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+
+def calculate_vif_optimized(df):
+    """
+    Calcule le VIF en gérant les erreurs NaN et inf.
+
+    Args:
+        df (pd.DataFrame): DataFrame contenant uniquement les colonnes numériques
+
+    Returns:
+        pd.DataFrame: DataFrame contenant les features et leurs VIF
+    """
+    df_numeric = df.select_dtypes(include=[np.number]).copy()
+
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = df_numeric.columns
+    vif_values = []
+
+    for i in range(df_numeric.shape[1]):
+        try:
+            vif = variance_inflation_factor(df_numeric.values, i)
+        except Exception as e:
+            print(f"⚠️ Erreur lors du calcul du VIF pour {df_numeric.columns[i]} : {str(e)}")
+            vif = np.nan  # On met NaN au lieu d'arrêter le programme
+        vif_values.append(vif)
+
+    vif_data["VIF"] = vif_values
+    return vif_data
+
+
+def compute_vif_optimized(df, threshold):
+    """
+    Processus itératif de filtrage des features basé sur le VIF (Version robuste).
+
+    Args:
+        df (pd.DataFrame): DataFrame d'entrée
+        threshold (float): Seuil VIF pour élimination des features
+
+    Returns:
+        pd.DataFrame: DataFrame contenant l'historique des VIF et le statut des features
+    """
+    df_numeric = df.select_dtypes(include=[np.number]).copy()
+    vif_dfs = []
+    removed_features = []
+
+    iteration_count = 1
+    while True:
+        try:
+            vif_df = calculate_vif_optimized(df_numeric)
+        except Exception as e:
+            print(f"❌ Erreur critique lors du calcul VIF à l'itération {iteration_count} : {str(e)}")
+            break
+
+        vif_df.columns = ['Feature', f'VIF{iteration_count}']
+        vif_dfs.append(vif_df)
+
+        max_vif = vif_df[f'VIF{iteration_count}'].max()
+
+        # Vérification des NaN : Si tous les VIF sont NaN, on arrête
+        if vif_df[f'VIF{iteration_count}'].isna().all():
+            print(f"🚨 Tous les VIF sont NaN à l'itération {iteration_count}, arrêt du processus.")
+            break
+
+        # Si le VIF max est NaN ou en dessous du seuil, on stoppe l'itération
+        if pd.isna(max_vif) or max_vif <= threshold:
+            print(f"✅ Seuil atteint : max_vif={max_vif}, arrêt du processus.")
+            break
+
+        # Suppression de la feature avec le VIF max
+        max_feature = vif_df.loc[vif_df[f'VIF{iteration_count}'].idxmax(), 'Feature']
+        print(f"[Itération {iteration_count}] Max VIF = {max_vif}, on retire {max_feature}")
+
+        df_numeric.drop(columns=[max_feature], inplace=True)
+        removed_features.append(max_feature)
+        iteration_count += 1
+
+    return pd.concat(vif_dfs, axis=1)
+
+
+###############################################################################
+# Fonction Gestion de la selection des features
+###############################################################################
+
+def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
+                                         config=None,
+                                         auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING,
+                                         is_compute_vif=False):
     """
     Analyse complète des features d'un DataFrame avec options de filtrage.
 
-    Cette fonction combine:
+    Cette fonction combine :
     1. L'analyse des valeurs manquantes et nulles
-    2. Le filtrage optionnel des features basé sur:
-       - VIF (multicolinéarité)
-       - Corrélation
-       - Information mutuelle
+    2. Le filtrage optionnel des features, selon auto_filtering_mode :
+       - VIF (multicolinéarité) + Corrélation + MI
+       - mRMR
+       - Aucun filtrage (simple affichage)
 
     Args:
         X (pd.DataFrame): DataFrame des features
-        Y (pd.Series): Série des cibles
-        selected_columns (list): Liste des colonnes à considérer
+        Y (pd.Series): Série cible
         name (str): Nom du dataset pour l'affichage
-        config (dict): Configuration des seuils et colonnes à exclure
-        enable_vif_corr_mi (bool): Active/désactive le filtrage des features
+        config (dict): Paramètres divers :
+            - vif_threshold, corr_threshold, mi_threshold
+            - mrmr_n_features, mrmr_score_threshold, mi_method
+            - excluded_columns_principal, excluded_columns_tradeDirection,
+              excluded_columns_CorrCol, excluded_columns_category
+        auto_filtering_mode (int): Mode de filtrage, voir AutoFilteringOptions.
 
     Returns:
-        list: Liste des colonnes conservées après filtrage si enable_vif_corr_mi=True
-        None: Si enable_vif_corr_mi=False
+        list: Liste des colonnes conservées après filtrage (si filtrage appliqué)
+        None: Si aucun filtrage n'est appliqué (mode NO_FILTERING)
     """
-    # Initialisation des seuils
-    vif_threshold = 0
-    corr_threshold = 0
-    mi_threshold = 0
 
-    if config is not None:
-        vif_threshold = config.get('vif_threshold', 0)
-        corr_threshold = config.get('corr_threshold', 0)
-        mi_threshold = config.get('mi_threshold', 0)
 
-    # Création du DataFrame d'analyse
+    if config is None:
+        config = {}
+
+    vif_threshold = config.get('vif_threshold', 0)
+    corr_threshold = config.get('corr_threshold', 0)
+    mi_threshold = config.get('mi_threshold', 0)
+    # Nouveau paramètre pour décider si on calcule le VIF
+
+    # Création du DataFrame d'analyse basique
     analysis_df = pd.DataFrame()
     analysis_df['Feature'] = X.columns
-
-    # Calcul des statistiques sur les NaN et zéros
     analysis_df['NaN Count'] = X.isna().sum().values
     analysis_df['NaN%'] = (X.isna().mean() * 100).values
     analysis_df['Zeros%'] = ((X == 0).mean() * 100).values
@@ -6208,50 +6918,68 @@ def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="
     analysis_df['non NaN'] = len(X) - analysis_df['NaN Count']
     analysis_df['non NaN%'] = 100 - analysis_df['NaN%']
 
-    # Liste pour stocker les colonnes conservées
-    retained_columns = selected_columns.copy()
+    # Initialisation
+    has_status = False
+    retained_columns = None
+    vif_full = None
 
-    if enable_vif_corr_mi:
-        # Application du filtrage VIF (itératif)
-        vif_full = compute_vif_and_remove_multicollinearity(X[selected_columns], vif_threshold)
-        analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
+    # Calcul du VIF (uniquement si demandé)
+    # Calcul du VIF (uniquement si demandé)
+    if is_compute_vif:
+        try:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                vif_full = compute_vif_fast(X, vif_threshold)  # Utilisation de la version optimisée
+                analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
 
-        # Mise à jour des colonnes conservées après VIF
-        retained_columns = vif_full[vif_full['Status'] == 'Conservé']['Feature'].tolist()
+                # Colonnes conservées après VIF
+                retained_columns = vif_full[vif_full['Status'] == 'Conservé']['Feature'].tolist()
+                if retained_columns:
+                    X_afterVIF = X[retained_columns]
+                else:
+                    print("⚠️ Aucune colonne conservée après VIF. Utilisation de X d'origine.")
+                    X_afterVIF = X.copy()  # Pour éviter qu'il soit vide
+                    exit(35)
+        except Exception as e:
+            print(f"Erreur lors du calcul: {str(e)}")
+            exit(36)
+            # Créer un DataFrame VIF vide mais bien structuré
+            vif_full = pd.DataFrame({'Feature': X.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
+            analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
 
-        X_afterVIF = X[retained_columns]
+            # Si erreur, garder toutes les colonnes initiales pour éviter un crash
+            X_afterVIF = X.copy()
+    else:
+        X_afterVIF = X.copy()  # Assurer que X_afterVIF existe toujours
 
-        # Filtrage par corrélation
+    # Vérification finale pour éviter toute erreur
+    if X_afterVIF.shape[1] == 0:
+        raise ValueError("🚨 Aucune colonne n'a été conservée après le filtrage VIF. Impossible de continuer.")
+
+    ############################################################################
+    # 1) Mode ENABLE_VIF_CORR_MI
+    ############################################################################
+    if auto_filtering_mode == AutoFilteringOptions.ENABLE_VIF_CORR_MI:
+        # -- Filtrage par corrélation --
         merged_dfVIF_target = pd.concat([X_afterVIF, Y], axis=1)
-        merged_dfVIF_target.columns = list(X_afterVIF.columns) + ['target']  # Pour être sûr
+        merged_dfVIF_target.columns = list(X_afterVIF.columns) + ['target']
         corr_df = compute_and_keep_correled(merged_dfVIF_target)
-
-        # Fusion des corrélations avec le DataFrame d'analyse
         analysis_df = pd.merge(analysis_df, corr_df, on='Feature', how='left')
 
-        # Calcul des scores d'information mutuelle
+        # -- Information Mutuelle (MI) univariée --
         if Y.nunique() <= 20 or Y.dtype == 'object' or Y.dtype == 'category' or np.issubdtype(Y.dtype, np.integer):
             mi_scores = mutual_info_classif(X_afterVIF, Y)
         else:
             mi_scores = mutual_info_regression(X_afterVIF, Y)
 
-        # Créer un DataFrame pour les scores MI
         mi_df = pd.DataFrame({'Feature': X_afterVIF.columns, 'mi': mi_scores})
-
-        # Fusionner les scores MI avec analysis_df
         analysis_df = pd.merge(analysis_df, mi_df, on='Feature', how='left')
 
-        # Récupération des colonnes VIF
+        # Identification de la dernière colonne VIF calculée
         vif_columns = [col for col in analysis_df.columns if col.startswith('VIF')]
-        vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)  # Tri décroissant
+        vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
+        last_vif_column = vif_columns_sorted[0] if vif_columns_sorted else None
 
-        # Identifier la dernière colonne VIF (la plus récente)
-        if vif_columns_sorted:
-            last_vif_column = vif_columns_sorted[0]
-        else:
-            last_vif_column = None
-
-        # Mise à jour du 'Status' pour qu'il soit True ou False
+        # Calcul d'un nouveau 'Status' (True/False) pour filtrer
         def compute_status(row):
             vif_value = row.get(last_vif_column, 'n.a')
             if vif_value != 'n.a' and not pd.isna(vif_value):
@@ -6260,51 +6988,151 @@ def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="
                 vif_ok = False
 
             corr_ok = (
-                    (abs(row.get('lr_target', 0)) > corr_threshold) or
-                    (abs(row.get('nlr_target', 0)) > corr_threshold)
+                (abs(row.get('lr_target', 0)) > corr_threshold) or
+                (abs(row.get('nlr_target', 0)) > corr_threshold)
             )
-
             mi_ok = row.get('mi', 0) > mi_threshold
-
-            status = vif_ok and (corr_ok or mi_ok)
-            return status
+            return vif_ok and (corr_ok or mi_ok)
 
         analysis_df['Status'] = analysis_df.apply(compute_status, axis=1)
-
-        # Mise à jour des colonnes conservées après application de toutes les conditions
-        retained_columns = analysis_df[analysis_df['Status']]['Feature'].tolist()
-
+        retained_columns = analysis_df.loc[analysis_df['Status'], 'Feature'].tolist()
         has_status = True
-    else:
-        vif_columns_sorted = []
-        has_status = False
-        # **Ajout de la colonne 'Status' avec une valeur par défaut**
-        analysis_df['Status'] = True  # Ou False, selon ce qui est logique pour votre cas
 
-    # Organisation des colonnes pour l'affichage
-    base_columns = ['Feature', 'NaN Count', 'NaN%', 'Zeros%', 'NaN+Zeros%', 'non NaN', 'non NaN%']
+    ############################################################################
+    # 2) Mode ENABLE_MRMR
+    ############################################################################
+    elif auto_filtering_mode == AutoFilteringOptions.ENABLE_MRMR:
+        # -- Calcul mRMR --
+        selected_features, mrmr_scores = compute_mRMR_filtering(X, Y, config)
+        # On ajoute une colonne pour le score mRMR
+        analysis_df['mrmr_score'] = analysis_df['Feature'].map(mrmr_scores)
+        # On ajoute une colonne 'Status' pour marquer les features retenues
+        analysis_df['Status'] = analysis_df['Feature'].apply(lambda f: f in selected_features)
+        retained_columns = selected_features
+        has_status = True
+
+
+    ############################################################################
+    # 3) Mode ENABLE_FISHER
+    ############################################################################
+    elif auto_filtering_mode == AutoFilteringOptions.ENABLE_FISHER:
+        # Calcul des scores Fisher en utilisant la fonction existante
+        fisher_df = fisher_score_feature_selection(X, Y, name, config)
+
+        # Problème ici: la fusion utilise les noms de colonnes tels quels,
+        # mais fisher_df utilise 'Fisher_Score' tandis que votre code cherche 'Fisher Score'
+        # Renommons les colonnes pour correspondre à ce que le code attend plus tard
+        fisher_df = fisher_df.rename(columns={
+            'Fisher_Score': 'Fisher_Score',  # Garder le même nom
+            'p-value': 'p-value'  # Garder le même nom
+        })
+
+        # Ajouter Fisher scores au DataFrame d'analyse (correction ici)
+        analysis_df = pd.merge(analysis_df, fisher_df, on='Feature', how='left')
+
+        # Détermination des colonnes à retenir selon seuil ou top_n
+        fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
+        fisher_pvalue_threshold = config.get('fisher_pvalue_threshold', 0.05)
+        fisher_top_n = config.get('fisher_top_n_features', None)
+
+        if fisher_top_n is not None:
+            selected_features = fisher_df.head(fisher_top_n)['Feature'].tolist()
+        else:
+            # sélection par seuil
+            selected_features = fisher_df[
+                (fisher_df['Fisher_Score'] >= fisher_score_threshold) &
+                (fisher_df['p-value'] <= fisher_pvalue_threshold)
+                ]['Feature'].tolist()
+
+        analysis_df['Status'] = analysis_df['Feature'].apply(lambda f: f in selected_features)
+        retained_columns = selected_features
+        has_status = True
+    ############################################################################
+    # 4) Mode NO_FILTERING
+    ############################################################################
+    elif auto_filtering_mode == AutoFilteringOptions.DISPLAY_MODE_NOFILTERING:
+        # On n'applique aucun filtrage, mais on a besoin d'une colonne Status
+        # pour conserver la logique d'affichage.
+        analysis_df['Status'] = True
+        has_status = False
+        retained_columns = None
+
+    else:
+        raise ValueError("auto_filtering_mode doit être une valeur de AutoFilteringOptions.")
+
+    ############################################################################
+    # Préparation des colonnes pour l'affichage
+    ############################################################################
+    base_columns = ['Feature']
     if has_status:
         base_columns.append('Status')
 
+    # On check s'il existe des colonnes de corrélation
     correlation_columns = []
     if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
         correlation_columns = ['lr_target', 'nlr_target']
+
+    # On check s'il existe une colonne 'mi' (info mutuelle)
     mi_column = []
     if 'mi' in analysis_df.columns:
         mi_column = ['mi']
 
-    if has_status:
-        analysis_df_columns = base_columns + correlation_columns + mi_column + vif_columns_sorted
-    else:
-        analysis_df_columns = base_columns + correlation_columns + mi_column
+    # On check s'il existe une colonne 'mrmr_score'
+    mrmr_col = []
+    if 'mrmr_score' in analysis_df.columns:
+        mrmr_col = ['mrmr_score']
 
-    # Ajustement pour éviter les KeyError
+    # Colonnes NaN
+    nan_columns = ['NaN Count', 'NaN%', 'Zeros%', 'NaN+Zeros%', 'non NaN', 'non NaN%']
+
+    # Colonnes VIF (si présentes)
+    vif_cols = [col for col in analysis_df.columns if col.startswith('VIF')]
+
+    # Colonnes Fisher (si présentes)
+    fisher_cols = []
+    if 'Fisher_Score' in analysis_df.columns:
+        fisher_cols.append('Fisher_Score')
+    if 'p-value' in analysis_df.columns:
+        fisher_cols.append('p-value')
+
+    # Construction de la liste finale des colonnes à afficher - NOUVEL ORDRE
+    # Nouvel ordre: Feature, (Status), Corr, MI, mRMR, NaN+stats, VIF, Fisher
+    analysis_df_columns = base_columns + correlation_columns + mi_column + mrmr_col + nan_columns + vif_cols + fisher_cols
+
+    # Vérification pour éviter KeyError si certaines colonnes n'existent pas
     analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
     analysis_df = analysis_df[analysis_df_columns]
 
-    # Formatage de l'affichage
-    base_format = [
-        "{:<48}",  # Feature
+    # Construction des en-têtes à afficher (même ordre que analysis_df_columns)
+    headers = base_columns.copy()  # Commence par Feature (et Status si inclus)
+    if correlation_columns:
+        headers += correlation_columns
+    if mi_column:
+        headers += mi_column
+    if mrmr_col:
+        headers += mrmr_col
+    headers += nan_columns
+    headers += vif_cols
+    headers += fisher_cols
+
+    # Définition des formats d'affichage (même ordre que headers)
+    # Format pour Feature
+    base_format = ["{:<53}"]
+    # Format pour Status (si présent)
+    if has_status:
+        base_format.append("{:>8}")
+
+    # Format pour corrélation
+    correlation_format = ["{:>12}", "{:>12}"] if correlation_columns else []
+
+    # Format pour la colonne 'mi'
+    mi_format = ["{:>12}"] if mi_column else []
+
+    # Format pour la colonne 'mrmr_score'
+    mrmr_format = ["{:>12}"] if mrmr_col else []
+
+    # Format pour les colonnes NaN
+    nan_format = [
         "{:>10}",  # NaN Count
         "{:>8}",  # NaN%
         "{:>8}",  # Zeros%
@@ -6312,69 +7140,120 @@ def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="
         "{:>12}",  # Val non NaN
         "{:>12}",  # Val non NaN%
     ]
-    if has_status:
-        base_format.append("{:>8}")  # Status
 
-    # Check if correlation columns exist
-    correlation_format = ["{:>12}", "{:>12}"] if correlation_columns else []
+    # Format pour les colonnes VIF
+    vif_formats = ["{:>12}"] * len(vif_cols)
 
-    # Check if mi column exists
-    mi_format = ["{:>12}"] if mi_column else []
+    # Format pour les colonnes Fisher
+    fisher_formats = ["{:>12}"] * len(fisher_cols)
 
-    vif_formats = ["{:>12}"] * len(vif_columns_sorted)
+    # Concaténation du format selon le même ordre que analysis_df_columns
+    full_format = base_format + correlation_format + mi_format + mrmr_format + nan_format + vif_formats + fisher_formats
 
-    full_format = base_format + correlation_format + mi_format + vif_formats
-
-    headers = [
-        "Feature",
-        "NaN Count",
-        "NaN%",
-        "Zeros%",
-        "NaN+Zeros%",
-        "Val non NaN",
-        "Val non NaN%",
-    ]
-    if has_status:
-        headers.append("Status")
-
-    if correlation_columns:
-        headers += correlation_columns
-
-    if mi_column:
-        headers += mi_column
-
-    headers += vif_columns_sorted
-
-    # Print header
+    # Impression de l'entête (UNE SEULE FOIS)
     header_line = ''
     for header, fmt in zip(headers, full_format):
         header_line += fmt.format(header) + ' '
     print(header_line.strip())
     print("-" * len(header_line))
 
-    # ANSI color codes
-    RED = '\033[91m'  # Red for features not retained
-    BLUE = '\033[94m'  # Blue for values exceeding thresholds
-    ORANGE = '\033[93m'  # Orange for excluded_columns_CorrCol
-    YELLOW = '\033[33m'  # Yellow for excluded_columns_category
-    RESET = '\033[0m'  # Reset color
+    # Codes couleur ANSI (optionnel)
+    RED = '\033[91m'
+    BLUE = '\033[94m'
+    ORANGE = '\033[93m'
+    YELLOW = '\033[33m'
+    RESET = '\033[0m'
 
-    # Color mapping for excluded columns
-    if config is not None:
-        excluded_columns_principal = config.get('excluded_columns_principal', [])
-        excluded_columns_tradeDirection = config.get('excluded_columns_tradeDirection', [])
-        excluded_columns_CorrCol = config.get('excluded_columns_CorrCol', [])
-        excluded_columns_category = config.get('excluded_columns_category', [])
-    else:
-        excluded_columns_principal = []
-        excluded_columns_tradeDirection = []
-        excluded_columns_CorrCol = []
-        excluded_columns_category = []
+    # Récupération des colonnes exclues éventuelles (pour colorer les lignes)
+    excluded_columns_principal = config.get('excluded_columns_principal', [])
+    excluded_columns_tradeDirection = config.get('excluded_columns_tradeDirection', [])
+    excluded_columns_CorrCol = config.get('excluded_columns_CorrCol', [])
+    excluded_columns_category = config.get('excluded_columns_category', [])
 
+    # Trier les features selon leur score mRMR avant affichage
+    if 'mrmr_score' in analysis_df.columns:
+        analysis_df = analysis_df.sort_values(by='mrmr_score', ascending=True)  # Trie du plus petit au plus grand
+    elif 'mi' in analysis_df.columns:
+        analysis_df['mi_na'] = analysis_df['mi'].isna()  # Crée une colonne booléenne : True si mi == n.a, sinon False
+        analysis_df = analysis_df.sort_values(by=['mi_na', 'mi'], ascending=[False,
+                                                                             True])  # Trie : 1) mi = n.a en premier, 2) puis mi croissant
+        analysis_df.drop(columns=['mi_na'], inplace=True)  # Supprime la colonne temporaire
+    elif 'Fisher_Score' in analysis_df.columns:
+        analysis_df = analysis_df.sort_values(by='Fisher_Score', ascending=False)  # Trie du plus grand au plus petit
+
+    # Début de la boucle qui affiche les lignes
     for idx, row in analysis_df.iterrows():
-        feature = row['Feature']
+        # Initialisation des tableaux pour les valeurs et couleurs
+        output_values = []
+        output_colors = []
 
-        # Get the basic stats
+        # Ajout des valeurs dans le MÊME ORDRE que headers
+
+        # Feature (toujours en premier)
+        output_values.append(row['Feature'])
+        output_colors.append('')
+
+        # Status (si présent)
+        if has_status:
+            status_str = 'True' if row['Status'] else 'False'
+            output_values.append(status_str)
+            output_colors.append('')
+
+        # Corrélation
+        if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
+            lr_val = row.get('lr_target', 'n.a')
+            nlr_val = row.get('nlr_target', 'n.a')
+
+            # lr_target
+            if lr_val != 'n.a' and not pd.isna(lr_val):
+                lr_formatted = f"{lr_val:.2f}"
+                output_values.append(lr_formatted)
+                output_colors.append(BLUE if abs(lr_val) > corr_threshold else '')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+
+            # nlr_target
+            if nlr_val != 'n.a' and not pd.isna(nlr_val):
+                nlr_formatted = f"{nlr_val:.2f}"
+                output_values.append(nlr_formatted)
+                output_colors.append(BLUE if abs(nlr_val) > corr_threshold else '')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+        else:
+            # Si pas de corrélation calculée
+            for _ in range(len(correlation_columns)):
+                output_values.append('n.a')
+                output_colors.append('')
+
+        # MI
+        if 'mi' in analysis_df.columns:
+            mi_val = row.get('mi', 'n.a')
+            if mi_val != 'n.a' and not pd.isna(mi_val):
+                mi_formatted = f"{mi_val:.4f}"
+                output_values.append(mi_formatted)
+                output_colors.append(BLUE if mi_val > mi_threshold else '')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+        else:
+            for _ in range(len(mi_column)):
+                output_values.append('n.a')
+                output_colors.append('')
+
+        # mrmr_score
+        if 'mrmr_score' in analysis_df.columns:
+            mrmr_val = row.get('mrmr_score', 0.0)
+            mrmr_score_threshold = config.get('mrmr_score_threshold', -np.inf)
+            output_values.append(f"{mrmr_val:.4f}")
+            output_colors.append(BLUE if mrmr_val > mrmr_score_threshold else '')
+        else:
+            for _ in range(len(mrmr_col)):
+                output_values.append('n.a')
+                output_colors.append('')
+
+        # NaN statistiques
         nan_count = row['NaN Count']
         nan_percentage = row['NaN%']
         zeros_percentage = row['Zeros%']
@@ -6382,82 +7261,19 @@ def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="
         non_nan_count = row['non NaN']
         non_nan_percentage = row['non NaN%']
 
-        # Initialize output values and colors
-        output_values = [
-            feature,
+        output_values.extend([
             int(nan_count),
             f"{nan_percentage:.2f}",
             f"{zeros_percentage:.2f}",
             f"{total_percentage:.2f}",
             int(non_nan_count),
-            f"{non_nan_percentage:.2f}",
-        ]
+            f"{non_nan_percentage:.2f}"
+        ])
+        output_colors.extend([''] * 6)  # 6 valeurs pour les statistiques NaN
 
-        output_colors = [''] * len(output_values)
-
-        if has_status:
-            status_value = 'True' if row['Status'] else 'False'
-            output_values.append(status_value)
-            output_colors.append('')
-        else:
-            status_value = 'n.a'  # Ou une autre valeur par défaut
-            output_values.append(status_value)
-            output_colors.append('')
-
-        # Handle correlation columns if they exist
-        if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
-            lr_target = row.get('lr_target', 'n.a')
-            nlr_target = row.get('nlr_target', 'n.a')
-
-            # lr_target
-            if lr_target != 'n.a' and not pd.isna(lr_target):
-                lr_target_formatted = f"{lr_target:.2f}"
-                output_values.append(lr_target_formatted)
-                if abs(lr_target) > corr_threshold:
-                    output_colors.append(BLUE)
-                else:
-                    output_colors.append('')
-            else:
-                output_values.append('n.a')
-                output_colors.append('')
-
-            # nlr_target
-            if nlr_target != 'n.a' and not pd.isna(nlr_target):
-                nlr_target_formatted = f"{nlr_target:.2f}"
-                output_values.append(nlr_target_formatted)
-                if abs(nlr_target) > corr_threshold:
-                    output_colors.append(BLUE)
-                else:
-                    output_colors.append('')
-            else:
-                output_values.append('n.a')
-                output_colors.append('')
-        else:
-            # If correlation columns do not exist
-            output_values.extend(['n.a', 'n.a'])
-            output_colors.extend(['', ''])
-
-        # Handle mi column if it exists
-        if 'mi' in analysis_df.columns:
-            mi_value = row.get('mi', 'n.a')
-            if mi_value != 'n.a' and not pd.isna(mi_value):
-                mi_formatted = f"{mi_value:.4f}"
-                output_values.append(mi_formatted)
-                if mi_value > mi_threshold:
-                    output_colors.append(BLUE)
-                else:
-                    output_colors.append('')
-            else:
-                output_values.append('n.a')
-                output_colors.append('')
-        else:
-            # If mi column does not exist
-            output_values.append('n.a')
-            output_colors.append('')
-
-        # Get vif_values
+        # VIF columns
         vif_values = []
-        for col in vif_columns_sorted:
+        for col in vif_cols:
             val = row.get(col, 'n.a')
             if isinstance(val, str) and val == 'n.a':
                 vif_values.append('n.a')
@@ -6466,51 +7282,77 @@ def displaytNan_vifMiCorrFiltering(X=None, Y=None, selected_columns=None, name="
             else:
                 vif_values.append('n.a')
 
-        # Append VIF values and their colors
         for idx_vif, vif_val in enumerate(vif_values):
             output_values.append(vif_val)
-            # For coloring VIF values
-            if idx_vif == 0 and vif_val != 'n.a':  # idx_vif == 0 corresponds to the last VIF column
-                if float(vif_val) > vif_threshold:
-                    # Color the last VIF column if value exceeds threshold
-                    output_colors.append(BLUE)
-                else:
+            # Colorer si le VIF > vif_threshold, par exemple
+            if idx_vif == 0 and vif_val not in ['n.a', 'NaN']:
+                try:
+                    if float(vif_val) > vif_threshold:
+                        output_colors.append(BLUE)
+                    else:
+                        output_colors.append('')
+                except ValueError:
                     output_colors.append('')
             else:
                 output_colors.append('')
 
-        # Color the entire row red if not retained
-        if has_status and not row['Status']:
-            row_color = RED
-        else:
-            row_color = ''
+        # Fisher values
+        if 'Fisher_Score' in analysis_df.columns:
+            fisher_score = row.get('Fisher_Score', 'n.a')
+            if fisher_score != 'n.a' and not pd.isna(fisher_score):
+                output_values.append(f"{fisher_score:.4f}")
+                # Définir un seuil pour colorer les valeurs importantes
+                fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
+                output_colors.append(BLUE if fisher_score > fisher_score_threshold else '')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
 
-        # Color coding based on config
-        if feature in excluded_columns_principal:
+        if 'p-value' in analysis_df.columns:
+            p_value = row.get('p-value', 'n.a')
+            if p_value != 'n.a' and not pd.isna(p_value):
+                output_values.append(f"{p_value:.4f}")
+                # Colorer les p-values significatives
+                p_value_threshold = config.get('fisher_pvalue_threshold', 0.05)
+                output_colors.append(BLUE if p_value <= p_value_threshold else '')
+            else:
+                output_values.append('n.a')
+                output_colors.append('')
+
+        # Couleur de la ligne suivant exclusions config
+        row_color = ''
+        if has_status and not row['Status']:
+            row_color = RED  # Les features non retenues auront la ligne en rouge
+
+        # Utiliser row['Feature'] au lieu de feature
+        feature_name = row['Feature']  # Définir la variable feature_name
+        if feature_name in excluded_columns_principal:
             row_color = RED
-        elif feature in excluded_columns_CorrCol:
+        elif feature_name in excluded_columns_CorrCol:
             row_color = ORANGE
-        elif feature in excluded_columns_tradeDirection:
+        elif feature_name in excluded_columns_tradeDirection:
             row_color = BLUE
-        elif feature in excluded_columns_category:
+        elif feature_name in excluded_columns_category:
             row_color = YELLOW
 
-        # Now, format and color each value
+        # Application de la couleur
         formatted_values = []
         for val, fmt, color_code in zip(output_values, full_format, output_colors):
-            formatted_value = fmt.format(val)
+            tmp = fmt.format(val)
             if color_code:
-                formatted_value = f"{color_code}{formatted_value}{RESET}"
+                tmp = f"{color_code}{tmp}{RESET}"
             elif row_color:
-                formatted_value = f"{row_color}{formatted_value}{RESET}"
-            formatted_values.append(formatted_value)
+                tmp = f"{row_color}{tmp}{RESET}"
+            formatted_values.append(tmp)
 
-        # Join the formatted values to form the output line
-        output_line = ' '.join(formatted_values)
-        print(output_line)
+        # Impression de la ligne
+        print(' '.join(formatted_values))
 
-    if enable_vif_corr_mi:
+    # Retourne la liste des colonnes retenues si un filtrage a été appliqué
+    if auto_filtering_mode in [AutoFilteringOptions.ENABLE_VIF_CORR_MI, AutoFilteringOptions.ENABLE_MRMR,
+                               AutoFilteringOptions.ENABLE_FISHER]:
         return retained_columns
+
     return None
 
 
@@ -6602,7 +7444,8 @@ def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
     elif chosen_scaler == scalerChoice.SCALER_MAXABS:
         scaler = MaxAbsScaler()
         scaler_name = "MaxAbsScaler"
-
+    else:
+        exit(98)
     # Fit sur train et transform sur les deux
     X_train_scaled = pd.DataFrame(
         scaler.fit_transform(X_train),
@@ -6630,7 +7473,23 @@ def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
         print("\nParamètres du RobustScaler:")
         print("Médianes:", scaler_params['center'])
         print("IQRs:", scaler_params['scale'])
-    else:
+    elif chosen_scaler == scalerChoice.SCALER_MINMAX:
+        scaler_params.update({
+            'min': dict(zip(X_train.columns, scaler.min_)),
+            'scale': dict(zip(X_train.columns, scaler.scale_))
+        })
+        print("\nParamètres du MinMaxScaler:")
+        print("Minimums:", scaler_params['min'])
+        print("Échelles:", scaler_params['scale'])
+    elif chosen_scaler == scalerChoice.SCALER_MAXABS:  # Ajout de cette condition
+        scaler_params.update({
+            'scale': dict(zip(X_train.columns, scaler.scale_)),
+            'max_abs': dict(zip(X_train.columns, scaler.max_abs_))
+        })
+        print("\nParamètres du MaxAbsScaler:")
+        print("Valeurs max absolues:", scaler_params['max_abs'])
+        print("Échelles:", scaler_params['scale'])
+    else:  # Pour StandardScaler ou autres
         scaler_params.update({
             'mean': dict(zip(X_train.columns, scaler.mean_)),
             'scale': dict(zip(X_train.columns, scaler.scale_))
@@ -7296,9 +8155,19 @@ def analyze_thresholds(
     plt.show()
 """
 
-def remove_nan_inf(X, y, dataset_name=""):
+
+def remove_nan_inf(X=None, y=None, df_pnl_data=None, dataset_name=""):
     """
-    Supprime les lignes contenant des NaN ou Inf dans X et les lignes correspondantes dans y.
+    Supprime les lignes contenant des NaN ou Inf dans X et les lignes correspondantes dans y et df_pnl_data.
+
+    Args:
+        X: DataFrame des features
+        y: Series des labels
+        df_pnl_data: Series des données PnL (optionnel)
+        dataset_name: Nom du dataset pour l'affichage des statistiques
+
+    Returns:
+        tuple: (X_clean, y_clean, df_pnl_data_clean, mask)
     """
     initial_count = len(X)
     mask = ~X.replace([np.inf, -np.inf], np.nan).isna().any(axis=1)
@@ -7306,6 +8175,11 @@ def remove_nan_inf(X, y, dataset_name=""):
 
     X_clean = X[mask]
     y_clean = y[mask]
+
+    # Nettoyage du df_pnl_data si fourni
+    df_pnl_data_clean = None
+    if df_pnl_data is not None:
+        df_pnl_data_clean = df_pnl_data[mask]
 
     lines_removed = len(removed_indices)
     percentage_removed = (lines_removed / initial_count) * 100
@@ -7315,7 +8189,10 @@ def remove_nan_inf(X, y, dataset_name=""):
     print(f"Nombre de trades supprimés : {lines_removed}")
     print(f"Pourcentage de trades supprimés : {percentage_removed:.2f}%")
 
-    return X_clean, y_clean, mask
+    if df_pnl_data is not None:
+        return X_clean, y_clean, df_pnl_data_clean, mask
+    else:
+        return X_clean, y_clean, mask
 
 
 def process_cv_results(cv_results, config, ENV=None, study=None):
@@ -7501,7 +8378,10 @@ def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
         None: Affiche les résultats directement.
     """
     # Calcul du PnL
-    pnl = tp * config['profit_per_tp'] + fp * config['loss_per_fp']
+    #pnl = tp * config['profit_per_tp'] + fp * config['loss_per_fp']
+
+    print(f"tp:{tp} | tp:{fp}")
+    #pnl=tp * config['profit_per_tp'] + fp * config['loss_per_fp']
 
     # Calcul des statistiques pour log-odds
     log_odds_min = np.min(pred_proba_log_odds)
@@ -7519,7 +8399,7 @@ def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
     total_trades = tp + fp
     print(f"   - Trades testés : {total_trades} trades pour {total_samples} échantillons")
     print(f"   - Confusion Matrix : TP: {tp}, FP: {fp}, FN: {fn}, TN: {tn}")
-    print(f"   - PnL sur X_test : {pnl:.2f}")
+    #print(f"   - PnL sur X_test : {pnl:.2f}")
     trade_percentage = (total_trades / total_samples) * 100
     print(f"   - % (trades testés / échantillons testés) : {trade_percentage:.2f}%")
 
@@ -7581,15 +8461,192 @@ def process_reg_slope_replacement(df, session_starts, windows_list, reg_feature_
     df_results : pd.DataFrame
         DataFrame contenant les valeurs mises à jour (remplacement des 0 par NaN).
     """
+    # Avant d'utiliser les colonnes
+    if "sc_reg_slope_30P" in df.columns and "sc_reg_slope_30P_2" not in df.columns:
+        df = df.rename(columns={"sc_reg_slope_30P": "sc_reg_slope_30P_2"})
     # Extraction dynamique des colonnes basées sur le préfixe donné
     reg_slopes_2d = np.column_stack([
-        df[f"{reg_feature_prefix}{w}P"].values for w in windows_list
+        df[f"{reg_feature_prefix}{w}P_2"].values for w in windows_list
     ]).astype(np.float64)
 
     # Appliquer la fonction pour remplacer les 0 par NaN
     results_2d = remplace_0_nan_reg_slope_p_2d(session_starts, reg_slopes_2d, windows_list)
 
     # Convertir en DataFrame avec les noms d'origine
-    df_results = pd.DataFrame(results_2d, columns=[f"{reg_feature_prefix}{w}P" for w in windows_list])
+    df_results = pd.DataFrame(results_2d, columns=[f"{reg_feature_prefix}{w}P_2" for w in windows_list])
 
     return df_results
+
+
+def check_lower_higher_bound_consistency(X_train, X_test, max_values_to_show=5):
+    """
+    Vérifie si les valeurs de X_test sont en dehors des bornes observées dans X_train.
+
+    Args:
+        X_train (pd.DataFrame): Les données d'entraînement.
+        X_test (pd.DataFrame): Les données de test à vérifier.
+        max_values_to_show (int): Nombre maximum de valeurs hors bornes à afficher.
+
+    Returns:
+        bool: True si un problème de cohérence des bornes est détecté, False sinon.
+
+    Raises:
+        ValueError: Si des valeurs dans X_test sont en dehors des bornes de X_train.
+    """
+    import pandas as pd
+    import numpy as np
+
+    # Convertir en DataFrames si nécessaire
+    if not isinstance(X_train, pd.DataFrame):
+        X_train = pd.DataFrame(X_train)
+
+    if not isinstance(X_test, pd.DataFrame):
+        X_test = pd.DataFrame(X_test, columns=X_train.columns)
+
+    is_coherence_ranges_problem = False
+
+    # Calculer les bornes pour chaque feature dans X_train
+    oob = {}
+    for feature in X_train.columns:
+        train_min = X_train[feature].min()
+        train_max = X_train[feature].max()
+
+        # Vérifier les valeurs en dessous du minimum
+        below_min_mask = X_test[feature] < train_min
+        below_min_count = below_min_mask.sum()
+
+        # Vérifier les valeurs au-dessus du maximum
+        above_max_mask = X_test[feature] > train_max
+        above_max_count = above_max_mask.sum()
+
+        # Si des valeurs sont hors bornes, ajouter les informations au dictionnaire
+        if below_min_count > 0 or above_max_count > 0:
+            oob[feature] = {
+                'train_min': train_min,
+                'train_max': train_max,
+                'below_min_count': below_min_count,
+                'below_min_values': X_test.loc[below_min_mask, feature].head(
+                    max_values_to_show).tolist() if below_min_count > 0 else [],
+                'above_max_count': above_max_count,
+                'above_max_values': X_test.loc[above_max_mask, feature].head(
+                    max_values_to_show).tolist() if above_max_count > 0 else []
+            }
+
+    # Générer les messages d'erreur et déterminer s'il y a un problème
+    error_messages = []
+    if oob:
+        error_messages.append(
+            "\nAvertissement : certaines features contiennent des valeurs en dehors des bornes observées dans X_train :")
+        for feature, info in oob.items():
+            feature_messages = [f"\nAnalyse de la feature '{feature}':"]
+            feature_messages.append(f"- Intervalle observé dans X_train : [{info['train_min']}, {info['train_max']}]")
+
+            if info['below_min_count'] > 0:
+                feature_messages.append(
+                    f"--> {info['below_min_count']} valeur(s) dans X_test sont inférieures au minimum de X_train.")
+                feature_messages.append(f"    Valeurs en dessous du minimum : {info['below_min_values']}")
+                is_coherence_ranges_problem = True
+            else:
+                feature_messages.append("--> Aucune valeur inférieure au minimum.")
+
+            if info['above_max_count'] > 0:
+                feature_messages.append(
+                    f"--> {info['above_max_count']} valeur(s) dans X_test sont supérieures au maximum de X_train.")
+                feature_messages.append(f"    Valeurs au-dessus du maximum : {info['above_max_values']}")
+                is_coherence_ranges_problem = True
+            else:
+                feature_messages.append("--> Aucune valeur supérieure au maximum.")
+
+            error_messages.extend(feature_messages)
+
+    # Lever une exception si un problème est détecté
+    #if is_coherence_ranges_problem:
+     #   raise ValueError("\n".join(error_messages) + "\nUn problème de valeurs hors bornes ou de distribution détecté")
+
+    return is_coherence_ranges_problem
+
+
+def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
+                               mask_train=None, mask_test=None,
+                               chosen_scaler=None, results_directory=None,
+                               config=None):
+    """
+    Applique le scaling aux données et gère la réinsertion potentielle des valeurs NaN/Inf.
+
+    Args:
+        X_train (DataFrame): Données d'entraînement X
+        X_test (DataFrame): Données de test X
+        y_train_label (Series): Labels d'entraînement
+        y_test_label (Series): Labels de test
+        mask_train (ndarray, optional): Masque indiquant les valeurs valides dans X_train
+        mask_test (ndarray, optional): Masque indiquant les valeurs valides dans X_test
+        chosen_scaler (int): Type de scaler à utiliser
+        results_directory (str): Répertoire pour sauvegarder le scaler
+        config (dict): Configuration additionnelle
+
+    Returns:
+        tuple: (X_train, X_test, y_train_label, y_test_label, scaler, scaler_params)
+    """
+    import os
+    import numpy as np
+
+    if config is None:
+        config = {}
+
+    print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+
+    # Sauvegarde des données originales pour réinsertion potentielle
+    X_train_original = X_train.copy()
+    X_test_original = X_test.copy()
+    y_train_label_original = y_train_label.copy()
+    y_test_label_original = y_test_label.copy()
+
+    save_scaler_dir = os.path.join(results_directory, 'optuna_results')
+
+    # Vérification de la cohérence des distributions
+    if 'check_distribution_coherence' in globals():
+        diff_features = check_distribution_coherence(X_train, X_test)
+        if diff_features:
+            print("Avertissement : certaines features ont des distributions très différentes entre X_train et X_test :")
+            for f, stats in diff_features.items():
+                print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
+
+    # Application du scaling
+    X_train_scaled, X_test_scaled, scaler, scaler_params = apply_scaling(
+        X_train,
+        X_test,
+        save_path=save_scaler_dir,
+        chosen_scaler=chosen_scaler
+    )
+
+    # Réinsertion des valeurs NaN et Inf si demandé
+    reinsert_nan_inf_afterScaling = config.get('reinsert_nan_inf_afterScaling', False)
+
+    if reinsert_nan_inf_afterScaling and mask_train is not None and mask_test is not None:
+        X_train_result = X_train_original.copy()
+        X_test_result = X_test_original.copy()
+        y_train_label_result = y_train_label_original
+        y_test_label_result = y_test_label_original
+
+        # Mise à jour uniquement des valeurs valides avec les données scalées
+        X_train_result[mask_train] = X_train_scaled
+        X_test_result[mask_test] = X_test_scaled
+
+        print("\nRéinsertion des valeurs NaN et Inf effectuée")
+        print(f"Train : {(~mask_train).sum()} lignes réinsérées")
+        print(f"Test : {(~mask_test).sum()} lignes réinsérées")
+    else:
+        X_train_result = X_train_scaled
+        X_test_result = X_test_scaled
+        y_train_label_result = y_train_label
+        y_test_label_result = y_test_label
+
+    # Vérification des tailles après scaling
+    if len(X_train_result) != len(y_train_label_result):
+        raise ValueError(f"Mismatch des tailles après scaling: "
+                         f"X_train ({len(X_train_result)}) et y_train_label ({len(y_train_label_result)})")
+    if len(X_test_result) != len(y_test_label_result):
+        raise ValueError(f"Mismatch des tailles après scaling: "
+                         f"X_test ({len(X_test_result)}) et y_test_label ({len(y_test_label_result)})")
+
+    return X_train_result, X_test_result, y_train_label_result, y_test_label_result, scaler, scaler_params

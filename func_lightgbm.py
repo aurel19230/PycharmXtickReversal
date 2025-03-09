@@ -2,6 +2,7 @@ import lightgbm as lgb
 
 from definition import *
 
+
 # Fonction objective personnalisée pour LightGBM
 def lgb_weighted_logistic_objective(w_p: float, w_n: float):
     def weighted_logistic_obj(preds, train_data):
@@ -45,12 +46,13 @@ def lgb_calculate_profitBased(y_true=None, y_pred_threshold=None, metric_dict=No
 
 # Métrique personnalisée pour LightGBM
 # Métrique personnalisée pour LightGBM
-def lgb_custom_metric_PNL(metric_dict=None, config=None):
-    def profit_metric(preds, train_data):
+def lgb_custom_metric_PNL(y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None,
+        metric_dict=None, config=None):
+    def profit_metric(preds, y_true_class_binaire):
         """
         LightGBM custom metric pour le profit
         """
-        y_true = train_data.get_label()
+        y_true_class_binaire = y_true_class_binaire.get_label()
 
         # Application de la sigmoid
         preds = 1.0 / (1.0 + np.exp(-preds))
@@ -66,8 +68,8 @@ def lgb_custom_metric_PNL(metric_dict=None, config=None):
 
         # Calcul du profit et des métriques
         total_profit, tp, fp = calculate_profitBased(
-            y_true=y_true,
-            y_pred_threshold=y_pred_threshold,
+            y_true_class_binaire=y_true_class_binaire,
+            y_pred_threshold=y_pred_threshold,y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
             metric_dict=metric_dict,
             config=config
         )
@@ -81,11 +83,11 @@ def lgb_custom_metric_PNL(metric_dict=None, config=None):
 def train_and_evaluate_lightgbm_model(
         X_train_cv=None,
         X_val_cv=None,
-        X_train_cv_pd=None,
-        X_val_cv_pd=None,
-        Y_train_cv=None,
+
+        y_train_cv=None,
         y_val_cv=None,
-        data=None,
+        y_pnl_data_train_cv=None,
+        y_pnl_data_val_cv_OrTest=None,
         params=None,
         model_weight_optuna=None,
         config=None,
@@ -95,223 +97,129 @@ def train_and_evaluate_lightgbm_model(
         train_pos=None,
         val_pos=None,
         log_evaluation=0,
-    ):
-    """
-    Train and evaluate a LightGBM model with custom metrics and objectives,
-    and integrate predictions, metrics computation, logging, and fold statistics.
-    """
-
-    w_p = model_weight_optuna['w_p']
-    w_n = model_weight_optuna['w_n']
-    num_boost_round = model_weight_optuna['num_boost_round']
-    custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
-    custom_metric_eval=config.get('custom_metric_eval', 13)
-    evals_result = {}
-
-
-    # Calcul des poids pour l'ensemble d'entraînement
-    N0 = np.sum(Y_train_cv == 0)
-    N1 = np.sum(Y_train_cv == 1)
-    N = len(Y_train_cv)
-
-    w_0 = N / N0
-    w_1 = N / N1
-
-    sample_weights_train = np.where(Y_train_cv == 1, w_1, w_0)
-    sample_weights_val = np.ones(len(y_val_cv))  # Pas pondéré pour la validation
+):
+    # Calcul des poids
+    sample_weights_train, sample_weights_val = compute_sample_weights(y_train_cv, y_val_cv)
 
     # Création des datasets LightGBM avec les poids
-    ltrain = lgb.Dataset(X_train_cv, label=Y_train_cv, weight=sample_weights_train)
+    ltrain = lgb.Dataset(X_train_cv, label=y_train_cv, weight=sample_weights_train)
     lval = lgb.Dataset(X_val_cv, label=y_val_cv, weight=sample_weights_val)
 
-    # Configuration des paramètres
+    # Configuration des paramètres selon l'objectif
+    custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
     if custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED:
         params.update({
-            'objective': lgb_weighted_logistic_objective(w_p, w_n),
+            'objective': lgb_weighted_logistic_objective(model_weight_optuna['w_p'], model_weight_optuna['w_n']),
             'metric': None,
             'device_type': 'cpu'
         })
-
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_BINARY:
-        # Adapter la métrique selon vos besoins
-        params.update({
-            'objective': 'binary',
-            'metric': None,
-            'device_type': 'cpu'
-
-        })
+        params.update({'objective': 'binary', 'metric': None, 'device_type': 'cpu'})
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY:
-        # Adapter la métrique selon vos besoins
-        params.update({
-            'objective': 'cross_entropy',
-            'metric': None,
-            'device_type': 'cpu'
-
-        })
+        params.update({'objective': 'cross_entropy', 'metric': None, 'device_type': 'cpu'})
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY_LAMBDA:
-        # Adapter la métrique selon vos besoins
-        params.update({
-            'objective': 'cross_entropy_lambda',
-            'metric': None,
-            'device_type': 'cpu'
-
-        })
+        params.update({'objective': 'cross_entropy_lambda', 'metric': None, 'device_type': 'cpu'})
     else:
         raise ValueError("Choisir une fonction objective / Fonction objective non reconnue")
 
-    if (custom_metric_eval==model_custom_metric.LGB_CUSTOM_METRIC_PNL):
-        custom_metric = lgb_custom_metric_PNL(metric_dict=model_weight_optuna,config=config)
+    if config.get('custom_metric_eval', 13) == model_custom_metric.LGB_CUSTOM_METRIC_PNL:
+        custom_metric = lgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
+                                              metric_dict=model_weight_optuna, config=config)
     else:
-        params.update({ 'metric': ['auc', 'binary_logloss']})
-
-
+        params.update({'metric': ['auc', 'binary_logloss']})
 
     params['early_stopping_rounds'] = config.get('early_stopping_rounds', 13)
     params['verbose'] = -1
 
-    # Entraînement du modèle
+    evals_result = {}
     current_model = lgb.train(
         params=params,
         train_set=ltrain,
-        num_boost_round=num_boost_round,
+        num_boost_round=model_weight_optuna['num_boost_round'],
         valid_sets=[ltrain, lval],
         valid_names=['train', 'eval'],
         feval=custom_metric,
         callbacks=[lgb.record_evaluation(evals_result),
-        lgb.log_evaluation(period=log_evaluation)]  # Affiche les métriques toutes les 10 itérations
+                   lgb.log_evaluation(period=log_evaluation)]
     )
 
-    # Extraction des scores
-    if custom_metric_eval == model_custom_metric.LGB_CUSTOM_METRIC_PNL:
-        eval_scores = evals_result['eval']['custom_metric_PNL']
-        train_scores = evals_result['train']['custom_metric_PNL']
-    else:
-        eval_scores = evals_result['eval']['auc']
-        train_scores = evals_result['train']['auc']
-        exit(35)
+    # Extraction de la meilleure itération
+    best_iteration, best_idx, val_best, train_best = get_best_iteration(evals_result,
+                                                                        config.get('custom_metric_eval', 13))
 
-    # Détermination de la meilleure itération
-    val_bestIdx_custom_metric_pnl = max(eval_scores)
-    val_score_bestIdx = eval_scores.index(val_bestIdx_custom_metric_pnl)
-    best_iteration = val_score_bestIdx + 1
-    train_bestIdx_custom_metric_pnl = train_scores[val_score_bestIdx]
+    #print(evals_result)
 
-    print(evals_result)
-    print(
-        f"best_iteration:{best_iteration} | val_bestIdx_custom_metric_pnl:{val_bestIdx_custom_metric_pnl} | best_iteration:{train_bestIdx_custom_metric_pnl}", )
+    # Prédictions et métriques
+    val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
+        predict_and_compute_metrics(model=current_model, X_data=X_val_cv, y_true=y_val_cv,
+                                    best_iteration=best_iteration, threshold=model_weight_optuna['threshold'],
+                                    config=config)
 
-    val_pred_proba, val_pred_proba_log_odds,val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = predict_and_compute_metrics(
-        model=current_model,
-        X_data=X_val_cv,
-        y_true=y_val_cv,
-        best_iteration=best_iteration,
-        threshold=model_weight_optuna['threshold'],
-        config=config
-    )
+    y_train_predProba, train_pred_proba_log_odds, train_pred, (tn_train, fp_train, fn_train, tp_train), Y_train_cv = \
+        predict_and_compute_metrics(model=current_model, X_data=X_train_cv, y_true=y_train_cv,
+                                    best_iteration=best_iteration, threshold=model_weight_optuna['threshold'],
+                                    config=config)
 
-    # Pour l'entraînement
-    y_train_predProba, train_pred_proba_log_odds,train_pred, (tn_train, fp_train, fn_train, tp_train), Y_train_cv = predict_and_compute_metrics(
-        model=current_model,
-        X_data=X_train_cv,
-        y_true=Y_train_cv,
-        best_iteration=best_iteration,
-        threshold=model_weight_optuna['threshold'],
-        config=config
-    )
-    # Métriques val & train
+
+
+    # Construction des métriques
     val_metrics = {
         'tp': tp_val,
         'fp': fp_val,
         'tn': tn_val,
         'fn': fn_val,
         'total_samples': len(y_val_cv),
-        'val_bestIdx_custom_metric_pnl': val_bestIdx_custom_metric_pnl,
+        'val_bestIdx_custom_metric_pnl': val_best,
         'best_iteration': best_iteration
     }
-
     train_metrics = {
         'tp': tp_train,
         'fp': fp_train,
         'tn': tn_train,
         'fn': fn_train,
         'total_samples': len(Y_train_cv),
-        'train_bestIdx_custom_metric_pnl': train_bestIdx_custom_metric_pnl
+        'train_bestIdx_custom_metric_pnl': train_best
     }
-
-    # Calcul winrate et trades
+    #print(
+    #   f"Val metrics: tp={val_metrics['tp']}, fp={val_metrics['fp']}, tn={val_metrics['tn']}, fn={val_metrics['fn']}, samples={val_metrics['total_samples']}, best_pnl={val_metrics['val_bestIdx_custom_metric_pnl']:.4f}, best_iter={val_metrics['best_iteration']}")
+    #print(
+    #   f"Train metrics: tp={train_metrics['tp']}, fp={train_metrics['fp']}, tn={train_metrics['tn']}, fn={train_metrics['fn']}, samples={train_metrics['total_samples']}, best_pnl={train_metrics['train_bestIdx_custom_metric_pnl']:.4f}")
     tp_fp_tn_fn_sum_val = tp_val + fp_val + tn_val + fn_val
     tp_fp_tn_fn_sum_train = tp_train + fp_train + tn_train + fn_train
     tp_fp_sum_val = tp_val + fp_val
     tp_fp_sum_train = tp_train + fp_train
 
-    # Calcul de l'écart en pourcentage de la distribution train vs sample
-    train_trades_samples_perct=round(tp_fp_sum_train / tp_fp_tn_fn_sum_train * 100, 2) if tp_fp_tn_fn_sum_train != 0 else 0.00
-    val_trades_samples_perct= round(tp_fp_sum_val / tp_fp_tn_fn_sum_val * 100,2) if tp_fp_tn_fn_sum_val != 0 else 0.00
-    perctDiff_ratioTradeSample_train_val = abs(calculate_ratio_difference(train_trades_samples_perct,val_trades_samples_perct,config))
+    train_trades_samples_perct = round(tp_fp_sum_train / tp_fp_tn_fn_sum_train * 100,
+                                       2) if tp_fp_tn_fn_sum_train else 0.00
+    val_trades_samples_perct = round(tp_fp_sum_val / tp_fp_tn_fn_sum_val * 100, 2) if tp_fp_tn_fn_sum_val else 0.00
+    perctDiff_ratioTradeSample_train_val = abs(
+        calculate_ratio_difference(train_trades_samples_perct, val_trades_samples_perct, config))
+    winrate_train = compute_winrate_safe(tp_train, tp_fp_sum_train, config)
+    winrate_val = compute_winrate_safe(tp_val, tp_fp_sum_val, config)
+    ratio_difference = abs(calculate_ratio_difference(winrate_train, winrate_val, config))
 
-    winrate_train=compute_winrate_safe(tp_train, tp_fp_sum_train, config)
-    winrate_val=compute_winrate_safe(tp_val, tp_fp_sum_val, config)
-    ratio_difference = abs(calculate_ratio_difference(winrate_train, winrate_val,config))
-
-    # Compilation des stats du fold
-    fold_stats = {
-        'fold_num': fold_num,
-        'best_iteration': best_iteration,
-        'train_pred_proba_log_odds': train_pred_proba_log_odds,
-        'train_metrics': train_metrics,
-        'train_winrate': winrate_train,
-        'train_trades': tp_fp_sum_train,
-        'train_samples': tp_fp_tn_fn_sum_train,
-        'train_size': len(train_pos) if train_pos is not None else None,
-        'train_trades_samples_perct':train_trades_samples_perct ,
-
-        'val_metrics': val_metrics,
-        'val_winrate': winrate_val,
-        'val_trades': tp_fp_sum_val,
-        'val_samples': tp_fp_tn_fn_sum_val,
-        'val_pred_proba_log_odds': val_pred_proba_log_odds,
-        'val_size': len(val_pos) if val_pos is not None else None,
-         'val_trades_samples_perct': val_trades_samples_perct,
-
-        'perctDiff_winrateRatio_train_val':ratio_difference,
-        'perctDiff_ratioTradeSample_train_val':perctDiff_ratioTradeSample_train_val
-    }
-
+    # Compilation des statistiques du fold
+    fold_stats = compile_fold_stats(
+        fold_num, best_iteration, train_pred_proba_log_odds, train_metrics, winrate_train,
+        tp_fp_sum_train, tp_fp_tn_fn_sum_train, train_best, train_pos, train_trades_samples_perct,
+        val_pred_proba_log_odds, val_metrics, winrate_val, tp_fp_sum_val, tp_fp_tn_fn_sum_val,
+        val_best, val_pos, val_trades_samples_perct, ratio_difference, perctDiff_ratioTradeSample_train_val
+    )
     if fold_stats_current is not None:
         fold_stats.update(fold_stats_current)
 
-    # Logging des métriques si souhaité
+    debug_info = compile_debug_info(model_weight_optuna, config, val_pred_proba, y_train_predProba)
 
-
-    # Au début du script, définir xp en fonction du device
-    xp = np if config['device_'] != 'cuda' else cp  # cp pour cupy, np pour numpy
-
-    # Ensuite le code peut être simplifié en :
-    debug_info = {
-        'threshold_used': model_weight_optuna['threshold'],
-        'pred_proba_ranges': {
-            'val': {
-                'min': float(xp.min(val_pred_proba)),
-                'max': float(xp.max(val_pred_proba))
-            },
-            'train': {
-                'min': float(xp.min(y_train_predProba)),
-                'max': float(xp.max(y_train_predProba))
-            }
-        }
-    }
-
-
-    # Retour exact comme spécifié
     return {
         'current_model': current_model,
-        'fold_raw_data':fold_raw_data,
-        'y_train_predProba':y_train_predProba,
+        'fold_raw_data': fold_raw_data,
+        'y_train_predProba': y_train_predProba,
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,
         'fold_stats': fold_stats,
         'evals_result': evals_result,
         'best_iteration': best_iteration,
-        'val_score_bestIdx': val_score_bestIdx,
+        'val_score_bestIdx': best_idx,
         'debug_info': debug_info,
     }
+

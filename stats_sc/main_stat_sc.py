@@ -6,8 +6,10 @@ from standard_stat_sc import *
 from definition import *
 from func_standard import *
 
-DIRECTORY_PATH = r"C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\\\5_0_4TP_0SL\\merge_old"
-FILE_NAME_ = "Step5_5_0_4TP_0SL_050125_200125_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+FILE_NAME_ = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\\merge_I1_I2"
+
+
 FILE_PATH = os.path.join(DIRECTORY_PATH, FILE_NAME_)
 
 df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
@@ -112,30 +114,36 @@ features_conditions = {
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': -1, 'max': 0.55, 'active': False}],
-'sc_reg_std_15P': [
+'sc_reg_std_15P_2': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 1.15, 'max': 22, 'active': False}],
+        {'type': 'between', 'min': 0.65, 'max': 22, 'active': False}],
 'sc_reg_slope_5P': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': -1, 'max': 0.9, 'active': False}],
-'sc_reg_std_5P': [
+'sc_reg_std_5P_2': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': 0.55, 'max': 5, 'active': False}],
 'timeElapsed2LastBar': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 2.5, 'max': 25000, 'active': True}],
+        {'type': 'between', 'min': 2.5, 'max': 25000, 'active': False
+         }],
 'cumDOM_AskBid_avgRatio': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min':  0.82, 'max': 190.06, 'active': True}],
+        {'type': 'between', 'min':  0.82, 'max': 190.06, 'active': False}],
 'cumDOM_AskBid_pullStack_avgDiff_ratio': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 3.87, 'max':  20.15, 'active': True}],
+        {'type': 'between', 'min': 2.42, 'max':  6.66, 'active': True}],
+
+'ratio_volRevMove_volImpulsMove': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': 3.21, 'max':  3.82, 'active': True}],
 }
 
 

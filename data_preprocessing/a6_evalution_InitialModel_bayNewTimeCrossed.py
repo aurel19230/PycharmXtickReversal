@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple
 from datetime import datetime
 import optuna
 from colorama import Fore, Style, init
-from func_standard import detect_environment
+from func_standard import detect_environment,apply_data_feature_scaling
 from definition import *
 import time
 
@@ -77,13 +77,12 @@ from func_standard import (print_notification,
                            calculate_weighted_adjusted_score_custom,
                            scalerChoice,
                            reTrain_finalModel_analyse, init_dataSet,best_modellastFold_analyse,
-                           calculate_normalized_objectives,
+                           calculate_normalized_pnl_objectives,
                            run_cross_validation,
                            setup_model_params_optuna, setup_model_weight_optuna, cv_config,
-                           displaytNan_vifMiCorrFiltering,
-                           load_features_and_sections, apply_scaling, manage_rfe_selection,
-                           check_distribution_coherence, check_value_ranges, setup_cv_method,
-                           calculate_constraints_optuna, remove_nan_inf, add_session_id, process_cv_results)
+                           load_features_and_sections, manage_rfe_selection,
+                           setup_cv_method,
+                           calculate_constraints_optuna, add_session_id, process_cv_results)
 
 # Après le redémarrage, on peut importer les packages
 from colorama import Fore, Style, init
@@ -197,10 +196,10 @@ from typing import Iterator, Optional, Tuple, Union
 from numbers import Integral
 
 
-def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,df_pnl_data_train=None,
+def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,y_pnl_data_train=None,
                      X_train_full=None, device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
                      model_weight_optuna=None, weight_param=None, random_state_seed_=None, is_log_enabled=None,
-                     cv_method=cv_config.K_FOLD, selected_columns=None, model=None, ENV='pycharm'):
+                     cv_method=cv_config.K_FOLD,  model=None, ENV='pycharm'):
     """
     Fonction d'objectif pour Optuna, incluant l’exécution d’une cross-validation,
     la conversion GPU/CPU, l’extraction des métriques et le calcul des objectifs finaux.
@@ -251,7 +250,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
             X_train=X_train,
             X_train_full=X_train_full,
             y_train_label=y_train_label,
-            df_pnl_data_train=df_pnl_data_train,
+            y_pnl_data_train=y_pnl_data_train,
             df_init_candles=df_init_candles,
             trial=trial,
             params=params_optuna,
@@ -509,7 +508,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
 
     # 12) Calcul des objectifs finaux
-    objectives = calculate_normalized_objectives(
+    objectives = calculate_normalized_pnl_objectives(
         tp_train_list=tp_train_by_fold,
         fp_train_list=fp_train_by_fold,
         tp_val_list=tp_val_by_fold,
@@ -517,7 +516,6 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
         scores_train_list=train_bestIdx_custom_metric_pnl,
         scores_val_list=val_bestIdx_custom_metric_pnl,
         fold_stats=fold_stats,
-        scale_objectives=False,
         use_imbalance_penalty=use_imbalance_penalty
     )
     raw_metrics = objectives['raw_metrics']
@@ -556,8 +554,9 @@ def train_and_evaluate_model(
     cv_method = config.get('cv_method', cv_config.K_FOLD)
     # optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
-    selected_columns = config.get('selected_columns', None)
-    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+    selected_columns_manual = config.get('selected_columns_manual', None)
+    if selected_columns_manual is None:
+        raise ValueError("La configuration doit contenir la clé 'selected_columns_manual'.")
     model = config.get('model_type', modelType.XGB)
 
     zeros = (df_init_features['class_binaire'] == 0).sum()
@@ -567,148 +566,121 @@ def train_and_evaluate_model(
     print("df_init_features:")
     print(df_init_features)
 
+    print(f"Shape de df_init_features avant filtrage  (99, mannuel des features): {df_init_features.shape}")
+
     (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
-     X_train, y_train_label, X_test, y_test_label,df_pnl_data_train,df_pnl_data_test,
+     X_train, y_train_label, X_test, y_test_label,y_pnl_data_train,y_pnl_data_test,
      nb_SessionTrain, nb_SessionTest, nan_value) = (
         init_dataSet(df_init_features=df_init_features ,nanvalue_to_newval=nanvalue_to_newval,
                      config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
 
-    print(
-        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
-
-    print(f"Dimensions de X_train: {X_train.shape} (lignes, colonnes)")
-
-    print(f"Nb de features après exlusion manuelle: {len(selected_columns)}\n")
-
-    # Affichage des informations sur les NaN et zéros dans chaque colonne
-    print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
-    displaytNan_vifMiCorrFiltering(X=X_train_full, selected_columns=selected_columns, name="X_train_full",
-                                   config=config)
-
-    print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
-    displaytNan_vifMiCorrFiltering(X=X_train, selected_columns=selected_columns, name="X_train",
-                                   config=config)
-
-    if chosen_scaler != scalerChoice.SCALER_DISABLE:
-        # Sauvegarde des données originales pour réinsertion potentielle
-        X_train_original = X_train
-        X_test_original = X_test
-        y_train_label_original = y_train_label
-        y_test_label_original = y_test_label
-
-        # Nettoyage des NaN et Inf
-        X_train, y_train_label, mask_train = remove_nan_inf(X_train, y_train_label, "train")
-        X_test, y_test_label, mask_test = remove_nan_inf(X_test, y_test_label, "test")
-
-        save_sacler_dir = os.path.join(results_directory, 'optuna_results')
-
-        is_coherence_ranges_problem = False
-        # Vérification de la cohérence des distributions
-        diff_features = check_distribution_coherence(X_train, X_test)
-        if diff_features:
-            print("Avertissement : certaines features ont des distributions très différentes entre X_train et X_test :")
-            for f, stats in diff_features.items():
-                print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
-
-        # Vérification des bornes
-        oob = check_value_ranges(X_train, X_test)
-        if oob:
-            print(
-                "Avertissement : certaines features contiennent des valeurs en dehors des bornes observées dans X_train :")
-            for f, vals in oob.items():
-                print(f"\nFeature: {f}")
-                print(f"Valeurs sous le min ({vals['train_min']}): {vals['below_min_count']}")
-                if vals['below_min_count'] > 0:
-                    print(f"Liste des valeurs sous le min: {vals['below_min_values']}")
-                print(f"Valeurs au-dessus du max ({vals['train_max']}): {vals['above_max_count']}")
-                if vals['above_max_count'] > 0:
-                    print(f"Liste des valeurs au-dessus du max: {vals['above_max_values']}")
-
-        if is_coherence_ranges_problem:
-            raise ValueError("Un problème de valeurs hors bornes ou de distribution détecté")
-
-        # Application du scaling
-        X_train_scaled, X_test_scaled, scaler, scaler_params = apply_scaling(
-            X_train,
-            X_test,
-            save_path=save_sacler_dir,
-            chosen_scaler=chosen_scaler
-        )
-        print("\nScaler actif\n")
-
-        # Réinsertion des valeurs NaN et Inf si demandé
-        reinsert_nan_inf_afterScaling = config.get('reinsert_nan_inf_afterScaling', False)
-
-        if reinsert_nan_inf_afterScaling:
-            X_train = X_train_original.copy()
-            X_test = X_test_original.copy()
-            y_train_label = y_train_label_original
-            y_test_label = y_test_label_original
-
-            # Mise à jour uniquement des valeurs valides avec les données scalées
-            X_train[mask_train] = X_train_scaled
-            X_test[mask_test] = X_test_scaled
-
-            print("\nRéinsertion des valeurs NaN et Inf effectuée")
-            print(f"Train : {(~mask_train).sum()} lignes réinsérées")
-            print(f"Test : {(~mask_test).sum()} lignes réinsérées")
-        else:
-            X_train = X_train_scaled
-            X_test = X_test_scaled
-    else:
-        print("\nPas de scaler actif\n")
-
-    if len(X_train) != len(y_train_label):
-        raise ValueError(f"Mismatch des tailles (pas de scaler): "
-                         f"X_train ({len(X_train)}) et y_train_label ({len(y_train_label)})")
-    if len(X_test) != len(y_test_label):
-        raise ValueError(f"Mismatch des tailles (pas de scaler): "
-                         f"X_test ({len(X_test)}) et y_test_label ({len(y_test_label)})")
-
-    print(f"Shape de X_train : {X_train.shape}")
-    print(f"Shape de X_test : {X_test.shape}")
-
-    enable_vif_corr_mi = config.get('enable_vif_corr_mi', None)
-    if enable_vif_corr_mi:
-        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorrFiltering(X=X_train, Y=y_train_label,
-                                                                                  selected_columns=selected_columns,
-                                                                                  name="X_train", config=config,
-                                                                                  enable_vif_corr_mi=enable_vif_corr_mi)
-        print("\nRésumé:")
-        print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
-        print(
-            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
-    else:
-        selected_columns_afterVifCorrMiFiltering = selected_columns
-        print("\nRésumé:")
-        print(f"Nombre total de features filtrées manuellement: {len(selected_columns)}")
-        print(
-            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
-
-    X_train = X_train[selected_columns_afterVifCorrMiFiltering]
-    X_test = X_test[selected_columns_afterVifCorrMiFiltering]
-
-    # Affichage de la distribution des classes
-    print("Distribution des trades (excluant les 99):")
+    # Affichage de la distribution des classes d'entraînement
+    print("\n" + "=" * 60)
+    print("DISTRIBUTION DES CLASSES DANS L'ENSEMBLE D'ENTRAÎNEMENT")
+    print("=" * 60)
     trades_distribution = y_train_label.value_counts(normalize=True)
     trades_counts = y_train_label.value_counts()
     print(f"Trades échoués [0]: {trades_distribution.get(0, 0) * 100:.2f}% ({trades_counts.get(0, 0)} trades)")
     print(f"Trades réussis [1]: {trades_distribution.get(1, 0) * 100:.2f}% ({trades_counts.get(1, 0)} trades)")
 
+    # Distribution des classes de test
+    print("\n" + "=" * 60)
+    print("DISTRIBUTION DES CLASSES DANS L'ENSEMBLE DE TEST")
+    print("=" * 60)
+    test_trades_distribution = y_test_label.value_counts(normalize=True)
+    test_trades_counts = y_test_label.value_counts()
+    print(
+        f"Trades échoués [0]: {test_trades_distribution.get(0, 0) * 100:.2f}% ({test_trades_counts.get(0, 0)} trades)")
+    print(
+        f"Trades réussis [1]: {test_trades_distribution.get(1, 0) * 100:.2f}% ({test_trades_counts.get(1, 0)} trades)")
+
     # Vérification de l'équilibre des classes
+    print("\n" + "=" * 60)
+    print("VÉRIFICATION DE L'ÉQUILIBRE DES CLASSES")
+    print("=" * 60)
     total_trades_train = y_train_label.count()
     total_trades_test = y_test_label.count()
 
     print(f"Nombre total de trades pour l'ensemble d'entrainement (excluant les 99): {total_trades_train}")
     print(f"Nombre total de trades pour l'ensemble de test (excluant les 99): {total_trades_test}")
-
+    total_trades = total_trades_train + total_trades_test
+    train_percentage = (total_trades_train / total_trades) * 100
+    test_percentage = (total_trades_test / total_trades) * 100
+    print(f"Répartition train/test: {train_percentage:.1f}% / {test_percentage:.1f}%")
     thresholdClassImb = 0.06
     class_difference = abs(trades_distribution.get(0, 0) - trades_distribution.get(1, 0))
     if class_difference >= thresholdClassImb:
-        print(f"Erreur : Les classes ne sont pas équilibrées. Différence : {class_difference:.2f}")
+        print(
+            f"Erreur : Les classes ne sont pas équilibrées dans l'ensemble d'entraînement. Différence : {class_difference:.2f}")
         # sys.exit(1)
     else:
-        print(f"Les classes sont considérées comme équilibrées (différence : {class_difference:.2f})")
+        print(
+            f"Les classes sont considérées comme équilibrées dans l'ensemble d'entraînement (différence : {class_difference:.2f})")
+
+    # Vérification de l'équilibre des classes dans l'ensemble de test
+    test_class_difference = abs(test_trades_distribution.get(0, 0) - test_trades_distribution.get(1, 0))
+    if test_class_difference >= thresholdClassImb:
+        print(
+            f"Attention : Les classes ne sont pas équilibrées dans l'ensemble de test. Différence : {test_class_difference:.2f}")
+    else:
+        print(
+            f"Les classes sont considérées comme équilibrées dans l'ensemble de test (différence : {test_class_difference:.2f})")
+
+    # Comparaison de la distribution entre train et test
+    train_test_distrib_diff = abs(trades_distribution.get(1, 0) - test_trades_distribution.get(1, 0))
+    print(f"Différence de distribution entre train et test: {train_test_distrib_diff:.2f}")
+    if train_test_distrib_diff > 0.05:
+        print("Attention: La distribution des classes diffère significativement entre train et test")
+    print("=" * 60)
+
+    mask_positive = (y_train_label == 1)
+
+    # Vérifier que pour ces indices, les pnl sont > 0
+    if not np.all(y_pnl_data_train[mask_positive] > 0):
+        # Récupérer les indices où la condition échoue pour fournir un message plus précis
+        bad_indices = np.where(y_pnl_data_train[mask_positive] <= 0)[0]
+        raise ValueError(
+            f"Erreur d'alignement : pour y_train_label==1, certains df_pnl_data_train ne sont pas > 0 aux indices {bad_indices}")
+    else:
+        print("dans train_and_evaluate_model Vérification OK : Pour tous les indices où y_train_label == 1, df_pnl_data_train est > 0.")
+
+    # Créer un masque pour les valeurs égales à 0
+    mask_zero = (y_train_label == 0)
+
+    # Vérifier que pour ces indices, les pnl sont < 0
+    if not np.all(y_pnl_data_train[mask_zero] < 0):
+        # Récupérer les indices où la condition échoue
+        bad_indices = np.where(y_pnl_data_train[mask_zero] >= 0)[0]
+        raise ValueError(
+            f"Erreur d'alignement : pour y_train_label==0, certains df_pnl_data_train ne sont pas < 0 aux indices {bad_indices}")
+    else:
+        print("dans train_and_evaluate_model Vérification OK : Pour tous les indices où y_train_label == 0, df_pnl_data_train est < 0.")
+
+
+    # Obtenir l'index supposé pour y_train_label
+    if isinstance(y_train_label, np.ndarray):
+        index_y = np.arange(len(y_train_label))
+    elif isinstance(y_train_label, pd.Series):
+        index_y = y_train_label.index.to_numpy()
+    else:
+        raise TypeError("y_train_label doit être un numpy array ou une pandas Series.")
+
+    # Obtenir l'index de df_pnl_data_train
+    if isinstance(y_pnl_data_train, pd.DataFrame):
+        # Si c'est un DataFrame, on peut par exemple utiliser l'index du DataFrame
+        index_pnl = y_pnl_data_train.index.to_numpy()
+    elif isinstance(y_pnl_data_train, pd.Series):
+        index_pnl = y_pnl_data_train.index.to_numpy()
+    else:
+        raise TypeError("df_pnl_data_train doit être un pandas DataFrame ou Series.")
+
+    # Comparaison des indices
+    if np.array_equal(index_y, index_pnl):
+        print("Les indices sont alignés.")
+    else:
+        print("Les indices ne sont pas alignés.")
+        print("Index de y_train_label:", index_y)
+        print("Index de df_pnl_data_train:", index_pnl)
 
     # **Ajout de la réduction des features ici, avant l'optimisation**
 
@@ -728,7 +700,7 @@ def train_and_evaluate_model(
                                                                     trial=trial, study=study, X_train=X_train,
                                                                     X_test=X_test,
                                                                     y_train_label=y_train_label,
-                                                                    df_pnl_data_train=df_pnl_data_train,
+                                                                    y_pnl_data_train=y_pnl_data_train,
                                                                     X_train_full=X_train_full,
                                                                     device=device,
                                                                     config=config, nb_split_tscv=nb_split_tscv,
@@ -737,7 +709,6 @@ def train_and_evaluate_model(
                                                                     random_state_seed_=random_state_seed,
                                                                     is_log_enabled=is_log_enabled,
                                                                     cv_method=cv_method,
-                                                                    selected_columns=selected_columns,
                                                                     model=model
                                                                     )
 
@@ -864,9 +835,9 @@ def train_and_evaluate_model(
 
     print_notification('###### DEBUT: ANALYSE DERNIER FOLD ##########', color="blue")
 
-    best_modellastFold_analyse( X_test=X_test,
-                                y_test_label=y_test_label,bestResult_dict=bestResult_dict,
-                                results_directory=results_directory,config=config)
+   # best_modellastFold_analyse( X_test=X_test,
+    #                            y_test_label=y_test_label,bestResult_dict=bestResult_dict,
+     #                           results_directory=results_directory,config=config)
 
     print_notification('###### FIN: ANALYSE DERNIER FOLD ##########', color="blue")
 
@@ -874,7 +845,7 @@ def train_and_evaluate_model(
 
     reTrain_finalModel_analyse(
         X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
-        y_train_label_=y_train_label, y_test_label_=y_test_label,
+        y_train_label_=y_train_label, y_test_label_=y_test_label,y_pnl_data_train=y_pnl_data_train,y_pnl_data_test=y_pnl_data_test,
         nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
         config=config, weight_param=weight_param, bestResult_dict=bestResult_dict)
 
@@ -888,6 +859,9 @@ if __name__ == "__main__":
     DIRECTORY_PATH, FILE_PATH, base_results_path = get_path()
     weight_param = get_weight_param()
     config = get_config()
+    # Vérification de l'option use_pnl_theoric
+    if config.get('use_pnl_theoric', False) is not True:
+        raise ValueError("L'option use_pnl_theoric=True n'a pas encore été implémentée ou testée")
     directories = DIRECTORY_PATH.split(os.path.sep)
     print(directories)
     target_directory = directories[-2]
@@ -918,6 +892,22 @@ if __name__ == "__main__":
     print_notification('###### DEBUT: CHARGER ET PREPARER LES DONNEES  ##########', color="blue")
 
     df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
+
+    # Liste des colonnes à vérifier et transformer
+    columns_to_check = ['deltaTimestampOpeningSession5index', 'deltaTimestampOpeningSession15min']
+
+    for col in columns_to_check:
+        if col in df_init_features.columns:
+            print(
+                f"🔍 Vérification de la colonne '{col}' dans df_init_features (Type actuel : {df_init_features[col].dtype})")
+
+            # Convertir en numérique si la colonne est de type 'object'
+            if df_init_features[col].dtype == 'object':
+                print(f"🔄 Conversion de '{col}' en numérique...")
+                df_init_features[col] = pd.to_numeric(df_init_features[col], errors='coerce')  # Convertir proprement
+
+            # Vérifier après conversion
+            print(f"✅ (pb avec  CUSTOM_SESSIONS dans le fichier) Nouveau type de '{col}' dans df_init_features : {df_init_features[col].dtype}\n")
 
     # Initialiser df_init_candles s'il n'existe pas ou est None
     df_init_candles = pd.DataFrame(index=df_init_features.index)
@@ -954,6 +944,7 @@ if __name__ == "__main__":
         'class_binaire', 'date', 'trade_category','close','high','low',
         'SessionStartEnd',
         'trade_pnl', 'tp1_pnl', 'tp2_pnl', 'tp3_pnl', 'sl_pnl',
+        'trade_pnl_theoric', 'tp1_pnl_theoric', 'sl_pnl_theoric',
         'timeStampOpening',
         'deltaTimestampOpening',
         'candleDir',
@@ -974,8 +965,43 @@ if __name__ == "__main__":
         'staked00_low',
         'bear_imbalance_high_3',  ## 4.8 % de NAN
         'bull_imbalance_high_0',  # 7.8%
-        'bearish_absorption_ratio'  # 2.8nan,
+        'bearish_absorption_ratio',  # 2.8nan,
 
+        # 'ratio_volRevMove_volImpulsMove',
+        # 'ratio_deltaImpulsMove_volImpulsMove',
+        # 'ratio_deltaRevMove_volRevMove',
+        # 'ratio_volZone1_volExtrem',
+        # 'ratio_deltaZone1_volZone1',
+        # 'ratio_deltaExtrem_volExtrem',
+        # 'ratio_VolRevZone_XticksContZone',
+        # 'ratioDeltaXticksContZone_VolXticksContZone',
+        # 'ratio_impulsMoveStrengthVol_XRevZone',
+        # 'ratio_revMoveStrengthVol_XRevZone',
+        # 'imbType_contZone',
+        # 'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone',
+        # 'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone',
+        # 'ratio_deltaRevMoveZone1_volRevMoveZone1',
+        # 'ratio_deltaRevMoveExtrem_volRevMoveExtrem',
+        # 'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone',
+        # 'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1',
+        # 'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone',
+        # 'cumDOM_AskBid_avgRatio',
+        # 'cumDOM_AskBid_pullStack_avgDiff_ratio',
+        # 'delta_impulsMove_XRevZone_bigStand_extrem',
+        # 'delta_revMove_XRevZone_bigStand_extrem',
+        # 'ratio_delta_VaVolVa',
+        # 'borderVa_vs_close',
+        # 'ratio_volRevZone_VolCandle',
+        # 'ratio_deltaRevZone_VolCandle',
+        # 'sc_reg_slope_5P_2',
+        # 'sc_reg_std_5P_2',
+        # 'sc_reg_slope_10P_2',
+        # 'sc_reg_std_10P_2',
+        # 'sc_reg_slope_15P_2',
+        # 'sc_reg_std_15P_2',
+        # 'sc_reg_slope_30P_2',
+        # 'sc_reg_std_30P_2',
+        # 'timeElapsed2LastBar'
     ]
     excluded_columns_tradeDirection = [
         'bullish_ask_bid_ratio',
@@ -1034,26 +1060,39 @@ if __name__ == "__main__":
         if any(category in col for category in excluded_categories)
     ]
     # Vérifier si certaines colonnes spécifiques sont présentes
-    colonnes_recherchees = ['tp1_pnl', 'tp2_pnl', 'tp3_pnl', 'sl_pnl']
+    colonnes_recherchees = ['trade_pnl','tp1_pnl', 'tp2_pnl', 'tp3_pnl', 'sl_pnl']
     for col in colonnes_recherchees:
         if col in df_init_features.columns:
             print(f"La colonne '{col}' est présente dans le DataFrame")
         else:
             print(f"La colonne '{col}' est ABSENTE du DataFrame")
+            exit(34)
+    colonnes_recherchees = ['trade_pnl_theoric','tp1_pnl_theoric', 'sl_pnl_theoric']
+    for col in colonnes_recherchees:
+        if col in df_init_features.columns:
+            print(f"La colonne '{col}' est présente dans le DataFrame")
+        else:
+            print(f"La colonne '{col}' est ABSENTE du DataFrame")
+            exit(34)
+
 
     excluded_columns = excluded_columns_principal + excluded_columns_tradeDirection + excluded_columns_CorrCol + excluded_columns_category
 
     # ajoute les colonnes pour retraitement ultérieurs
     df_init_features = add_session_id(df_init_features, CUSTOM_SESSIONS)
     # Sélectionner les colonnes qui ne sont pas dans excluded_columns
-    selected_columns = [col for col in df_init_features.columns if col not in excluded_columns]
+    selected_columns_manual = [col for col in df_init_features.columns if col not in excluded_columns]
+
+    # Liste des colonnes à vérifier
+    columns_to_check = ['date', 'trade_category']
+
 
     selected_columnsByFiltering = [
 
     ]
 
     if selected_columnsByFiltering != []:
-        selected_columns = selected_columnsByFiltering  # Assigne les colonnes filtrées à selected_columns
+        selected_columns_manual = selected_columnsByFiltering  # Assigne les colonnes filtrées à selected_columns_manual
         config.update({
             'enable_vif_corr_mi': False})
 
@@ -1062,7 +1101,7 @@ if __name__ == "__main__":
         'excluded_columns_tradeDirection': excluded_columns_tradeDirection,
         'excluded_columns_CorrCol': excluded_columns_CorrCol,
         'excluded_columns_category': excluded_columns_category,
-        'selected_columns': selected_columns,
+        'selected_columns_manual': selected_columns_manual,
     })
 
     results = train_and_evaluate_model(
