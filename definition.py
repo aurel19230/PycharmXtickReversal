@@ -28,6 +28,7 @@ class modelType (Enum):
     XGB=0
     LGBM=1
     CATBOOST=2
+    RF=3
 
 class optuna_doubleMetrics(Enum):
     DISABLE = 0
@@ -168,6 +169,43 @@ def sigmoidCustom(x):
 # Supposons que x est déjà un tableau CuPy
   return 1 / (1 + cp.exp(-x))
 
+
+def print_notification(message, color=None):
+    """
+    Affiche un message avec un horodatage. Optionnellement, le message peut être affiché en couleur.
+
+    Args:
+    - message (str): Le message à afficher.
+    - color (str, optionnel): La couleur du texte ('red', 'green', 'yellow', 'blue', etc.).
+    """
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+
+    # Définir les couleurs selon le choix de l'utilisateur pour le message uniquement
+    if color == 'red':
+        color_code = Fore.RED
+    elif color == 'green':
+        color_code = Fore.GREEN
+    elif color == 'yellow':
+        color_code = Fore.YELLOW
+    elif color == 'blue':
+        color_code = Fore.BLUE
+    else:
+        color_code = ''  # Pas de couleur
+
+    # Afficher le message avec le timestamp non coloré et le message coloré si nécessaire
+    print(f"\n[{timestamp}] {color_code}{message}{Style.RESET_ALL}")
+
+
+
+
+def load_data(file_path: str) -> pd.DataFrame:
+    print_notification(f"Début du chargement des données de: \n "
+                       f"{file_path}")
+    df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
+    print(f"Colonnes chargées: {df.columns.tolist()}")
+    print(f"Premières lignes:\n{df.head()}")
+    print_notification("Données chargées avec succès")
+    return df
 
 def verify_alignment(y_true_class_binaire, y_pnl_data):
     """

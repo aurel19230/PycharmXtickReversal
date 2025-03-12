@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
 import datetime
+from standard_stat_sc import *
 
 warnings.filterwarnings('ignore')
 from func_standard import *
@@ -253,8 +254,8 @@ def compute_and_print_sessions_stats_with_details(df_opt, sessions_data):
 # OPTIMISATION
 ########################################################
 class RatioOptimizer:
-    def __init__(self, shorts_df, params_dict):
-        self.shorts_df = shorts_df[shorts_df['class_binaire'].isin([0,1])].copy()
+    def __init__(self, df, params_dict):
+        self.df = df[df['class_binaire'].isin([0,1])].copy()
         self.optimization_history = []
         self.best_result = None
         self.params_dict = params_dict  # Stocke le dictionnaire de paramètres
@@ -263,7 +264,7 @@ class RatioOptimizer:
         """
         Méthode objective pour Optuna.
         Boucle automatiquement sur self.params_dict pour générer les valeurs _low/_high,
-        applique le filtre sur self.shorts_df,
+        applique le filtre sur self.df,
         calcule le PNL et met à jour self.best_result si besoin.
         """
         import numpy as np
@@ -283,33 +284,34 @@ class RatioOptimizer:
         #
         # => On va créer param_name_low et param_name_high pour chaque variable.
         #
-        for param_name, (low_bound, high_bound) in self.params_dict.items():
-            low_type, low_min, low_max = low_bound  # ex: ('float', 0, 291)
-            high_type, high_min, high_max = high_bound
-
-            # Suggestion du "low"
-            if low_type == 'float':
-                low_value = trial.suggest_float(f"{param_name}_low", low_min, low_max)
-            elif low_type == 'int':
-                low_value = trial.suggest_int(f"{param_name}_low", int(low_min), int(low_max))
+        for param_name, bounds in self.params_dict.items():
+            if bounds == 'binary':
+                # Pour un paramètre binaire, on génère la valeur 0 ou 1
+                binary_val = trial.suggest_int(param_name, 0, 1)
+                # On stocke la même valeur en low/high
+                param_values[f"{param_name}_low"] = binary_val
+                param_values[f"{param_name}_high"] = binary_val
             else:
-                raise ValueError(f"Type inconnu pour {param_name}_low: {low_type}")
+                low_bound, high_bound = bounds
+                low_type, low_min, low_max = low_bound
+                high_type, high_min, high_max = high_bound
 
-            # Suggestion du "high"
-            if high_type == 'float':
-                high_value = trial.suggest_float(f"{param_name}_high", high_min, high_max)
-            elif high_type == 'int':
-                high_value = trial.suggest_int(f"{param_name}_high", int(high_min), int(high_max))
-            else:
-                raise ValueError(f"Type inconnu pour {param_name}_high: {high_type}")
+                if low_type == 'float':
+                    low_value = trial.suggest_float(f"{param_name}_low", low_min, low_max)
+                elif low_type == 'int':
+                    low_value = trial.suggest_int(f"{param_name}_low", int(low_min), int(low_max))
 
-            # On tri pour éviter low > high
-            param_values[f"{param_name}_low"], param_values[f"{param_name}_high"] = sorted([low_value, high_value])
+                if high_type == 'float':
+                    high_value = trial.suggest_float(f"{param_name}_high", high_min, high_max)
+                elif high_type == 'int':
+                    high_value = trial.suggest_int(f"{param_name}_high", int(high_min), int(high_max))
 
-        # 2) Filtrage automatique dans self.shorts_df
+                param_values[f"{param_name}_low"], param_values[f"{param_name}_high"] = sorted([low_value, high_value])
+
+        # 2) Filtrage automatique dans self.df
         # -------------------------------------------
         # On part d'un masque "tout True", puis on combine
-        condition = np.ones(len(self.shorts_df), dtype=bool)
+        condition = np.ones(len(self.df), dtype=bool)
 
         # Pour chaque param_name du dictionnaire, on récupère param_name_low / param_name_high
         for param_name in self.params_dict.keys():
@@ -319,10 +321,10 @@ class RatioOptimizer:
             high_val = param_values[high_key]
 
             # On applique un filtre "df[param_name] between low_val/high_val"
-            condition &= self.shorts_df[param_name].between(low_val, high_val)
+            condition &= self.df[param_name].between(low_val, high_val)
 
         # On récupère les lignes filtrées
-        trades_in_range = self.shorts_df[condition]
+        trades_in_range = self.df[condition]
 
         # Si pas assez de trades, on renvoie -inf pour pénaliser cette config
         n_trades = len(trades_in_range)
@@ -682,21 +684,61 @@ def preprocess_trades_data(df, direction='short'):
 def main():
     import optuna
     import os
-    # On réduit la verbosité globale d'Optuna au niveau WARN
-    # pour ne pas avoir leurs logs "Trial X finished..."
-    optuna.logging.set_verbosity(optuna.logging.WARN)
-    # 1) Charger le CSV
-    DIRECTORY_PATH = r"C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\\\5_0_4TP_0SL\\merge_old"
+    from pynput import keyboard
+    import random
 
-    FILE_NAME_ = "Step5_5_0_4TP_0SL_050125_200125_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    # Définir une seed pour la reproductibilité
+    SEED = 50  # Vous pouvez choisir n'importe quelle valeur entière
+
+    # Initialiser les générateurs de nombres aléatoires
+    np.random.seed(SEED)
+    random.seed(SEED)
+
+    # Configuration d'Optuna avec la seed
+    sampler = optuna.samplers.TPESampler(seed=SEED)  # Le sampler TPE est couramment utilisé
+
+    # Variable globale pour signaler l'arrêt
+    global STOP_OPTIMIZATION
+    STOP_OPTIMIZATION = False
+
+    # Fonction de rappel pour arrêter Optuna
+    def callback_optuna_stop(study, trial):
+        global STOP_OPTIMIZATION
+        if STOP_OPTIMIZATION:
+            print("\n\nArrêt demandé par l'utilisateur - Finalisation de l'essai en cours...")
+            study.stop()
+
+    # Gestionnaire d'événements clavier
+    def on_press(key):
+        global STOP_OPTIMIZATION
+        try:
+            if hasattr(key, 'char') and key.char == '²':
+                print("\nTouche '²' détectée - Signal d'arrêt envoyé")
+                STOP_OPTIMIZATION = True
+        except AttributeError:
+            pass
+
+    # Démarrer l'écouteur de clavier dans un thread séparé
+    listener = keyboard.Listener(on_press=on_press)
+    listener.daemon = True  # Pour que le thread se termine quand le programme principal se termine
+    listener.start()
+
+    # Le reste de votre code reste inchangé
+    # On réduit la verbosité globale d'Optuna au niveau WARN
+    optuna.logging.set_verbosity(optuna.logging.WARN)
+
+    # 1) Charger le CSV
+    DIRECTORY_PATH = r"C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\\\5_0_5TP_1SL\\merge_I1_I2"
+    FILE_NAME_ = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
     FILE_PATH = os.path.join(DIRECTORY_PATH, FILE_NAME_)
 
     df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
-    # Chargement des données
-    df_init, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
+
+    #add  session_id
+    df_withsessionID= preprocess_sessions_with_date(df_init)
 
     # Prétraitement des données avec la direction spécifiée
-    df_processed = preprocess_trades_data(df_init, direction='short')  # ou 'long'
+    df_processed = preprocess_trades_data(df_withsessionID, direction='short')
     print(df_processed)
 
     # Le reste du code utilise maintenant df_processed
@@ -704,16 +746,31 @@ def main():
     print(sessions_data)
     compute_and_print_sessions_stats_no_details(df_processed, sessions_data)
     print("\n[Optimisation]")
-    #shorts_df = df[df['trade_category'].isin(['Trades réussis short', 'Trades échoués short'])]
-    param_config = {
-        'cumDOM_AskBid_avgRatio': [('float', 0, 291), ('float', 0, 291)],
-        'cumDOM_AskBid_pullStack_avgDiff_ratio': [('float', -63, 50), ('float', -63, 50)],
-   #     'new_param1': [('float', 10, 100), ('float', 10, 100)],
-        #    'new_param2': [('int', 1, 20), ('int', 1, 20)]
-    }
 
-    # Création de l'optimiseur avec le dictionnaire de paramètres
-    optimizer = RatioOptimizer(df_processed, param_config)
+    param_config = {
+        #'cumDOM_AskBid_avgRatio': [('float', 0, 291), ('float', 0, 291)],
+        #'meanVolx': [('float', 0, 7000), ('float', 0, 7000)],
+        'VolAbv_vol_ratio': [('float', 0, 1), ('float', 0, 1)],
+        'finished_auction_low': 'binary',
+        'finished_auction_high': 'binary'
+    }
+    #'new_param2': 'binary'  # Indique qu'on veut juste 0 ou 1
+
+    # Modification de la classe RatioOptimizer pour intégrer notre callback
+    # Création de l'étude avec le sampler configuré
+    class ModifiedRatioOptimizer(RatioOptimizer):
+        def optimize(self, n_trials=10000):
+            # Utiliser le sampler avec la seed définie
+            study = optuna.create_study(direction='maximize', sampler=sampler)
+            callbacks = [logging_callback, callback_optuna_stop]
+            study.optimize(self.objective, n_trials=n_trials, callbacks=callbacks, n_jobs=-1)
+            return study
+
+    # Création de l'optimiseur modifié avec le dictionnaire de paramètres
+    optimizer = ModifiedRatioOptimizer(df_processed, param_config)
+
+    # Informer l'utilisateur comment arrêter
+    print("\nL'optimisation est en cours. Appuyez sur la touche '²' pour arrêter.\n")
 
     # Lancer l'optimisation
     study = optimizer.optimize(n_trials=10000)
@@ -723,14 +780,13 @@ def main():
     df_opt = build_optimized_df(df_processed, optimizer.best_result)
     print(f"\nDF optimisé : {len(df_opt)} lignes")
 
-    # 5) Affichage des stats AVEC détails,
-    #    en réutilisant la liste sessions_data (trouvée sur df complet)
+    # 5) Affichage des stats AVEC détails
     print("\n[Stats APRES Optimisation : AVEC DETAILS, mêmes sessions qu'avant]")
     compute_and_print_sessions_stats_with_details_on_df_opt(df_opt, sessions_data)
 
-    # 6) Visualisation
-   # fig = analyze_and_visualize_results(optimizer)
-    #fig.show()
+    # Arrêter proprement l'écouteur de clavier
+    listener.stop()
+
 
 if __name__ == "__main__":
     main()

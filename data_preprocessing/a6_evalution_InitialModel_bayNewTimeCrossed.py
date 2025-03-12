@@ -963,10 +963,13 @@ if __name__ == "__main__":
         'total_count_blw',
         'staked00_high',
         'staked00_low',
-        'bear_imbalance_high_3',  ## 4.8 % de NAN
-        'bull_imbalance_high_0',  # 7.8%
+        #'bear_imbalance_high_3',  ## 4.8 % de NAN
+        'bull_imbalance_high_0',  # 7.8% et peu impact en corr
         'bearish_absorption_ratio',  # 2.8nan,
-
+        'VolPocVolRevesalXContRatio', #l'autre poc vol est meilleur
+        'ratio_delta_vol_VA21P', #tres corrélé avec  ratio_delta_vol_VA16P ratio_delta_vol_VA6P mais moi avec la cible
+        'naked_poc_dist_above',  # peux impact et nan
+        'naked_poc_dist_below',# peux impact et nan
         # 'ratio_volRevMove_volImpulsMove',
         # 'ratio_deltaImpulsMove_volImpulsMove',
         # 'ratio_deltaRevMove_volRevMove',
@@ -1028,13 +1031,13 @@ if __name__ == "__main__":
         'bullish_absorption_score',
         'bullish_market_context_score',
         'bullish_combined_pressure',
-        'naked_poc_dist_above',
-        'bull_imbalance_low_1',
-        'bull_imbalance_low_2',
-        'bull_imbalance_low_3',
-        'bear_imbalance_low_0',
-        'bear_imbalance_low_1',
-        'bear_imbalance_low_2',
+
+        #'bull_imbalance_low_1',
+        #'bull_imbalance_low_2',
+        #'bull_imbalance_low_3',
+        #'bear_imbalance_low_0',
+        #'bear_imbalance_low_1',
+        #'bear_imbalance_low_2',
     ]
 
     excluded_columns_CorrCol = [
@@ -1110,6 +1113,7 @@ if __name__ == "__main__":
         config=config,
         weight_param=weight_param
     )
+
 
     if results is not None:
         print("entrainement et analyse termisé")

@@ -6,6 +6,8 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
     average_precision_score, matthews_corrcoef, precision_recall_curve, precision_score
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, MaxAbsScaler
+from stats_sc.standard_stat_sc import calculate_statistical_power,calculate_statistical_power_job
+
 
 import time
 from enum import Enum
@@ -27,6 +29,7 @@ from parameters import *
 from definition import *
 from func_xgb import *
 from func_lightgbm import *
+from func_RF import *
 
 CUSTOM_SESSIONS = {
     "Opening": {
@@ -324,41 +327,6 @@ def split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
     print("\n")
     return train_df, len(train_sessions), test_df, {len(test_sessions)}
 
-
-def print_notification(message, color=None):
-    """
-    Affiche un message avec un horodatage. Optionnellement, le message peut être affiché en couleur.
-
-    Args:
-    - message (str): Le message à afficher.
-    - color (str, optionnel): La couleur du texte ('red', 'green', 'yellow', 'blue', etc.).
-    """
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-
-    # Définir les couleurs selon le choix de l'utilisateur pour le message uniquement
-    if color == 'red':
-        color_code = Fore.RED
-    elif color == 'green':
-        color_code = Fore.GREEN
-    elif color == 'yellow':
-        color_code = Fore.YELLOW
-    elif color == 'blue':
-        color_code = Fore.BLUE
-    else:
-        color_code = ''  # Pas de couleur
-
-    # Afficher le message avec le timestamp non coloré et le message coloré si nécessaire
-    print(f"\n[{timestamp}] {color_code}{message}{Style.RESET_ALL}")
-
-
-def load_data(file_path: str) -> pd.DataFrame:
-    print_notification(f"Début du chargement des données de: \n "
-                       f"{file_path}")
-    df = pd.read_csv(file_path, sep=';', encoding='iso-8859-1')
-    print(f"Colonnes chargées: {df.columns.tolist()}")
-    print(f"Premières lignes:\n{df.head()}")
-    print_notification("Données chargées avec succès")
-    return df
 
 
 from sklearn.calibration import calibration_curve
@@ -2132,19 +2100,11 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     # Affichage des informations sur les features après exclusion manuelle
     print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
     displaytNan_vifMiCorr_mRMR_Filtering(X=X_train_full, name="X_train_full",
-                                   config=config, auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING)
+                                   config=config, compute_feature_stat=False)
     print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
     displaytNan_vifMiCorr_mRMR_Filtering(X=X_train, name="X_train",
-                                   config=config, auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING)
+                                   config=config, compute_feature_stat=False)
 
-    columns_to_check = ['date', 'trade_category']
-
-    # Vérifier leur présence dans selected_columns_manual
-    for col in columns_to_check:
-        if col in X_train.columns:
-            print(f"✅ La colonne '{col}' est bien présente dans X_train.")
-        else:
-            print(f"❌ La colonne '{col}' n'est PAS présente dans X_train.")
 
 
 
@@ -2190,13 +2150,94 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
         selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorr_mRMR_Filtering(
             X=X_train, Y=y_train_label,
             name="X_train", config=config,
-            auto_filtering_mode=auto_filtering_mode,is_compute_vif=is_compute_vif
-        )
+            compute_feature_stat=True,
+            is_compute_vif=True)
+
+        explanation = """
+        🔍 **Explication des variables du tableau de résultats :**
+
+        - **Feature** : Nom de la feature analysée.
+        - **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
+        - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
+          - **> 0.8** : Effet fort ✅
+          - **0.5 - 0.8** : Effet moyen ⚠️
+          - **< 0.5** : Effet faible ❌
+
+        - **P-Value** : Probabilité d'observer la relation par hasard.
+          - **< 0.01** : Très significatif ✅✅
+          - **0.01 - 0.05** : Significatif ✅
+          - **0.05 - 0.10** : Marginalement significatif ⚠️
+          - **> 0.10** : Non significatif ❌
+
+        - **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
+          - **> 20** : Exceptionnellement puissant ✅✅
+          - **10 - 20** : Très intéressant ✅
+          - **5 - 10** : Modérément intéressant ⚠️
+          - **1 - 5** : Faiblement intéressant ❌
+
+        - **MI (Information Mutuelle)** : Quantifie la dépendance entre la feature et la cible.
+          - **> 0.1** : Dépendance forte ✅✅
+          - **0.05 - 0.1** : Dépendance significative ✅
+          - **0.01 - 0.05** : Dépendance modérée ⚠️
+          - **< 0.01** : Dépendance faible ❌
+
+        - **mRMR_Score** : Information Mutuelle avec la cible moins redondance moyenne avec autres features.
+          - **> 0.05** : Signal fort et unique ✅✅
+          - **0.02 - 0.05** : Signal modéré peu redondant ✅
+          - **0.01 - 0.02** : Signal faible ou partiellement redondant ⚠️
+          - **< 0.01** : Signal très faible ou hautement redondant ❌
+
+        - **VIF (Variance Inflation Factor)** : Mesure la multicolinéarité avec les autres features.
+          - **< 2.5** : Excellente indépendance ✅✅
+          - **2.5 - 5** : Bonne indépendance ✅
+          - **5 - 7.5** : Redondance modérée, à évaluer ⚠️
+          - **> 7.5** : Forte redondance, potentiellement problématique ❌
+          - Crucial en trading pour éviter le surapprentissage et garantir la stabilité du modèle.
+
+        - **lr_target (Corrélation de Pearson)** : Mesure la relation linéaire avec la cible.
+          - **|r| > 0.3** : Corrélation linéaire forte en trading ✅✅
+          - **0.2 < |r| < 0.3** : Corrélation linéaire modérée ✅
+          - **0.1 < |r| < 0.2** : Corrélation linéaire faible ⚠️
+          - **|r| < 0.1** : Corrélation linéaire négligeable ❌
+          - Note: En trading, même des corrélations de 0.02-0.05 peuvent être significatives si elles sont persistantes et exploitables à haute fréquence.
+
+        - **nlr_target (Corrélation de Spearman)** : Mesure la relation monotone (non-linéaire) avec la cible.
+          - **|ρ| > 0.25** : Corrélation de rang forte en trading ✅✅
+          - **0.15 < |ρ| < 0.25** : Corrélation de rang modérée ✅
+          - **0.08 < |ρ| < 0.15** : Corrélation de rang faible ⚠️
+          - **|ρ| < 0.08** : Corrélation de rang négligeable ❌
+          - Particulièrement utile pour détecter des patterns de marché non-linéaires.
+
+        - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
+        - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
+        - **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
+        - **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
+
+        🎯 **Interprétation des seuils de puissance statistique** :
+        - ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
+        - ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
+        - ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
+
+        📈 **Considérations spécifiques pour le trading** :
+        - Une feature avec un score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
+        - La différence entre les corrélations de Pearson (lr_target) et Spearman (nlr_target) peut révéler la nature de la relation avec le marché:
+          - Si Spearman > Pearson: Présence probable d'une relation non-linéaire (ex: effets de seuil, comportements asymétriques).
+          - Si Pearson > Spearman: Relation principalement linéaire, mais potentiellement influencée par des valeurs extrêmes.
+        - En trading algorithmique, des corrélations faibles (même 0.02-0.05) peuvent générer un avantage significatif si elles sont exploitées systématiquement et à grande échelle.
+        - Le VIF est crucial pour construire des modèles robustes: des features avec un fort pouvoir prédictif mais un VIF élevé peuvent déstabiliser le modèle en conditions réelles.
+        - Pour les stratégies haute fréquence, privilégiez des VIF plus stricts (<3-4) et des signaux faiblement corrélés entre eux.
+        - Pour les stratégies à plus long terme, des VIF jusqu'à 7-8 peuvent être acceptables si la feature apporte une information précieuse.
+        - Les scores mRMR élevés sont particulièrement précieux car ils identifient des signaux à la fois informatifs et non redondants.
+        - Testez toujours la stabilité temporelle de ces métriques sur différentes périodes de marché pour vérifier la persistance du signal.
+        """
+
+        print(explanation)
         print("=" * 60)
         print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
         print(
             f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
         print("=" * 60)
+        exit(77)
     else:
         # Pas de filtrage automatique, on garde les features sélectionnées manuellement
         selected_columns_afterVifCorrMiFiltering = selected_columns_manual
@@ -4283,7 +4324,77 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
             'boost_from_average': True  # Meilleure initialisation
         }
 
+    elif model_type == modelType.RF:
+        params = {
+            # Configuration du nombre d'arbres dans la forêt
+            'n_estimators': trial.suggest_int(
+                'n_estimators',
+                modele_param_optuna_range['n_estimators']['min'],
+                modele_param_optuna_range['n_estimators']['max']
+            ),
 
+            # Configuration de la profondeur maximale des arbres
+            'max_depth': trial.suggest_int(
+                'max_depth',
+                modele_param_optuna_range['max_depth']['min'],
+                modele_param_optuna_range['max_depth']['max']
+            ),
+
+            # Configuration du nombre minimal d'échantillons pour diviser un nœud
+            'min_samples_split': trial.suggest_int(
+                'min_samples_split',
+                modele_param_optuna_range['min_samples_split']['min'],
+                modele_param_optuna_range['min_samples_split']['max']
+            ),
+
+            # Configuration du nombre minimal d'échantillons dans une feuille
+            'min_samples_leaf': trial.suggest_int(
+                'min_samples_leaf',
+                modele_param_optuna_range['min_samples_leaf']['min'],
+                modele_param_optuna_range['min_samples_leaf']['max']
+            ),
+
+            # Configuration de la proportion des features à considérer
+            'max_features': trial.suggest_float(
+                'max_features',
+                modele_param_optuna_range['max_features']['min'],
+                modele_param_optuna_range['max_features']['max']
+            ),
+
+            # Configuration du nombre maximal de feuilles
+            'max_leaf_nodes': trial.suggest_int(
+                'max_leaf_nodes',
+                modele_param_optuna_range['max_leaf_nodes']['min'],
+                modele_param_optuna_range['max_leaf_nodes']['max']
+            ),
+
+            # # Configuration du paramètre d'élagage
+            # 'ccp_alpha': trial.suggest_float(
+            #     'ccp_alpha',
+            #     modele_param_optuna_range['ccp_alpha']['min'],
+            #     modele_param_optuna_range['ccp_alpha']['max'],
+            #     log=modele_param_optuna_range['ccp_alpha'].get('log', False)
+            # ),
+            #
+            # # Configuration du seuil d'impureté minimale
+            # 'min_impurity_decrease': trial.suggest_float(
+            #     'min_impurity_decrease',
+            #     modele_param_optuna_range['min_impurity_decrease']['min'],
+            #     modele_param_optuna_range['min_impurity_decrease']['max'],
+            #     log=modele_param_optuna_range['min_impurity_decrease'].get('log', False)
+            # ),
+
+            # Paramètres fixes selon votre configuration
+            'bootstrap': False,  # Selon votre configuration fixée à False
+            'criterion': 'entropy',  # Selon votre configuration fixée à 'entropy' ['gini', 'entropy']
+
+            # Autres paramètres fixes
+            'random_state': random_state_seed_,
+            'n_jobs': -1,  # Utiliser tous les cœurs disponibles
+            'verbose': 0,  # Réduire les logs
+            'warm_start': False,  # Ne pas réutiliser la solution précédente
+            'class_weight': None  # Pas de pondération spécifique des classes
+        }
     elif model_type == modelType.CATBOOST:
         params = {
             'loss_function': 'Logloss',
@@ -4783,7 +4894,8 @@ def select_fold_processor(model: None):
     """Sélectionne le processor approprié selon le framework"""
     processors = {
         modelType.XGB: process_cv_fold_xgboost,
-        modelType.LGBM: process_cv_fold_lightgbm
+        modelType.LGBM: process_cv_fold_lightgbm,
+        modelType.RF: process_cv_fold_randomforest_model
         # modelType.CATBOOST: process_cv_fold_catboost
     }
     if model not in processors:
@@ -4811,39 +4923,6 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
             **calculate_fold_stats(y_val_cv, "val",config)
         }
 
-        #mask_positive = (Y_train_cv == 1)
-        #print(Y_train_cv[mask_positive])
-        #print(len(Y_train_cv) == len(y_pnl_data_train_cv))
-        #print(y_pnl_data_train_cv[mask_positive])
-        # Vérifier que pour ces indices, les pnl sont > 0
-        # if not np.all(y_pnl_data_train_cv[mask_positive] > 0):
-            # Récupérer les indices où la condition échoue pour fournir un message plus précis
-        #  bad_indices = np.where(y_pnl_data_train_cv[mask_positive] <= 0)[0]
-        # raise ValueError(
-        #      f"Incohérence (label=1, pnl ≤ 0) trouvée aux indices {bad_indices}")
-        #else:
-        #   print(
-        #    "dans train_and_evaluate_model Vérification OK (au moins pour pnl theoric) : Pour tous les indices où y_train_label == 1, df_pnl_data_train est > 0.")
-
-        # Créer un masque pour les valeurs égales à 0
-        #mask_zero = (Y_train_cv == 0)
-
-        # Vérifier que pour ces indices, les pnl sont < 0
-        # if not np.all(y_pnl_data_train_cv[mask_zero] < 0):
-        #     # Récupérer les indices où la condition échoue
-        #   bad_indices = np.where(y_pnl_data_train_cv[mask_zero] >= 0)[0]
-        #   raise ValueError(
-        #       f"Erreur d'alignement : pour y_train_label==0, certains df_pnl_data_train ne sont pas < 0 aux indices {bad_indices}")
-        # else:
-        #   print(
-        #      "dans train_and_evaluate_model Vérification OK (au moins pour pnl theoric) : Pour tous les indices où y_train_label == 0, df_pnl_data_train est < 0.")
-
-
-        #for a later use, in this fold in custom metric to compute the pnl we store in config
-        # config.update({
-        #  'y_pnl_data_train_cv': y_pnl_data_train_cv,
-        #  'y_pnl_data_val_cv_OrTest': y_pnl_data_val_cv
-        # })
         fold_results = train_and_evaluate_lightgbm_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
@@ -4868,6 +4947,55 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
 
     except Exception as e:
         print(f"\nErreur dans process_cv_fold lightgbm:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Message: {str(e)}")
+        raise
+
+
+
+def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
+                             data=None, model_weight_optuna=None,
+                             is_log_enabled=False, config=None,nb_split_tscv=0):
+    """
+       Process a cross-validation fold for random forest training and evaluation.
+       This version delegates training and evaluation steps to train_and_evaluate_randomforest_model,
+       which returns the full set of metrics and debug_info.
+       """
+    try:
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(
+            config, data, train_pos, val_pos)
+
+        # Calculate initial fold statistics
+        fold_stats_current = {
+            **calculate_fold_stats(Y_train_cv, "train", config),
+            **calculate_fold_stats(y_val_cv, "val", config)
+        }
+
+        fold_results = train_and_evaluate_randomforest_model(
+            X_train_cv=X_train_cv,
+            X_val_cv=X_val_cv,
+            y_train_cv=Y_train_cv,
+            y_val_cv=y_val_cv,
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
+            params=params,
+            model_weight_optuna=model_weight_optuna,
+            config=config,
+            fold_num=fold_num,
+            fold_raw_data=fold_raw_data,
+            fold_stats_current=fold_stats_current,
+            train_pos=train_pos,
+            val_pos=val_pos,
+            log_evaluation=0,
+
+        )
+
+        # Retourner le résultat tel quel
+        return fold_results
+
+    except Exception as e:
+        print(f"\nErreur dans process_cv_fold randomforest_model:")
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
         raise
@@ -6338,7 +6466,7 @@ def compute_vif_fast(df, threshold):
     df_numeric = df.select_dtypes(include=[np.number]).copy()
     if df_numeric.empty:
         print("⚠️ Aucune colonne numérique dans le dataset. Retour d'un DataFrame vide.")
-        return pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
+        return pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'StatusVif': 'Non calculé'})
 
     vif_dfs = []
     removed_features = []
@@ -6359,7 +6487,7 @@ def compute_vif_fast(df, threshold):
 
                 # Identifier la feature à supprimer
                 max_feature = vif_df.loc[vif_df[f'VIF{iteration_count}'].idxmax(), 'Feature']
-                print(f"[Itération {iteration_count}] Max VIF = {max_vif:.2f}, on retire {max_feature}")
+                print(f"[Itération {iteration_count}] Max VIF = {max_vif:.2e}, on retire {max_feature}")
 
                 # Suppression de la feature ayant le plus haut VIF
                 df_numeric.drop(columns=[max_feature], inplace=True)
@@ -6373,7 +6501,7 @@ def compute_vif_fast(df, threshold):
 
     # Si aucun calcul VIF n'a été effectué avec succès
     if not vif_dfs:
-        vif_full = pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
+        vif_full = pd.DataFrame({'Feature': df.columns, 'VIF1': 'n.a', 'StatusVif': 'Non calculé'})
         return vif_full
 
     # Construire un DataFrame avec l'historique des VIF
@@ -6389,7 +6517,7 @@ def compute_vif_fast(df, threshold):
         vif_full = pd.concat([vif_full, missing_df], ignore_index=True)
 
     # Définir le statut de chaque feature
-    vif_full['Status'] = vif_full['Feature'].apply(
+    vif_full['StatusVif'] = vif_full['Feature'].apply(
         lambda x: 'Conservé' if x in retained_features else 'Non conservé'
     )
 
@@ -6406,7 +6534,13 @@ def compute_vif_fast(df, threshold):
 
     # Réorganiser les colonnes pour un affichage cohérent
     vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
-    vif_full = vif_full[['Feature'] + vif_columns_sorted + ['Status']]
+    vif_full = vif_full[['Feature'] + vif_columns_sorted + ['StatusVif']]
+
+    # Appliquer un format scientifique aux colonnes VIF
+    vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
+    for col in vif_columns:
+        vif_full[col] = vif_full[col].apply(
+            lambda x: f"{x:.2e}" if isinstance(x, (int, float)) and not pd.isna(x) else x)
 
     return vif_full
 
@@ -6554,6 +6688,11 @@ from sklearn.feature_selection import mutual_info_classif, mutual_info_regressio
 ###############################################################################
 # Fonction mRMR - Minimum Redundancy Maximum Relevance
 ###############################################################################
+import numpy as np
+from sklearn.feature_selection import mutual_info_classif
+from tqdm import tqdm
+import time
+
 def compute_mRMR_filtering(X, Y, config):
     """
     Implémentation simple de la méthode mRMR (Minimum Redundancy Maximum Relevance).
@@ -6728,6 +6867,7 @@ def compute_mRMR_filtering(X, Y, config):
 
 
 
+
 ###############################################################################
 # Calcule les scores de Fisher (ANOVA F-Test)
 ###############################################################################
@@ -6868,47 +7008,54 @@ def compute_vif_optimized(df, threshold):
 ###############################################################################
 # Fonction Gestion de la selection des features
 ###############################################################################
-
 def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                                          config=None,
-                                         auto_filtering_mode=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING,
+                                         compute_feature_stat=False,
                                          is_compute_vif=False):
     """
     Analyse complète des features d'un DataFrame avec options de filtrage.
 
     Cette fonction combine :
     1. L'analyse des valeurs manquantes et nulles
-    2. Le filtrage optionnel des features, selon auto_filtering_mode :
-       - VIF (multicolinéarité) + Corrélation + MI
-       - mRMR
-       - Aucun filtrage (simple affichage)
+    2. (Optionnel) Le calcul des statistiques de features : Corrélation, MI, mRMR, Fisher
+    3. L'affichage final avec ou sans statut de filtrage
 
     Args:
         X (pd.DataFrame): DataFrame des features
         Y (pd.Series): Série cible
         name (str): Nom du dataset pour l'affichage
         config (dict): Paramètres divers :
-            - vif_threshold, corr_threshold, mi_threshold
-            - mrmr_n_features, mrmr_score_threshold, mi_method
+            - vif_threshold
+            - corr_threshold, mi_threshold
+            - mrmr_n_features, mrmr_score_threshold
+            - fisher_score_threshold, fisher_pvalue_threshold, fisher_top_n_features
             - excluded_columns_principal, excluded_columns_tradeDirection,
               excluded_columns_CorrCol, excluded_columns_category
-        auto_filtering_mode (int): Mode de filtrage, voir AutoFilteringOptions.
+        compute_feature_stat (bool): Si True, calcule CORR + MI + mRMR + Fisher.
+                                     Sinon, aucun calcul (Mode NO_FILTERING).
+        is_compute_vif (bool): Si True, calcule le VIF avant toute autre analyse.
 
     Returns:
-        list: Liste des colonnes conservées après filtrage (si filtrage appliqué)
-        None: Si aucun filtrage n'est appliqué (mode NO_FILTERING)
+        list: Liste des colonnes conservées (si filtrage) ou None si pas de filtrage.
     """
-
+    import numpy as np
+    import pandas as pd
+    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
     if config is None:
         config = {}
 
+    # Chargement des paramètres
     vif_threshold = config.get('vif_threshold', 0)
+    retained_only_vif = config.get('retained_only_vif', 0)
+    method_powerAnaly = config.get('method_powerAnaly', 0)
+    n_simulations_monte=config.get('n_simulations_monte', 0)
+    powAnaly_threshold = config.get('powAnaly_threshold', 0.8)
     corr_threshold = config.get('corr_threshold', 0)
     mi_threshold = config.get('mi_threshold', 0)
-    # Nouveau paramètre pour décider si on calcule le VIF
 
-    # Création du DataFrame d'analyse basique
+
+    # 1) Création du DataFrame d'analyse basique
     analysis_df = pd.DataFrame()
     analysis_df['Feature'] = X.columns
     analysis_df['NaN Count'] = X.isna().sum().values
@@ -6918,54 +7065,86 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     analysis_df['non NaN'] = len(X) - analysis_df['NaN Count']
     analysis_df['non NaN%'] = 100 - analysis_df['NaN%']
 
-    # Initialisation
     has_status = False
     retained_columns = None
     vif_full = None
 
-    # Calcul du VIF (uniquement si demandé)
-    # Calcul du VIF (uniquement si demandé)
+    # 2) Calcul du VIF (uniquement si demandé)
     if is_compute_vif:
         try:
             with np.errstate(divide='ignore', invalid='ignore'):
-                vif_full = compute_vif_fast(X, vif_threshold)  # Utilisation de la version optimisée
+                vif_full = compute_vif_fast(X, vif_threshold)
                 analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
-
-                # Colonnes conservées après VIF
-                retained_columns = vif_full[vif_full['Status'] == 'Conservé']['Feature'].tolist()
+                if 'StatusVif' in analysis_df.columns:
+                    print("is_compute_vif= true ✅ Colonne StatusVif correctement ajoutée à analysis_df")
+                else:
+                    print("is_compute_vif= true ❌ Colonne StatusVif non présente dans analysis_df après fusion")
+                # Colonnes conservées selon le statut "Conservé"
+                retained_columns = vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'].tolist()
                 if retained_columns:
-                    X_afterVIF = X[retained_columns]
+                    if retained_only_vif:
+                       X_afterVIF = X[retained_columns]
+                    else:
+                        X_afterVIF = X#  permet d'afficher toutes ls valeurs meme les redonndantes
                 else:
                     print("⚠️ Aucune colonne conservée après VIF. Utilisation de X d'origine.")
-                    X_afterVIF = X.copy()  # Pour éviter qu'il soit vide
+                    X_afterVIF = X.copy()  # Pour éviter un DataFrame vide
                     exit(35)
+
         except Exception as e:
-            print(f"Erreur lors du calcul: {str(e)}")
+            print(f"Erreur lors du calcul VIF: {str(e)}")
+            # On considère ici qu'on ne peut pas continuer le filtrage
             exit(36)
-            # Créer un DataFrame VIF vide mais bien structuré
-            vif_full = pd.DataFrame({'Feature': X.columns, 'VIF1': 'n.a', 'Status': 'Non calculé'})
-            analysis_df = pd.merge(analysis_df, vif_full, on='Feature', how='left')
-
-            # Si erreur, garder toutes les colonnes initiales pour éviter un crash
-            X_afterVIF = X.copy()
     else:
-        X_afterVIF = X.copy()  # Assurer que X_afterVIF existe toujours
+        X_afterVIF = X.copy()
 
-    # Vérification finale pour éviter toute erreur
     if X_afterVIF.shape[1] == 0:
         raise ValueError("🚨 Aucune colonne n'a été conservée après le filtrage VIF. Impossible de continuer.")
 
-    ############################################################################
-    # 1) Mode ENABLE_VIF_CORR_MI
-    ############################################################################
-    if auto_filtering_mode == AutoFilteringOptions.ENABLE_VIF_CORR_MI:
-        # -- Filtrage par corrélation --
+    # 3) Si compute_feature_stat=True, on calcule TOUTES les stats (Corr, MI, mRMR, Fisher)
+    if compute_feature_stat:
+        # 3.0) Analyse de puissance statistique
+        power_results = calculate_statistical_power_job(X_afterVIF, Y, target_power=powAnaly_threshold, n_simulations_monte=n_simulations_monte,
+                                                    sample_fraction=0.8, verbose=True,
+                                                    method_powerAnaly=method_powerAnaly)
+
+        # Sélectionner les colonnes à garder selon la méthode
+        cols_to_keep = ['Feature']
+
+        # Créer une copie pour éviter WarningSettingWithCopyWarning
+        power_results_subset = power_results[['Feature']].copy()
+
+        if method_powerAnaly == "analytical":
+            # Ajouter la colonne de puissance analytique renommée en 'powStat'
+            power_results_subset['powStat'] = power_results['Power_Analytical']
+            print("\nMéthode analytique utilisée")
+        elif method_powerAnaly == "montecarlo":
+            # Ajouter la colonne de puissance Monte Carlo renommée en 'powStat'
+            power_results_subset['powStat'] = power_results['Power_MonteCarlo']
+            print("\nMéthode Monte Carlo utilisée")
+        elif method_powerAnaly == "both":
+            # Ajouter la colonne de puissance Monte Carlo renommée en 'powStat'
+            power_results_subset['powStat'] = power_results['Power_MonteCarlo']
+            print("\nMéthode combinée utilisée (valeur Monte Carlo conservée)")
+        else:
+            print(f"Méthode invalide: {method_powerAnaly}")
+            exit(23)
+
+        # Fusionner les résultats avec analysis_df
+        analysis_df = pd.merge(analysis_df, power_results_subset, on='Feature', how='left')
+
+        # Afficher les colonnes 'Feature' et 'powStat' pour vérification
+        print("\nAperçu de Feature et powStat:")
+        print(analysis_df[['Feature', 'powStat']].head(10))
+
+        # 3.1) Corrélation
         merged_dfVIF_target = pd.concat([X_afterVIF, Y], axis=1)
         merged_dfVIF_target.columns = list(X_afterVIF.columns) + ['target']
         corr_df = compute_and_keep_correled(merged_dfVIF_target)
         analysis_df = pd.merge(analysis_df, corr_df, on='Feature', how='left')
 
-        # -- Information Mutuelle (MI) univariée --
+
+        # 3.2) Mutual Information (MI)
         if Y.nunique() <= 20 or Y.dtype == 'object' or Y.dtype == 'category' or np.issubdtype(Y.dtype, np.integer):
             mi_scores = mutual_info_classif(X_afterVIF, Y)
         else:
@@ -6974,99 +7153,67 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         mi_df = pd.DataFrame({'Feature': X_afterVIF.columns, 'mi': mi_scores})
         analysis_df = pd.merge(analysis_df, mi_df, on='Feature', how='left')
 
-        # Identification de la dernière colonne VIF calculée
-        vif_columns = [col for col in analysis_df.columns if col.startswith('VIF')]
-        vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
-        last_vif_column = vif_columns_sorted[0] if vif_columns_sorted else None
-
-        # Calcul d'un nouveau 'Status' (True/False) pour filtrer
-        def compute_status(row):
-            vif_value = row.get(last_vif_column, 'n.a')
-            if vif_value != 'n.a' and not pd.isna(vif_value):
-                vif_ok = float(vif_value) <= vif_threshold
-            else:
-                vif_ok = False
-
-            corr_ok = (
-                (abs(row.get('lr_target', 0)) > corr_threshold) or
-                (abs(row.get('nlr_target', 0)) > corr_threshold)
-            )
-            mi_ok = row.get('mi', 0) > mi_threshold
-            return vif_ok and (corr_ok or mi_ok)
-
-        analysis_df['Status'] = analysis_df.apply(compute_status, axis=1)
-        retained_columns = analysis_df.loc[analysis_df['Status'], 'Feature'].tolist()
-        has_status = True
-
-    ############################################################################
-    # 2) Mode ENABLE_MRMR
-    ############################################################################
-    elif auto_filtering_mode == AutoFilteringOptions.ENABLE_MRMR:
-        # -- Calcul mRMR --
-        selected_features, mrmr_scores = compute_mRMR_filtering(X, Y, config)
-        # On ajoute une colonne pour le score mRMR
+        # 3.3) mRMR
+        selected, mrmr_scores = compute_mRMR_filtering(X_afterVIF, Y, config)
         analysis_df['mrmr_score'] = analysis_df['Feature'].map(mrmr_scores)
-        # On ajoute une colonne 'Status' pour marquer les features retenues
-        analysis_df['Status'] = analysis_df['Feature'].apply(lambda f: f in selected_features)
-        retained_columns = selected_features
-        has_status = True
 
-
-    ############################################################################
-    # 3) Mode ENABLE_FISHER
-    ############################################################################
-    elif auto_filtering_mode == AutoFilteringOptions.ENABLE_FISHER:
-        # Calcul des scores Fisher en utilisant la fonction existante
-        fisher_df = fisher_score_feature_selection(X, Y, name, config)
-
-        # Problème ici: la fusion utilise les noms de colonnes tels quels,
-        # mais fisher_df utilise 'Fisher_Score' tandis que votre code cherche 'Fisher Score'
-        # Renommons les colonnes pour correspondre à ce que le code attend plus tard
+        # 3.4) Fisher
+        fisher_df = fisher_score_feature_selection(X_afterVIF, Y, name, config)
+        # Renommer si nécessaire pour correspondre aux colonnes attendues
         fisher_df = fisher_df.rename(columns={
-            'Fisher_Score': 'Fisher_Score',  # Garder le même nom
-            'p-value': 'p-value'  # Garder le même nom
+            'Fisher_Score': 'Fisher_Score',
+            'p-value': 'p-value'
         })
-
-        # Ajouter Fisher scores au DataFrame d'analyse (correction ici)
         analysis_df = pd.merge(analysis_df, fisher_df, on='Feature', how='left')
 
-        # Détermination des colonnes à retenir selon seuil ou top_n
-        fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
-        fisher_pvalue_threshold = config.get('fisher_pvalue_threshold', 0.05)
-        fisher_top_n = config.get('fisher_top_n_features', None)
-
-        if fisher_top_n is not None:
-            selected_features = fisher_df.head(fisher_top_n)['Feature'].tolist()
-        else:
-            # sélection par seuil
-            selected_features = fisher_df[
-                (fisher_df['Fisher_Score'] >= fisher_score_threshold) &
-                (fisher_df['p-value'] <= fisher_pvalue_threshold)
-                ]['Feature'].tolist()
-
-        analysis_df['Status'] = analysis_df['Feature'].apply(lambda f: f in selected_features)
-        retained_columns = selected_features
-        has_status = True
-    ############################################################################
-    # 4) Mode NO_FILTERING
-    ############################################################################
-    elif auto_filtering_mode == AutoFilteringOptions.DISPLAY_MODE_NOFILTERING:
-        # On n'applique aucun filtrage, mais on a besoin d'une colonne Status
-        # pour conserver la logique d'affichage.
+        # On peut décider d'un 'Status' final → Par exemple, on conserve toutes les colonnes
+        # ou bien on applique un filtrage selon un critère global.
         analysis_df['Status'] = True
-        has_status = False
-        retained_columns = None
+        has_status = True
+        retained_columns = X_afterVIF.columns.tolist()
 
     else:
-        raise ValueError("auto_filtering_mode doit être une valeur de AutoFilteringOptions.")
+        # 4) Mode NO_FILTERING : aucun calcul
+        print("✋ compute_feature_stat=False → Aucune statistique (CORR, MI, mRMR, Fisher) n'est calculée.")
+        analysis_df['Status'] = True  # tout est "conservé"
+        has_status = False
+        retained_columns = None
 
     ############################################################################
     # Préparation des colonnes pour l'affichage
     ############################################################################
+    # Fixed section of the displaytNan_vifMiCorr_mRMR_Filtering function
+    # Replace the section where headers are defined
+
+    # Préparation des colonnes pour l'affichage
+    ############################################################################
+    # Préparation des colonnes pour l'affichage
     base_columns = ['Feature']
     if has_status:
         base_columns.append('Status')
 
+    # Création de is_vif et is_stat
+    if is_compute_vif:
+        conserved_features = set(vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'])
+        analysis_df['is_vif'] = analysis_df['Feature'].apply(lambda x: x in conserved_features)
+        df_vif_true = analysis_df[analysis_df['is_vif'] == True]
+        print(df_vif_true[['Feature', 'is_vif']])
+
+    if compute_feature_stat:
+        analysis_df['is_stat'] = compute_feature_stat
+
+    # Only add 'is_vif' if we are actually doing a VIF analysis
+    if is_compute_vif:
+        base_columns.append('is_vif')
+
+    # Only add 'is_stat' if we are actually computing stats
+    if compute_feature_stat:
+        base_columns.append('is_stat')
+
+    # On check s'il existe une colonne 'powStat'
+    power_column= []
+    if 'powStat' in analysis_df.columns:
+        power_column = ['powStat']
     # On check s'il existe des colonnes de corrélation
     correlation_columns = []
     if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
@@ -7082,12 +7229,6 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     if 'mrmr_score' in analysis_df.columns:
         mrmr_col = ['mrmr_score']
 
-    # Colonnes NaN
-    nan_columns = ['NaN Count', 'NaN%', 'Zeros%', 'NaN+Zeros%', 'non NaN', 'non NaN%']
-
-    # Colonnes VIF (si présentes)
-    vif_cols = [col for col in analysis_df.columns if col.startswith('VIF')]
-
     # Colonnes Fisher (si présentes)
     fisher_cols = []
     if 'Fisher_Score' in analysis_df.columns:
@@ -7095,61 +7236,104 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     if 'p-value' in analysis_df.columns:
         fisher_cols.append('p-value')
 
+    # Colonnes NaN
+    nan_columns = ['NaN Count', 'NaN%', 'Zeros%', 'NaN+Zeros%', 'non NaN', 'non NaN%']
+
+    # Colonnes VIF (si présentes)
+    vif_cols = [col for col in analysis_df.columns if col.startswith('VIF')]
+
     # Construction de la liste finale des colonnes à afficher - NOUVEL ORDRE
-    # Nouvel ordre: Feature, (Status), Corr, MI, mRMR, NaN+stats, VIF, Fisher
-    analysis_df_columns = base_columns + correlation_columns + mi_column + mrmr_col + nan_columns + vif_cols + fisher_cols
+    # Nouvel ordre: Feature, (Status), Corr, MI, mRMR, Fisher, NaN+stats, VIF
+    analysis_df_columns = base_columns + power_column+correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols
 
     # Vérification pour éviter KeyError si certaines colonnes n'existent pas
     analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
+
     analysis_df = analysis_df[analysis_df_columns]
 
-    # Construction des en-têtes à afficher (même ordre que analysis_df_columns)
-    headers = base_columns.copy()  # Commence par Feature (et Status si inclus)
-    if correlation_columns:
-        headers += correlation_columns
-    if mi_column:
-        headers += mi_column
-    if mrmr_col:
-        headers += mrmr_col
-    headers += nan_columns
-    headers += vif_cols
-    headers += fisher_cols
+    # Instead of building headers piecewise again, just copy them directly:
+    headers = analysis_df_columns.copy()
 
-    # Définition des formats d'affichage (même ordre que headers)
-    # Format pour Feature
-    base_format = ["{:<53}"]
-    # Format pour Status (si présent)
+    # # Construction des en-têtes à afficher (même ordre que analysis_df_columns)
+    # headers = base_columns.copy()  # => [Feature, Status, is_vif, is_stat]
+    # if power_column:
+    #     headers += power_column
+    # if correlation_columns:
+    #     headers += correlation_columns
+    # if mi_column:
+    #     headers += mi_column
+    # if mrmr_col:
+    #     headers += mrmr_col
+    # headers += fisher_cols
+    # headers += nan_columns
+    # headers += vif_cols
+
+    #####################
+    # Définition des formats d'affichage
+    #####################
+    base_format = ["{:<56}"]  # Pour 'Feature'
+
     if has_status:
-        base_format.append("{:>8}")
+        base_format.append("{:<6}")  # Pour 'Status'
 
-    # Format pour corrélation
-    correlation_format = ["{:>12}", "{:>12}"] if correlation_columns else []
+    # Ensuite pour is_vif et is_stat
+    if is_compute_vif:
+        base_format.append("{:<6}")  # is_vif
+        base_format.append("{:<6}")  # is_stat
 
-    # Format pour la colonne 'mi'
-    mi_format = ["{:>12}"] if mi_column else []
+    #power_column
+    power_format = ["{:12}"] if power_column else []
 
-    # Format pour la colonne 'mrmr_score'
-    mrmr_format = ["{:>12}"] if mrmr_col else []
-
-    # Format pour les colonnes NaN
+    # Corrélation
+    correlation_format = ["{:<9}", "{:<12}"] if correlation_columns else []
+    # MI
+    mi_format = ["{:^6}"] if mi_column else []
+    # mrmr
+    mrmr_format = ["{:>10}"] if mrmr_col else []
+    # Fisher
+    fisher_formats = ["{:>12}", "{:<9}"] if len(fisher_cols) > 0 else []
+    # NaN
     nan_format = [
-        "{:>10}",  # NaN Count
+        "{:>8}",  # NaN Count
         "{:>8}",  # NaN%
         "{:>8}",  # Zeros%
         "{:>12}",  # NaN+Zeros%
         "{:>12}",  # Val non NaN
         "{:>12}",  # Val non NaN%
     ]
-
-    # Format pour les colonnes VIF
+    # VIF
     vif_formats = ["{:>12}"] * len(vif_cols)
 
-    # Format pour les colonnes Fisher
-    fisher_formats = ["{:>12}"] * len(fisher_cols)
+    full_format = (
+            base_format
+            +power_format
+            + correlation_format
+            + mi_format
+            + mrmr_format
+            + fisher_formats
+            + nan_format
+            + vif_formats
+    )
 
-    # Concaténation du format selon le même ordre que analysis_df_columns
-    full_format = base_format + correlation_format + mi_format + mrmr_format + nan_format + vif_formats + fisher_formats
+    row_count = 0
+    print(f"DataFrame shape before display loop: {analysis_df.shape}")
+    print("== Columns in analysis_df just before printing ==")
+    print(analysis_df.columns)
 
+    print("\n== A sample of the rows with the NaN stats ==")
+    print(
+        analysis_df[
+            [
+                "Feature",
+                "NaN Count",
+                "NaN%",
+                "Zeros%",
+                "NaN+Zeros%",
+                "non NaN",
+                "non NaN%",
+            ]
+        ].head(20)
+    )
     # Impression de l'entête (UNE SEULE FOIS)
     header_line = ''
     for header, fmt in zip(headers, full_format):
@@ -7170,44 +7354,232 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     excluded_columns_CorrCol = config.get('excluded_columns_CorrCol', [])
     excluded_columns_category = config.get('excluded_columns_category', [])
 
-    # Trier les features selon leur score mRMR avant affichage
-    if 'mrmr_score' in analysis_df.columns:
-        analysis_df = analysis_df.sort_values(by='mrmr_score', ascending=True)  # Trie du plus petit au plus grand
-    elif 'mi' in analysis_df.columns:
-        analysis_df['mi_na'] = analysis_df['mi'].isna()  # Crée une colonne booléenne : True si mi == n.a, sinon False
-        analysis_df = analysis_df.sort_values(by=['mi_na', 'mi'], ascending=[False,
-                                                                             True])  # Trie : 1) mi = n.a en premier, 2) puis mi croissant
-        analysis_df.drop(columns=['mi_na'], inplace=True)  # Supprime la colonne temporaire
-    elif 'Fisher_Score' in analysis_df.columns:
-        analysis_df = analysis_df.sort_values(by='Fisher_Score', ascending=False)  # Trie du plus grand au plus petit
 
-    # Début de la boucle qui affiche les lignes
-    for idx, row in analysis_df.iterrows():
-        # Initialisation des tableaux pour les valeurs et couleurs
+    # 13) Créer la colonne `is_vif` : True si la feature est "Conservé" par VIF, False sinon
+    # Création de la colonne is_vif indépendamment de StatusVif
+    if is_compute_vif:
+        # Alternative: se baser sur le résultat de vif_full directement
+        conserved_features = set(vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'].tolist())
+        analysis_df['is_vif'] = analysis_df['Feature'].apply(lambda x: x in conserved_features)
+
+    # S'assurer que is_vif est incluse dans l'affichage
+    if 'is_vif' in analysis_df.columns:
+        # Si is_vif existe mais n'est pas dans base_columns, l'ajouter
+        if 'is_vif' not in base_columns:
+            print("base_columns.append('is_vif') !!!!!!!!!!")
+            base_columns.append('is_vif')
+            exit(78)
+
+
+    # IMPORTANT: Inclure StatusVif avant de filtrer
+    #status_vif_col = ['StatusVif'] if 'StatusVif' in analysis_df.columns else []
+    analysis_df_columns = base_columns + power_column + correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols #+ status_vif_col
+
+
+    # Filtrer les colonnes UNE SEULE FOIS
+    analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
+    analysis_df = analysis_df[analysis_df_columns]
+
+
+
+    # 14) Créer la colonne `is_stat` : True si la feature valide au moins un seuil statistique
+    if (compute_feature_stat):
+        analysis_df["is_stat"] = False  # Valeur par défaut
+
+    # Récupération des seuils depuis config (ou valeurs par défaut)
+    mrmr_thresh = config.get("mrmr_score_threshold", -np.inf)
+    mi_thresh = config.get("mi_threshold", 0)
+    fisher_thresh = config.get("fisher_score_threshold", 0)
+    pval_thresh = config.get("fisher_pvalue_threshold", 0.05)
+
+    # Affichons tous les seuils pour vérification
+    print(
+        f"\nSeuils utilisés: corr={corr_threshold}, mrmr={mrmr_thresh}, mi={mi_thresh}, fisher={fisher_thresh}, pval={pval_thresh}")
+
+    def passes_stat_thresholds(row):
+        """
+        Évalue si une ligne (feature) passe au moins un des seuils statistiques,
+        indépendamment du statut VIF.
+        """
+
+
+        # Gardons une trace des tests effectués
+        conditions_tested = []
+
+        # Corrélations (lr_target et nlr_target)
+        if "lr_target" in row and isinstance(row["lr_target"], (int, float)):
+            lr_val = abs(row["lr_target"])
+            conditions_tested.append(f"lr_target={lr_val}, seuil={corr_threshold}, résultat={lr_val > corr_threshold}")
+            if lr_val > corr_threshold:
+                #print(f"Condition passée: lr_target={lr_val} > {corr_threshold}")
+                return True
+
+        if "nlr_target" in row and isinstance(row["nlr_target"], (int, float)):
+            nlr_val = abs(row["nlr_target"])
+            conditions_tested.append(
+                f"nlr_target={nlr_val}, seuil={corr_threshold}, résultat={nlr_val > corr_threshold}")
+            if nlr_val > corr_threshold:
+                #print(f"Condition passée: nlr_target={nlr_val} > {corr_threshold}")
+                return True
+
+        # mrmr_score
+        if "mrmr_score" in row and isinstance(row["mrmr_score"], (int, float)):
+            mrmr_val = row["mrmr_score"]
+            conditions_tested.append(f"mrmr_score={mrmr_val}, seuil={mrmr_thresh}, résultat={mrmr_val > mrmr_thresh}")
+            if mrmr_val > mrmr_thresh:
+                #print(f"Condition passée: mrmr_score={mrmr_val} > {mrmr_thresh}")
+                return True
+
+        # mi
+        if "mi" in row and isinstance(row["mi"], (int, float)):
+            mi_val = row["mi"]
+            conditions_tested.append(f"mi={mi_val}, seuil={mi_thresh}, résultat={mi_val > mi_thresh}")
+            if mi_val > mi_thresh:
+                #print(f"Condition passée: mi={mi_val} > {mi_thresh}")
+                return True
+
+        # Fisher_Score
+        if "Fisher_Score" in row and isinstance(row["Fisher_Score"], (int, float)) and not pd.isna(row["Fisher_Score"]):
+            fisher_val = row["Fisher_Score"]
+            conditions_tested.append(
+                f"Fisher_Score={fisher_val}, seuil={fisher_thresh}, résultat={fisher_val > fisher_thresh}")
+            if fisher_val > fisher_thresh:
+                #print(f"Condition passée: Fisher_Score={fisher_val} > {fisher_thresh}")
+                return True
+
+        # p-value
+        if "p-value" in row and isinstance(row["p-value"], (int, float)) and not pd.isna(row["p-value"]):
+            pval = row["p-value"]
+            conditions_tested.append(f"p-value={pval}, seuil={pval_thresh}, résultat={pval <= pval_thresh}")
+            if pval <= pval_thresh:
+                #print(f"Condition passée: p-value={pval} <= {pval_thresh}")
+                return True
+
+        # Si aucune condition n'est passée, affichons toutes les vérifications effectuées
+        #print(f"Aucune condition passée pour cette ligne. Tests effectués: {conditions_tested}")
+        #print(
+        #    f"Valeurs de la ligne: {dict((k, v) for k, v in row.items() if k in ['lr_target', 'nlr_target', 'mrmr_score', 'mi', 'Fisher_Score', 'p-value'])}")
+        return False
+
+    if (compute_feature_stat):
+        analysis_df["is_stat"] = analysis_df.apply(passes_stat_thresholds, axis=1)
+    ############# fin de is_vif et is_stat #################
+
+    ############# debut du tri par groupe #################
+
+    def group_order(row):
+        vif = row["is_vif"]  # True/False
+        stat = row["is_stat"]  # True/False
+
+        # Groupe 1 : non retenu VIF + ne valide pas stat
+        if (not vif) and (not stat):
+            return 1
+        # Groupe 2 : retenu VIF + ne valide pas stat
+        elif vif and (not stat):
+            return 2
+        # Groupe 3 : non retenu VIF + valide stat
+        elif (not vif) and stat:
+            return 3
+        # Groupe 4 : retenu VIF + valide stat
+        else:
+            return 4
+
+    if is_compute_vif:
+        analysis_df["group_order"] = analysis_df.apply(group_order, axis=1)
+
+    ############# fin du tri par groupe #################
+
+    ############# ordonner le df #################
+    if is_compute_vif:
+        analysis_df = analysis_df.sort_values(by="group_order", ascending=True)
+
+
+        # Par exemple, on les insère juste après Feature :
+
+
+
+        # Vérification qu'elles existent
+        analysis_df_columns = [c for c in analysis_df_columns if c in analysis_df.columns]
+        analysis_df = analysis_df[analysis_df_columns]
+
+        # Idem pour `headers` et `full_format` (ajouter deux formats "{}" par exemple)
+
+        headers.insert(1, "is_vif")
+        headers.insert(2, "is_stat")
+
+        base_format.insert(1, "{:>6}")  # ex. 5 caractères
+        base_format.insert(2, "{:>6}")
+
+    # --- Début de la boucle d'affichage ---
+    # --- Début de la boucle d'affichage ---
+
+
+    for i in range(len(analysis_df)):
+        row = analysis_df.iloc[i]
         output_values = []
         output_colors = []
 
-        # Ajout des valeurs dans le MÊME ORDRE que headers
-
-        # Feature (toujours en premier)
+        # (1) Feature
         output_values.append(row['Feature'])
         output_colors.append('')
 
-        # Status (si présent)
+        # (2) Status (si présent)
         if has_status:
-            status_str = 'True' if row['Status'] else 'False'
+            # True/False => on ne colorie pas ici
+            status_str = 'True' if bool(row['Status']) else 'False'
             output_values.append(status_str)
             output_colors.append('')
 
-        # Corrélation
+        # (3) is_vif → color
+        if is_compute_vif:
+            try:
+                # Convertir explicitement en bool
+                vif_val = bool(row['is_vif'])
+                if vif_val:
+                    output_values.append(f"{BLUE}True{RESET}")
+                else:
+                    output_values.append(f"{RED}False{RESET}")
+            except Exception as e:
+                # Fallback en cas d'erreur
+                output_values.append(f"{RED}False{RESET}")  # Valeur par défaut
+            output_colors.append('')  # pas besoin d'autre coloration par cell
+
+        # (4) is_stat → color
+        if compute_feature_stat:
+            try:
+                # Convertir explicitement en bool
+                stat_val = bool(row['is_stat'])
+                if stat_val:
+                    output_values.append(f"{BLUE}True{RESET}")
+                else:
+                    output_values.append(f"{RED}False{RESET}")
+            except Exception as e:
+                # Fallback en cas d'erreur
+                output_values.append(f"{RED}False{RESET}")  # Valeur par défaut
+            output_colors.append('')
+
+        # 4.0) Power stat
+        if 'powStat' in analysis_df.columns:  # Changez 'powAnaly' en 'powStat'
+            powStat = row.get('powStat', 'n.a')  # Changez également ici
+            if powStat != 'n.a' and not pd.isna(powStat):
+                power_format = f"{powStat:.2f}"
+                output_values.append(power_format)
+                output_colors.append(BLUE if powStat > powAnaly_threshold else '')
+            # else:
+            #     output_values.append('n.a')
+            #     output_colors.append('')
+        
+        # 4) Corrélation (lr_target et nlr_target), s'ils existent
         if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
             lr_val = row.get('lr_target', 'n.a')
             nlr_val = row.get('nlr_target', 'n.a')
 
             # lr_target
             if lr_val != 'n.a' and not pd.isna(lr_val):
+                # On formate en nombre à 2 décimales
                 lr_formatted = f"{lr_val:.2f}"
                 output_values.append(lr_formatted)
+                # Exemple : colorier en BLEU si la corrélation dépasse un seuil
                 output_colors.append(BLUE if abs(lr_val) > corr_threshold else '')
             else:
                 output_values.append('n.a')
@@ -7221,39 +7593,67 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
             else:
                 output_values.append('n.a')
                 output_colors.append('')
-        else:
-            # Si pas de corrélation calculée
-            for _ in range(len(correlation_columns)):
-                output_values.append('n.a')
-                output_colors.append('')
+        # else:
+        #     # Si les colonnes lr_target et nlr_target n'existent pas du tout
+        #     for _ in range(2):  # on ajoute deux fois 'n.a'
+        #         output_values.append('n.a')
+        #         output_colors.append('')
 
-        # MI
+        # 5) MI (Mutual Information)
         if 'mi' in analysis_df.columns:
             mi_val = row.get('mi', 'n.a')
             if mi_val != 'n.a' and not pd.isna(mi_val):
-                mi_formatted = f"{mi_val:.4f}"
+                mi_formatted = f"{mi_val:.3f}"
                 output_values.append(mi_formatted)
                 output_colors.append(BLUE if mi_val > mi_threshold else '')
             else:
                 output_values.append('n.a')
                 output_colors.append('')
-        else:
-            for _ in range(len(mi_column)):
-                output_values.append('n.a')
-                output_colors.append('')
+        # else:
+        #     # Si la colonne 'mi' n'existe pas du tout
+        #     output_values.append('n.a')
+        #     output_colors.append('')
 
-        # mrmr_score
+        # 6) mrmr_score
         if 'mrmr_score' in analysis_df.columns:
             mrmr_val = row.get('mrmr_score', 0.0)
             mrmr_score_threshold = config.get('mrmr_score_threshold', -np.inf)
+            # Format 4 décimales
             output_values.append(f"{mrmr_val:.4f}")
+            # Colorer en BLEU si la valeur > threshold
             output_colors.append(BLUE if mrmr_val > mrmr_score_threshold else '')
-        else:
-            for _ in range(len(mrmr_col)):
-                output_values.append('n.a')
-                output_colors.append('')
+        # else:
+        #     # Colonne 'mrmr_score' inexistante
+        #     output_values.append('n.a')
+        #     output_colors.append('')
 
-        # NaN statistiques
+        # ───────────────────────────────────────────────────────────
+        # 7) Fisher columns : Fisher_Score et p-value
+        #    On veut qu'ils apparaissent JUSTE après mrmr_score
+        # ───────────────────────────────────────────────────────────
+        if 'Fisher_Score' in analysis_df.columns:
+            fisher_score = row.get('Fisher_Score', 'n.a')
+            if fisher_score != 'n.a' and not pd.isna(fisher_score):
+                # 4 décimales pour le fisher score
+                output_values.append(f"{fisher_score:.3f}")
+                fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
+                # Coloration en BLEU si le fisher_score dépasse un seuil
+                output_colors.append(BLUE if fisher_score > fisher_score_threshold else '')
+            # else:
+            #     output_values.append('n.a')
+            #     output_colors.append('')
+        if 'p-value' in analysis_df.columns:
+            p_value = row.get('p-value', 'n.a')
+            if p_value != 'n.a' and not pd.isna(p_value):
+                output_values.append(f"{p_value:.3f}")
+                # Colorer si p-value < 0.05, par exemple
+                p_value_threshold = config.get('fisher_pvalue_threshold', 0.05)
+                output_colors.append(BLUE if p_value <= p_value_threshold else '')
+            # else:
+            #     output_values.append('n.a')
+            #     output_colors.append('')
+
+        # 8) Statistiques NaN + Zeros
         nan_count = row['NaN Count']
         nan_percentage = row['NaN%']
         zeros_percentage = row['Zeros%']
@@ -7262,70 +7662,63 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         non_nan_percentage = row['non NaN%']
 
         output_values.extend([
-            int(nan_count),
+            nan_count,  # Utilisez les vraies valeurs au lieu de 1, 2, 3, 4...
             f"{nan_percentage:.2f}",
             f"{zeros_percentage:.2f}",
             f"{total_percentage:.2f}",
-            int(non_nan_count),
+            non_nan_count,
             f"{non_nan_percentage:.2f}"
         ])
-        output_colors.extend([''] * 6)  # 6 valeurs pour les statistiques NaN
+        output_colors.extend([''] * 6)
 
-        # VIF columns
-        vif_values = []
-        for col in vif_cols:
-            val = row.get(col, 'n.a')
-            if isinstance(val, str) and val == 'n.a':
-                vif_values.append('n.a')
-            elif not pd.isna(val):
-                vif_values.append(f"{val:.2f}")
-            else:
-                vif_values.append('n.a')
+        # 9) VIF columns
+        if is_compute_vif and vif_cols:  # Vérifie d'abord si on doit calculer VIF
 
-        for idx_vif, vif_val in enumerate(vif_values):
-            output_values.append(vif_val)
-            # Colorer si le VIF > vif_threshold, par exemple
-            if idx_vif == 0 and vif_val not in ['n.a', 'NaN']:
-                try:
-                    if float(vif_val) > vif_threshold:
-                        output_colors.append(BLUE)
+            vif_values = []
+            for col_vif in vif_cols:
+                val = row.get(col_vif, 'n.a')  # Récupérer la valeur VIF
+
+                # Vérification si c'est une chaîne ou un nombre
+                if isinstance(val, str) and val == 'n.a':
+                    vif_values.append('n.a')
+                elif not pd.isna(val):
+                    if isinstance(val, (int, float)):
+                        # Format float sur 2 décimales
+                        vif_values.append(f"{val:.2f}")
                     else:
+                        # Valeur déjà en notation scientifique
+                        vif_values.append(val)
+                else:
+                    vif_values.append('n.a')
+
+            # Ajout des VIF dans output_values et la coloration possible
+            for idx_vif, vif_val in enumerate(vif_values):
+                output_values.append(vif_val)
+
+                # Exemple de coloration
+                if idx_vif == 0 and vif_val not in ['n.a', 'NaN']:
+                    try:
+                        if float(vif_val) > vif_threshold:
+                            output_colors.append(BLUE)
+                        else:
+                            output_colors.append('')
+                    except ValueError:
                         output_colors.append('')
-                except ValueError:
+                else:
                     output_colors.append('')
-            else:
-                output_colors.append('')
+        else:
+            # Si VIF n'est pas calculé, ne rien ajouter pour éviter les colonnes vides
+            output_values.append('n.a')
+            output_colors.append('')
 
-        # Fisher values
-        if 'Fisher_Score' in analysis_df.columns:
-            fisher_score = row.get('Fisher_Score', 'n.a')
-            if fisher_score != 'n.a' and not pd.isna(fisher_score):
-                output_values.append(f"{fisher_score:.4f}")
-                # Définir un seuil pour colorer les valeurs importantes
-                fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
-                output_colors.append(BLUE if fisher_score > fisher_score_threshold else '')
-            else:
-                output_values.append('n.a')
-                output_colors.append('')
 
-        if 'p-value' in analysis_df.columns:
-            p_value = row.get('p-value', 'n.a')
-            if p_value != 'n.a' and not pd.isna(p_value):
-                output_values.append(f"{p_value:.4f}")
-                # Colorer les p-values significatives
-                p_value_threshold = config.get('fisher_pvalue_threshold', 0.05)
-                output_colors.append(BLUE if p_value <= p_value_threshold else '')
-            else:
-                output_values.append('n.a')
-                output_colors.append('')
-
-        # Couleur de la ligne suivant exclusions config
+        # 10) Couleur de ligne selon exclusions
         row_color = ''
+        # Si la feature est Status = False
         if has_status and not row['Status']:
-            row_color = RED  # Les features non retenues auront la ligne en rouge
+            row_color = RED
 
-        # Utiliser row['Feature'] au lieu de feature
-        feature_name = row['Feature']  # Définir la variable feature_name
+        feature_name = row['Feature']
         if feature_name in excluded_columns_principal:
             row_color = RED
         elif feature_name in excluded_columns_CorrCol:
@@ -7335,7 +7728,7 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         elif feature_name in excluded_columns_category:
             row_color = YELLOW
 
-        # Application de la couleur
+        # 11) Application de la couleur et formatage final
         formatted_values = []
         for val, fmt, color_code in zip(output_values, full_format, output_colors):
             tmp = fmt.format(val)
@@ -7345,12 +7738,15 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 tmp = f"{row_color}{tmp}{RESET}"
             formatted_values.append(tmp)
 
-        # Impression de la ligne
+        # 12) Impression de la ligne résultante
         print(' '.join(formatted_values))
+        # --- Fin de la boucle for idx, row in analysis_df.iterrows() ---
 
-    # Retourne la liste des colonnes retenues si un filtrage a été appliqué
-    if auto_filtering_mode in [AutoFilteringOptions.ENABLE_VIF_CORR_MI, AutoFilteringOptions.ENABLE_MRMR,
-                               AutoFilteringOptions.ENABLE_FISHER]:
+        # # Retourne la liste des colonnes retenues si un filtrage a été appliqué
+    # if auto_filtering_mode in [AutoFilteringOptions.ENABLE_VIF_CORR_MI, AutoFilteringOptions.ENABLE_MRMR,
+    #                            AutoFilteringOptions.ENABLE_FISHER]:
+
+    if compute_feature_stat ==True:
         return retained_columns
 
     return None

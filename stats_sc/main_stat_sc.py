@@ -147,13 +147,59 @@ features_conditions = {
 }
 
 
-
-
-
-
-
-# Utilisation
+# Application du filtrage comme dans votre code original
 df_filtered = apply_feature_conditions(df_analysis, features_conditions)
+
+# Création du DataFrame complet avec la colonne "PnlAfterFiltering"
+df_full_afterFiltering = create_full_dataframe_with_filtered_pnl(df_init_features, df_filtered)
+
+# 2. Prétraiter les sessions pour ajouter 'session_id' et 'session_date'
+df_with_sessions_and_dates = preprocess_sessions_with_date(df_full_afterFiltering)
+
+#fig = plot_trading_performance(df_with_sessions_and_dates)
+#plt.show()
+
+def save_dataframe_to_csv(df, directory_path, filename, sep=';', index=False):
+        """
+        Enregistre un DataFrame dans un fichier CSV avec le séparateur spécifié.
+
+        Args:
+            df (pd.DataFrame): Le DataFrame à enregistrer
+            directory_path (str): Le chemin du répertoire où enregistrer le fichier
+            filename (str): Le nom du fichier (sans le chemin)
+            sep (str): Le séparateur à utiliser (';' par défaut)
+            index (bool): Si True, inclut l'index dans le fichier CSV
+
+        Returns:
+            str: Le chemin complet du fichier créé
+        """
+        import os
+
+        # Créer le répertoire s'il n'existe pas
+        if not os.path.exists(directory_path):
+                os.makedirs(directory_path)
+                print(f"Répertoire créé: {directory_path}")
+
+        # Construire le chemin complet du fichier
+        file_path = os.path.join(directory_path, filename)
+
+        # Enregistrer le DataFrame
+        df.to_csv(file_path, sep=sep, index=index)
+
+        print(f"✓ Fichier enregistré: {file_path}")
+        return file_path
+
+
+# Utilisation pour votre cas spécifique
+output_filename = "df_with_sessions_and_dates.csv"
+saved_file_path = save_dataframe_to_csv(df_with_sessions_and_dates, DIRECTORY_PATH, output_filename)
+
+# Vérification des résultats
+print("Somme du PnL initial:", df_init_features['trade_pnl'].sum())
+print("Somme du PnL après filtrage:", df_full_afterFiltering['PnlAfterFiltering'].sum())
+print("Nombre de trades retenus après filtrage:", (df_full_afterFiltering['PnlAfterFiltering'] != 0).sum())
+
+
 metrics_before = calculate_performance_metrics(df_analysis)
 metrics_after = calculate_performance_metrics(df_filtered)
 print_comparative_performance(metrics_before, metrics_after)

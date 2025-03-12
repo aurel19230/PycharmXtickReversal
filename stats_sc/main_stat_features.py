@@ -5,8 +5,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.stats as stats
 from statsmodels.stats.power import TTestIndPower
-from func_standard import load_data
 from sklearn.feature_selection import f_classif  # Test F (ANOVA)
+from definition import load_data
+# Définir l'option pour afficher toutes les colonnes
+pd.set_option('display.max_columns', None)
+from standard_stat_sc import *
+
+# Si vous voulez également afficher toutes les lignes
+pd.set_option('display.max_rows', None)
+
+# Pour afficher plus de caractères dans chaque colonne (éviter la troncation des valeurs)
+pd.set_option('display.width', 1000)  # Ajustez ce nombre selon vos besoins
+
 
 # Chemin vers ton fichier
 file_name = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
@@ -18,89 +28,37 @@ df = load_data(file_path)
 
 
 # ---- FONCTION D'ANALYSE AVEC TEST F (ANOVA) ---- #
-def analyze_feature_power(df, feature_list, target_col='class_binaire', alpha=0.05, target_power=0.8, n_simulations=1000, sample_fraction=0.8):
-    results = []
-    power_analysis = TTestIndPower()
+import numpy as np
+import pandas as pd
+from scipy import stats
+from statsmodels.stats.power import TTestIndPower
+from sklearn.feature_selection import f_classif
+import numpy as np
+import pandas as pd
+from scipy import stats
+from statsmodels.stats.power import TTestIndPower
+import time
+from datetime import timedelta
 
-    # 🚀 Filtrer les colonnes constantes
-    df = df.loc[:, df.nunique() > 1]
-
-    for feature in feature_list:
-        if feature in df.columns:
-            data_filtered = df[[feature, target_col]].dropna()
-            group0 = data_filtered[data_filtered[target_col] == 0][feature].values
-            group1 = data_filtered[data_filtered[target_col] == 1][feature].values
-
-            if len(group0) > 1 and len(group1) > 1:
-                # --- TEST T (Welch) ---
-                t_stat, p_value_t = stats.ttest_ind(group0, group1, equal_var=False)
-
-                # --- TEST F (ANOVA) ---
-                try:
-                    f_stat, p_value_f = f_classif(data_filtered[[feature]], data_filtered[target_col])
-                    p_value_f = p_value_f[0]  # Extraire la valeur du test F
-                except Exception:
-                    f_stat, p_value_f = np.nan, np.nan  # Gestion des erreurs
-
-                # --- COHEN'S D ---
-                mean_diff = np.mean(group1) - np.mean(group0)
-                pooled_std = np.sqrt(((len(group0)-1)*np.std(group0, ddof=1)**2 + (len(group1)-1)*np.std(group1, ddof=1)**2) / (len(group0) + len(group1) - 2))
-                effect_size = mean_diff / pooled_std if pooled_std > 0 else 0
-
-                # --- GESTION DU CAS où L’EFFET EST NUL ---
-                if effect_size == 0:
-                    required_n = np.nan  # Pas possible de calculer
-                    power_analytical = 0
-                    power_monte_carlo = 0
-                    print(f"⚠️  Attention : Effet de taille nul pour {feature}, puissance non calculable.")
-                else:
-                    # --- PUISSANCE ANALYTIQUE ---
-                    power_analytical = power_analysis.power(effect_size=effect_size, nobs1=len(group0), alpha=alpha, ratio=len(group1)/len(group0))
-
-                    # --- PUISSANCE MONTE CARLO ---
-                    significant_count = 0
-                    for _ in range(n_simulations):
-                        sample0 = np.random.choice(group0, size=int(len(group0) * sample_fraction), replace=False)
-                        sample1 = np.random.choice(group1, size=int(len(group1) * sample_fraction), replace=False)
-                        _, p_sim = stats.ttest_ind(sample0, sample1, equal_var=False)
-                        if p_sim < alpha:
-                            significant_count += 1
-                    power_monte_carlo = significant_count / n_simulations
-
-                    # --- TAILLE D'ÉCHANTILLON REQUISE ---
-                    try:
-                        required_n = power_analysis.solve_power(effect_size=effect_size, power=target_power, alpha=alpha, ratio=len(group1)/len(group0))
-                    except ValueError:
-                        required_n = np.nan  # Ne peut pas être calculé
-
-                results.append({
-                    'Feature': feature,
-                    'Sample_Size': len(data_filtered),
-                    'Effect_Size': effect_size,
-                    'P-Value_T': p_value_t,  # Test t (Welch)
-                    'P-Value_F': p_value_f,  # Test F (ANOVA)
-                    'Power_Analytical': power_analytical,
-                    'Power_MonteCarlo': power_monte_carlo,
-                    'Required_N': np.ceil(required_n) if not np.isnan(required_n) else np.nan,
-                    'Sufficient_Analytical': power_analytical >= target_power,
-                    'Sufficient_MonteCarlo': power_monte_carlo >= target_power
-                })
-
-    results_df = pd.DataFrame(results)
-    if not results_df.empty:
-        results_df = results_df.sort_values('Power_MonteCarlo', ascending=False)
-    return results_df
+import numpy as np
+import pandas as pd
+from scipy import stats
+from statsmodels.stats.power import TTestIndPower
+from stats_sc.standard_stat_sc import calculate_statistical_power,calculate_statistical_power_job
 
 
 # ---- CHARGEMENT DES FEATURES À ANALYSER ---- #
 
 if True:
     feature_list = [
-        'diffLowPrice_0_1', 'diffVolDelta_2_2Ratio', 'ratio_deltaRevMoveExtrem_volRevMoveExtrem',
-        'cumDOM_AskBid_pullStack_avgDiff_ratio', 'ratio_deltaRevMove_volRevMove', 'VolPocVolCandleRatio',
-        'ratio_volRevZone_VolCandle', 'ratio_volRevMove_volImpulsMove', 'diffVolDelta_1_1Ratio',
-        'pocDeltaPocVolRatio', 'ratio_delta_vol_VA6P', 'delta_impulsMove_XRevZone_bigStand_extrem',
-        'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone'
+        'ratio_volRevMove_volImpulsMove',
+        'ratio_deltaZone1_volZone1',
+        'ratio_deltaExtrem_volExtrem',
+        'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone',
+        'ratio_deltaRevMoveZone1_volRevMoveZone1',
+        'ratio_deltaRevMoveExtrem_volRevMoveExtrem',
+        'ratio_deltaRevMove_volRevMove',
+       # '',
     ]
 else:
     # Colonnes à exclure explicitement (variables cibles, pnl, dates...)
@@ -128,34 +86,70 @@ explanation = """
 🔍 **Explication des variables du tableau de résultats :**
 
 - **Feature** : Nom de la feature analysée.
-- **Sample_Size** : Nombre d’observations utilisées après filtrage des NaN.
+- **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
 - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
   - **> 0.8** : Effet fort ✅
   - **0.5 - 0.8** : Effet moyen ⚠️
   - **< 0.5** : Effet faible ❌
-- **P-Value_T (Test t de Welch)** : Vérifie si la moyenne des deux classes est différente (**p < 0.05** signifie significatif).
-- **P-Value_F (ANOVA F-test)** : Mesure la variance entre les classes (**p < 0.05** indique une différence de variabilité importante).
+
+- **P-Value** : Probabilité d'observer la relation par hasard.
+  - **< 0.01** : Très significatif ✅✅
+  - **0.01 - 0.05** : Significatif ✅
+  - **0.05 - 0.10** : Marginalement significatif ⚠️
+  - **> 0.10** : Non significatif ❌
+
+- **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
+  - **> 20** : Exceptionnellement puissant ✅✅
+  - **10 - 20** : Très intéressant ✅
+  - **5 - 10** : Modérément intéressant ⚠️
+  - **1 - 5** : Faiblement intéressant ❌
+  - Dans le trading, même des scores modestes peuvent avoir une valeur s'ils sont stables dans le temps.
+
 - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
 - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
-- **Required_N** : Nombre d’observations nécessaires pour atteindre **Puissance = 0.8**.
-- **Sufficient_Analytical** : L'échantillon actuel est-il suffisant selon l'analyse analytique ?
-- **Sufficient_MonteCarlo** : L'échantillon actuel est-il suffisant selon les simulations Monte Carlo ?
+- **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
+- **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
 
-🎯 **Interprétation des seuils** :
-- ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes.
-- ⚠️ **0.6 ≤ Puissance < 0.8** : Possible impact, mais incertain.
-- ❌ **Puissance < 0.6** : Probablement inutile pour la classification.
+🎯 **Interprétation des seuils de puissance statistique** :
+- ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
+- ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
+- ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
 
----------------------------------------------
+📈 **Considérations spécifiques pour le trading** :
+- Une feature avec un Fisher Score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
+- Surveillez la complémentarité des features : des variables individuellement modestes peuvent créer un signal puissant en combinaison.
+- Vérifiez toujours la robustesse après prise en compte des frais de transaction.
+- Pour les stratégies haute fréquence, même des effets faibles peuvent être exploitables si la significativité statistique est forte.
 """
 
 print(explanation)
 
 # ---- ANALYSE DE PUISSANCE ---- #
 print("\n🔍 **Analyse de puissance statistique pour les features :**")
-power_results = analyze_feature_power(df_filtered, feature_list)
-print(power_results)
+# Préparation des données
+# Préparation des données
+X = df_filtered[feature_list].copy()  # DataFrame contenant uniquement les features sélectionnées
+y = df_filtered['class_binaire'].copy()  # Série de la cible
 
+# Exemple d'utilisation:
+results = correlation_matrices(X, y)
+#
+# # Pour accéder aux résultats:
+# pearson_matrix = results['pearson_matrix']
+# spearman_target = results['spearman_target']
+
+# Appel de la fonction avec X pré-filtré
+
+power_results = calculate_statistical_power(X, y,target_power=0.8, n_simulations_monte=20000,
+                                sample_fraction=0.8, verbose=True,
+                                method_powerAnaly='both')              # Série de la cible
+
+
+
+# Utilisez les résultats comme avant
+powerful_features = power_results[power_results['Power_MonteCarlo'] >= 0.5]['Feature'].tolist()
+print(f"\n✅ **Features avec une puissance suffisante (≥ 0.5) :** {len(powerful_features)}/{len(feature_list)}")
+print(power_results)
 
 # ---- VISUALISATION ---- #
 def plot_power_analysis(power_results):
@@ -174,7 +168,7 @@ def plot_power_analysis(power_results):
     plt.show()
 
 # ---- FILTRAGE DES FEATURES PERTINENTES ---- #
-powerful_features = power_results[power_results['Power_MonteCarlo'] >= 0.6]['Feature'].tolist()
+powerful_features = power_results[power_results['Power_MonteCarlo'] >= 0.5]['Feature'].tolist()
 print(f"\n✅ **Features avec une puissance suffisante (≥ 0.6) :** {len(powerful_features)}/{len(feature_list)}")
 if powerful_features:
     print("\n".join(f"- {f}" for f in powerful_features))

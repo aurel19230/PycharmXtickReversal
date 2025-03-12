@@ -14,7 +14,7 @@ def get_path():
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
     FILE_NAME_ = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-    FILE_NAME_ = "Step5_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    #FILE_NAME_ = "Step5_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
 
 
     ENV = detect_environment()
@@ -22,12 +22,12 @@ def get_path():
         if platform.system() != "Darwin":
             base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
             DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\merge_I1_I2"
-            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\UnerAu15dec22h\merge"
+            #DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\UnerAu15dec22h\merge"
 
         else:
             base_results_path = "/Users/aurelienlachaud/Documents/trading_local/data_preprocessing/results_optim/"
             DIRECTORY_PATH ="/Users/aurelienlachaud/Documents/trading_local/"
-            #DIRECTORY_PATH = "/Users/aurelienlachaud/Library/CloudStorage/OneDrive-Personal/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB/merge"
+            DIRECTORY_PATH = "/Users/aurelienlachaud/Library/CloudStorage/OneDrive-Personal/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/4_0_5TP_1SL_newBB/merge"
     else:  # collab
         DIRECTORY_PATH =r"/content/drive/MyDrive/testFile/"
         base_results_path = r"/content/drive/MyDrive/Colab_Notebooks/xtickReversal/results_optim/"
@@ -112,8 +112,36 @@ def get_model_param_range(model_type):
             'bagging_freq': {'min': 1, 'max': 12}
         }
 
+    elif model_type == modelType.RF:
+        return {
+            # Nombre d'arbres dans la forêt - plus d'arbres = plus robuste mais rendements décroissants
+            'n_estimators': {'min': 100, 'max': 1000},
 
+            # Profondeur maximale - contrôle la complexité des arbres
+            'max_depth': {'min': 5, 'max': 20},
 
+            # Nombre minimal d'échantillons pour diviser un nœud - régule la taille des splits
+            'min_samples_split': {'min': 4, 'max': 12},
+
+            # Nombre minimal d'échantillons dans une feuille - impact sur la régularisation
+            'min_samples_leaf': {'min': 1, 'max': 10},
+
+            # Nombre de caractéristiques à considérer pour la meilleure division
+            'max_features': {'min': 0.5, 'max': 0.9},  # Proportion des features
+
+            # Poids maximum des feuilles - contrôle l'influence relative des feuilles
+            'max_leaf_nodes': {'min': 50, 'max': 200},
+
+            # Paramètre de complexité pour l'élagage des arbres
+            'ccp_alpha': {'min': 0.0, 'max': 0.03, 'log': True},
+
+            # Pourcentage minimal d'échantillons requis pour être considéré comme "impureté"
+            'min_impurity_decrease': {'min': 0.0, 'max': 0.01, 'log': True},
+
+            # Bootstrap - si True, utilise le bootstrapping pour construire les arbres
+            'bootstrap': [True], #[True, False],
+
+        }
     elif model_type == modelType.CATBOOST:
         return {
             # Équivalent à XGB num_boost_round : Nombre total d'arbres
@@ -219,18 +247,20 @@ def get_config():
         'use_imbalance_penalty': False, #pour prendre en compte les différence de trade entre les folds
         'is_log_enabled': False,
         'remove_inf_nan_afterFeaturesSelections': True,
-        'auto_filtering_mode': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
+       # 'compute_feature_stat': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
         'compute_vif':True,
-        'vif_threshold': 15,
-        'corr_threshold': 1.5,
+        'retained_only_vif': True,
+        'vif_threshold': 7.5,
+        'method_powerAnaly': "analytical",#['both', 'analytical', 'montecarlo']
+        'n_simulations_monte':5000,
+        'powAnaly_threshold':0.5,
+        'corr_threshold': 2,
         'mi_threshold': 0.01,
-        #"fisher_score_threshold": 10.0,  # exemple de seuil Fisher (optionnel)
+        "fisher_score_threshold": 4.5,  # exemple de seuil Fisher (optionnel)
         "fisher_pvalue_threshold": 0.05,  # seuil classique p-value (optionnel)
-        "fisher_top_n_features": 150,  # nombre maximal de features (optionnel) Prioritaire si activé
-        #"mrmr_n_features": 30, # par défaut X.shape[1] ( quand commenté) ,  taille totale des features
-        #"mrmr_score_threshold": 0.0, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
+        "mrmr_score_threshold":  0.01, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
         'use_pnl_theoric':True,
-        'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
+        'scaler_choice': scalerChoice.SCALER_ROBUST,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
         'cv_method': cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,# TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,
         # TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN TIME_SERIE_SPLIT
         # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL

@@ -61,10 +61,10 @@ adjust_xaxis = adjust_xaxis_input == 'o'
 
 # Nom du fichier
 
-file_name = "Step4_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
 
 # Chemin du répertoire
-directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\UnerAu15dec22h\merge"
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\merge_I1_I2"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -958,13 +958,13 @@ features_df['asymetrie_volume'] = np.where(df['volume'] != 0, (df['VolAbv'] - df
 features_df['VolCandleMeanxRatio'] = np.where(features_df['meanVolx'] != 0, df['volume'] / features_df['meanVolx'],
                                               addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-
+Imb_Div0=3.5
 # Nouvelles features - Order Flow:
 # Imbalances haussières
 features_df['bull_imbalance_low_1'] = np.where(
     df['bidVolLow'] != 0,
     df['askVolLow_1'] / df['bidVolLow'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolLow_1'] / df['bidVolLow'],
             df['bidVolLow'] != 0
@@ -975,7 +975,7 @@ features_df['bull_imbalance_low_1'] = np.where(
 features_df['bull_imbalance_low_2'] = np.where(
     df['bidVolLow_1'] != 0,
     df['askVolLow_2'] / df['bidVolLow_1'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolLow_2'] / df['bidVolLow_1'],
             df['bidVolLow_1'] != 0
@@ -986,7 +986,7 @@ features_df['bull_imbalance_low_2'] = np.where(
 features_df['bull_imbalance_low_3'] = np.where(
     df['bidVolLow_2'] != 0,
     df['askVolLow_3'] / df['bidVolLow_2'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolLow_3'] / df['bidVolLow_2'],
             df['bidVolLow_2'] != 0
@@ -997,7 +997,7 @@ features_df['bull_imbalance_low_3'] = np.where(
 features_df['bull_imbalance_high_0'] = np.where(
     df['bidVolHigh_1'] != 0,
     df['askVolHigh'] / df['bidVolHigh_1'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolHigh'] / df['bidVolHigh_1'],
             df['bidVolHigh_1'] != 0
@@ -1008,7 +1008,7 @@ features_df['bull_imbalance_high_0'] = np.where(
 features_df['bull_imbalance_high_1'] = np.where(
     df['bidVolHigh_2'] != 0,
     df['askVolHigh_1'] / df['bidVolHigh_2'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolHigh_1'] / df['bidVolHigh_2'],
             df['bidVolHigh_2'] != 0
@@ -1019,7 +1019,7 @@ features_df['bull_imbalance_high_1'] = np.where(
 features_df['bull_imbalance_high_2'] = np.where(
     df['bidVolHigh_3'] != 0,
     df['askVolHigh_2'] / df['bidVolHigh_3'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['askVolHigh_2'] / df['bidVolHigh_3'],
             df['bidVolHigh_3'] != 0
@@ -1031,7 +1031,7 @@ features_df['bull_imbalance_high_2'] = np.where(
 features_df['bear_imbalance_low_0'] = np.where(
     df['askVolLow_1'] != 0,
     df['bidVolLow'] / df['askVolLow_1'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolLow'] / df['askVolLow_1'],
             df['askVolLow_1'] != 0
@@ -1042,7 +1042,7 @@ features_df['bear_imbalance_low_0'] = np.where(
 features_df['bear_imbalance_low_1'] = np.where(
     df['askVolLow_2'] != 0,
     df['bidVolLow_1'] / df['askVolLow_2'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolLow_1'] / df['askVolLow_2'],
             df['askVolLow_2'] != 0
@@ -1053,7 +1053,7 @@ features_df['bear_imbalance_low_1'] = np.where(
 features_df['bear_imbalance_low_2'] = np.where(
     df['askVolLow_3'] != 0,
     df['bidVolLow_2'] / df['askVolLow_3'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolLow_2'] / df['askVolLow_3'],
             df['askVolLow_3'] != 0
@@ -1064,7 +1064,7 @@ features_df['bear_imbalance_low_2'] = np.where(
 features_df['bear_imbalance_high_1'] = np.where(
     df['askVolHigh'] != 0,
     df['bidVolHigh_1'] / df['askVolHigh'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolHigh_1'] / df['askVolHigh'],
             df['askVolHigh'] != 0
@@ -1075,7 +1075,7 @@ features_df['bear_imbalance_high_1'] = np.where(
 features_df['bear_imbalance_high_2'] = np.where(
     df['askVolHigh_1'] != 0,
     df['bidVolHigh_2'] / df['askVolHigh_1'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolHigh_2'] / df['askVolHigh_1'],
             df['askVolHigh_1'] != 0
@@ -1086,7 +1086,7 @@ features_df['bear_imbalance_high_2'] = np.where(
 features_df['bear_imbalance_high_3'] = np.where(
     df['askVolHigh_2'] != 0,
     df['bidVolHigh_3'] / df['askVolHigh_2'],
-    addDivBy0 if DEFAULT_DIV_BY0 else (
+    Imb_Div0 if DEFAULT_DIV_BY0 else (
         calculate_max_ratio(
             df['bidVolHigh_3'] / df['askVolHigh_2'],
             df['askVolHigh_2'] != 0
@@ -1233,6 +1233,10 @@ features_df = pd.concat([features_df, df_results], axis=1)
 
 print("Transfert réussi ! Toutes les colonnes ont été copiées avec succès.")
 
+#features_df['diffLowPriceMean_2_3']=(features_df['diffLowPrice_0_2']+features_df['diffLowPrice_0_3']
+                                     #+features_df['diffLowPrice_0_3']
+ #                                    )/2
+
 ## 0) key nom de la feature / 1) Ative Floor / 2) Active Crop / 3) % à Floored / ') % à Croped / 5) Afficher et/ou inclure Features dans fichiers cibles
 # choix des features à traiter
 column_settings = {
@@ -1273,7 +1277,7 @@ column_settings = {
     'diffLowPrice_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffLowPrice_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
     'diffLowPrice_0_5': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    # 'diffLowPrice_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    #'diffLowPriceMean_2_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
 
     'diffPriceCloseVWAP': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, True)),  # ok
     'diffPriceCloseVWAPbyIndex': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, True)),  # ok
