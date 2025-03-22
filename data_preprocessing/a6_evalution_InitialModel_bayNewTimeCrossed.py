@@ -311,7 +311,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     winrate_raw_data_val_by_fold = processed_results['winrate_raw_data_val_by_fold']
     val_pred_proba_log_odds = processed_results['val_pred_proba_log_odds']
     val_trades_samples_perct = processed_results['val_trades_samples_perct']
-    val_bestIdx_custom_metric_pnl = processed_results['val_bestIdx_custom_metric_pnl']
+    val_bestIdx_custom_metric_pnl = processed_results['val_bestVal_custom_metric_pnl']
 
 
     # Training metrics
@@ -325,7 +325,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     winrate_raw_data_train_by_fold = processed_results['winrate_raw_data_train_by_fold']
     train_pred_proba_log_odds = processed_results['train_pred_proba_log_odds']
     train_trades_samples_perct = processed_results['train_trades_samples_perct']
-    train_bestIdx_custom_metric_pnl = processed_results['train_bestIdx_custom_metric_pnl']
+    train_bestIdx_custom_metric_pnl = processed_results['train_bestVal_custom_metric_pnl']
 
 
     perctDiff_winrateRatio_train_val = processed_results['perctDiff_winrateRatio_train_val']
@@ -563,8 +563,6 @@ def train_and_evaluate_model(
     ones = (df_init_features['class_binaire'] == 1).sum()
     total = zeros + ones
     print(f"Dimensions de df_init_features: {df_init_features.shape} (lignes, colonnes)")
-    print("df_init_features:")
-    print(df_init_features)
 
     print(f"Shape de df_init_features avant filtrage  (99, mannuel des features): {df_init_features.shape}")
 
@@ -965,11 +963,12 @@ if __name__ == "__main__":
         'staked00_low',
         #'bear_imbalance_high_3',  ## 4.8 % de NAN
         'bull_imbalance_high_0',  # 7.8% et peu impact en corr
-        'bearish_absorption_ratio',  # 2.8nan,
+        #'bearish_absorption_ratio',  # 2.8nan,
         'VolPocVolRevesalXContRatio', #l'autre poc vol est meilleur
-        'ratio_delta_vol_VA21P', #tres corrélé avec  ratio_delta_vol_VA16P ratio_delta_vol_VA6P mais moi avec la cible
+        #'ratio_delta_vol_VA21P', #tres corrélé avec  ratio_delta_vol_VA16P ratio_delta_vol_VA6P mais moi avec la cible
         'naked_poc_dist_above',  # peux impact et nan
         'naked_poc_dist_below',# peux impact et nan
+        #'atr',
         # 'ratio_volRevMove_volImpulsMove',
         # 'ratio_deltaImpulsMove_volImpulsMove',
         # 'ratio_deltaRevMove_volRevMove',

@@ -8,10 +8,10 @@ import os
 
 # Charger les données
 # Nom du fichier
-file_name = "Step3_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession.csv"
+file_name = "Step3_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession.csv"
 
 # Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\UnerAu15Nov\merge"
+directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\version2\merge"
 
 # Combiner le chemin du répertoire avec le nom du fichier
 file_path = os.path.join(directory_path, file_name)

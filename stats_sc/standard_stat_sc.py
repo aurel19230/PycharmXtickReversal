@@ -624,7 +624,9 @@ def calculate_statistical_power(X, y, feature_list=None,
             continue
 
         # Calcul de l'effet de taille (Cohen's d)
-        mean_diff = np.mean(group1) - np.mean(group0)
+        #mean_diff = np.mean(group1) - np.mean(group0)
+        mean_diff = np.median(group1) - np.median(group0)
+
         pooled_std = np.sqrt(((len(group0) - 1) * np.std(group0, ddof=1) ** 2 +
                               (len(group1) - 1) * np.std(group1, ddof=1) ** 2) /
                              (len(group0) + len(group1) - 2))
@@ -773,18 +775,14 @@ from scipy import stats
 from statsmodels.stats.power import TTestIndPower
 from joblib import Parallel, delayed
 
+from scipy.stats import ttest_ind, mannwhitneyu, normaltest, levene
+import numpy as np
+from scipy.stats import ttest_ind, mannwhitneyu, shapiro
 
-def run_single_simulation(group0, group1, sample_fraction, alpha):
+def run_single_simulation_auto(group0, group1, sample_fraction, alpha):
     """
-    Exécute une seule simulation pour le Monte Carlo.
+    Simulation Monte Carlo qui choisit automatiquement entre Test t et Mann-Whitney.
 
-    Args:
-        group0, group1: Groupes de données
-        sample_fraction: Fraction d'échantillonnage
-        alpha: Seuil de significativité
-
-    Returns:
-        bool: True si le test est significatif, False sinon
     """
     sample0_size = max(2, int(len(group0) * sample_fraction))
     sample1_size = max(2, int(len(group1) * sample_fraction))
@@ -792,49 +790,33 @@ def run_single_simulation(group0, group1, sample_fraction, alpha):
     sample0 = np.random.choice(group0, size=sample0_size, replace=True)
     sample1 = np.random.choice(group1, size=sample1_size, replace=True)
 
-    _, p_sim = stats.ttest_ind(sample0, sample1, equal_var=False)
+    # Vérifier la normalité uniquement si les échantillons sont suffisants
+    if len(sample0) > 20 and len(sample1) > 20:
+        norm_test_0 = normaltest(sample0).pvalue
+        norm_test_1 = normaltest(sample1).pvalue
+        var_test_p = levene(sample0, sample1).pvalue  # Test de variance
+
+        if norm_test_0 > 0.05 and norm_test_1 > 0.05:  # Si les 2 sont normaux
+            _, p_sim = ttest_ind(sample0, sample1, equal_var=(var_test_p > 0.05))
+        else:
+            _, p_sim = mannwhitneyu(sample0, sample1, alternative='two-sided')
+    else:
+        _, p_sim = mannwhitneyu(sample0, sample1, alternative='two-sided')  # Cas petit échantillon
+
     return p_sim < alpha
 
 
+from scipy.stats import ttest_ind, mannwhitneyu, normaltest, levene
+from statsmodels.stats.power import TTestIndPower
+
 def calculate_statistical_power_job(X, y, feature_list=None,
-                                alpha=0.05, target_power=0.8, n_simulations_monte=20000,
-                                sample_fraction=0.8, verbose=True,
-                                method_powerAnaly='both', n_jobs=-1):
+                                    alpha=0.05, target_power=0.8, n_simulations_monte=20000,
+                                    sample_fraction=0.8, verbose=True,
+                                    method_powerAnaly='both', n_jobs=-1):
     """
     Calcule la puissance statistique analytique et/ou par simulation Monte Carlo.
-
-    Parameters:
-    -----------
-    X : pandas.DataFrame
-        DataFrame contenant uniquement les features à analyser
-    y : pandas.Series
-        Série contenant la variable cible binaire (0/1)
-    feature_list : list, optional
-        Liste des noms de features à analyser. Si None, utilise toutes les colonnes de X
-    alpha : float, default=0.05
-        Seuil de significativité
-    target_power : float, default=0.8
-        Puissance statistique cible
-    n_simulations : int, default=20000
-        Nombre de simulations Monte Carlo
-    sample_fraction : float, default=0.8
-        Fraction de l'échantillon à utiliser dans chaque simulation
-    verbose : bool, default=True
-        Afficher les messages d'avancement
-    method_powerAnaly : str, default='both'
-        Méthode de calcul de la puissance à utiliser. Options:
-        - 'both': calcule la puissance analytique et Monte Carlo
-        - 'analytical': calcule uniquement la puissance analytique
-        - 'montecarlo': calcule uniquement la puissance par simulation Monte Carlo
-    n_jobs : int, default=-1
-        Nombre de processus parallèles à utiliser (-1 pour utiliser tous les cœurs)
-
-    Returns:
-    --------
-    pandas.DataFrame
-        DataFrame contenant les résultats de l'analyse de puissance
     """
-    # Vérifier que la méthode est valide
+
     valid_methods = ['both', 'analytical', 'montecarlo']
     if method_powerAnaly not in valid_methods:
         raise ValueError(f"La méthode '{method_powerAnaly}' n'est pas valide. Options: {', '.join(valid_methods)}")
@@ -842,10 +824,8 @@ def calculate_statistical_power_job(X, y, feature_list=None,
     if feature_list is None:
         feature_list = X.columns.tolist()
     else:
-        # S'assurer que toutes les features demandées existent dans X
         feature_list = [f for f in feature_list if f in X.columns]
 
-    # Filtrer les colonnes constantes (n'ayant qu'une seule valeur unique)
     constant_features = [col for col in feature_list if X[col].nunique() <= 1]
     if constant_features and verbose:
         print(f"⚠️ {len(constant_features)} features constantes retirées: {constant_features}")
@@ -855,65 +835,61 @@ def calculate_statistical_power_job(X, y, feature_list=None,
     results = []
     power_analysis = TTestIndPower()
     total_features = len(feature_list)
-    if method_powerAnaly in ['both', 'montecarlo']:
-        print(f"\nMethode de Monte Carlo pour Puissance Statisyique avec {n_simulations_monte} écchantillons")
 
     for i, feature in enumerate(feature_list):
         if verbose and i % max(1, total_features // 10) == 0:
             print(f"Traitement: {i + 1}/{total_features} features ({((i + 1) / total_features) * 100:.1f}%)")
 
-        # Préparation des données pour cette feature
         X_feature = X[feature].copy()
-
-        # Filtrer les valeurs NaN
         mask = X_feature.notna() & y.notna()
         X_filtered = X_feature[mask].values
         y_filtered = y[mask].values
 
-        # Séparer les groupes
         group0 = X_filtered[y_filtered == 0]
         group1 = X_filtered[y_filtered == 1]
 
-        # Vérifier que les deux groupes ont suffisamment de données
         if len(group0) <= 1 or len(group1) <= 1:
-            if verbose:
-                print(f"⚠️ Skipping {feature}: Not enough data in both groups")
             continue
 
-        # Calcul de l'effet de taille (Cohen's d)
         mean_diff = np.mean(group1) - np.mean(group0)
         pooled_std = np.sqrt(((len(group0) - 1) * np.std(group0, ddof=1) ** 2 +
                               (len(group1) - 1) * np.std(group1, ddof=1) ** 2) /
                              (len(group0) + len(group1) - 2))
 
         if pooled_std == 0:
-            if verbose:
-                print(f"⚠️ Skipping {feature}: Zero variance in data")
             continue
 
         effect_size = mean_diff / pooled_std
 
-        # Test statistique de base (t-test de Welch)
-        t_stat, p_value = stats.ttest_ind(group0, group1, equal_var=False)
+        # **🚀 Nouvelle logique : Vérification de la normalité et des variances**
+        if len(group0) > 20 and len(group1) > 20:
+            norm_test_0 = normaltest(group0).pvalue
+            norm_test_1 = normaltest(group1).pvalue
+            var_test_p = levene(group0, group1).pvalue  # Vérification de la variance
 
-        # Initialiser les valeurs par défaut
-        power_analytical = None
-        power_monte_carlo = None
-        se_monte_carlo = None
-        mc_ci_lower = None
-        mc_ci_upper = None
-        required_n = np.nan
+            if norm_test_0 > 0.05 and norm_test_1 > 0.05:
+                print("# **Les deux distributions sont normales**");
+                t_stat, p_value = ttest_ind(group0, group1, equal_var=(var_test_p > 0.05))
+                power_analytical = power_analysis.power(
+                    effect_size=abs(effect_size),
+                    nobs1=len(group0),
+                    alpha=alpha,
+                    ratio=len(group1) / len(group0)
+                )
+            else:
+                # **Au moins une distribution est non normale → Mann-Whitney U**
+                print("# **Au moins une distribution est non normale → Mann-Whitney U****");
 
-        # Méthode 1: Puissance Analytique (si demandée)
-        if method_powerAnaly in ['both', 'analytical']:
-            power_analytical = power_analysis.power(
-                effect_size=abs(effect_size),  # Utiliser valeur absolue
-                nobs1=len(group0),
-                alpha=alpha,
-                ratio=len(group1) / len(group0)
-            )
+                t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+                power_analytical = None  # ⚠️ Pas de formule analytique pour Mann-Whitney
+        else:
+            # **Petit échantillon → Mann-Whitney par défaut**
+            print(" # **Petit échantillon → Mann-Whitney par défaut**");
+            t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+            power_analytical = None  # ⚠️ Pas de formule analytique pour Mann-Whitney
 
-            # Calcul de la taille d'échantillon requise
+        required_n = None
+        if power_analytical is not None:
             try:
                 required_n = power_analysis.solve_power(
                     effect_size=abs(effect_size),
@@ -924,67 +900,16 @@ def calculate_statistical_power_job(X, y, feature_list=None,
             except (ValueError, RuntimeError):
                 required_n = np.nan
 
-        # Méthode 2: Puissance Monte Carlo par simulation (si demandée)
+        # **🚀 Monte Carlo Simulation**
+        power_monte_carlo = None
         if method_powerAnaly in ['both', 'montecarlo']:
-            # Optimisation: exécuter les simulations en parallèle
+            results_parallel = Parallel(n_jobs=n_jobs)(
+                delayed(run_single_simulation_auto)(group0, group1, sample_fraction, alpha)
+                for _ in range(n_simulations_monte)
+            )
+            power_monte_carlo = np.mean(results_parallel)
 
-            # Pour les gros datasets, définir batch_size plus petit
-            batch_size = min(1000, n_simulations_monte)
-            n_batches = n_simulations_monte // batch_size
-
-            # Distribution des simulations en lots parallèles
-            try:
-                # Utiliser joblib pour la parallélisation
-                results_parallel = Parallel(n_jobs=n_jobs)(
-                    delayed(run_single_simulation)(group0, group1, sample_fraction, alpha)
-                    for _ in range(n_simulations_monte)
-                )
-
-                # Calcul de la puissance Monte Carlo
-                significant_count = sum(results_parallel)
-                power_monte_carlo = significant_count / n_simulations_monte
-
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️ Erreur dans l'analyse Monte Carlo parallèle: {str(e)}")
-                    print("Utilisation de la méthode séquentielle...")
-
-                # Fallback: méthode séquentielle
-                significant_count = 0
-                for _ in range(n_simulations_monte):
-                    sample0_size = max(2, int(len(group0) * sample_fraction))
-                    sample1_size = max(2, int(len(group1) * sample_fraction))
-
-                    sample0 = np.random.choice(group0, size=sample0_size, replace=True)
-                    sample1 = np.random.choice(group1, size=sample1_size, replace=True)
-
-                    _, p_sim = stats.ttest_ind(sample0, sample1, equal_var=False)
-                    if p_sim < alpha:
-                        significant_count += 1
-
-                power_monte_carlo = significant_count / n_simulations_monte
-
-            # Calcul de l'erreur standard
-            se_monte_carlo = np.sqrt(power_monte_carlo * (1 - power_monte_carlo) / n_simulations_monte)
-
-            # Intervalles de confiance
-            mc_ci_lower = max(0, power_monte_carlo - 1.96 * se_monte_carlo)
-            mc_ci_upper = min(1, power_monte_carlo + 1.96 * se_monte_carlo)
-
-        # Déterminer quelle puissance utiliser pour la colonne Power_Sufficient
-        if method_powerAnaly == 'both':
-            power_for_sufficiency = power_monte_carlo
-        elif method_powerAnaly == 'analytical':
-            power_for_sufficiency = power_analytical
-        else:  # montecarlo
-            power_for_sufficiency = power_monte_carlo
-
-        # Calcul de la différence entre les méthodes
-        delta_power = None
-        if method_powerAnaly == 'both' and power_analytical is not None and power_monte_carlo is not None:
-            delta_power = abs(power_analytical - power_monte_carlo)
-
-        # Ajouter les résultats
+        # **🚀 Stockage des résultats**
         result_row = {
             'Feature': feature,
             'Sample_Size': len(X_filtered),
@@ -992,50 +917,15 @@ def calculate_statistical_power_job(X, y, feature_list=None,
             'Group1_Size': len(group1),
             'Effect_Size': effect_size,
             'P_Value': p_value,
-            'Required_N': np.ceil(required_n) if not np.isnan(required_n) else np.nan,
-            'Power_Sufficient': power_for_sufficiency is not None and power_for_sufficiency >= target_power
+            'Required_N': np.ceil(required_n) if required_n is not None else np.nan,
+            'Power_Analytical': power_analytical,
+            'Power_MonteCarlo': power_monte_carlo,
         }
-
-        # Ajouter les colonnes spécifiques à la méthode analytique
-        if method_powerAnaly in ['both', 'analytical']:
-            result_row['Power_Analytical'] = power_analytical
-
-        # Ajouter les colonnes spécifiques à la méthode Monte Carlo
-        if method_powerAnaly in ['both', 'montecarlo']:
-            result_row['Power_MonteCarlo'] = power_monte_carlo
-            result_row['MC_StdError'] = se_monte_carlo
-            result_row['MC_CI_Lower'] = mc_ci_lower
-            result_row['MC_CI_Upper'] = mc_ci_upper
-
-        # Ajouter la différence entre les méthodes si les deux sont calculées
-        if delta_power is not None:
-            result_row['Delta_Power'] = delta_power
 
         results.append(result_row)
 
-    # Créer le DataFrame des résultats
-    results_df = pd.DataFrame(results)
+    return pd.DataFrame(results)
 
-    if not results_df.empty:
-        if verbose:
-            print(f"\nAnalyse terminée. {len(results_df)} features analysées.")
-
-            # Statistiques sur les différences de puissance si applicable
-            if 'Delta_Power' in results_df.columns:
-                mean_delta = results_df['Delta_Power'].mean()
-                max_delta = results_df['Delta_Power'].max()
-                print(f"Différence moyenne entre les méthodes: {mean_delta:.4f}")
-                print(f"Différence maximale entre les méthodes: {max_delta:.4f}")
-
-            # Features avec puissance suffisante
-            sufficient_power = results_df[results_df['Power_Sufficient']].shape[0]
-            print(
-                f"Features avec puissance suffisante (>= {target_power}): {sufficient_power} sur {len(results_df)}")
-    else:
-        if verbose:
-            print("Aucun résultat obtenu. Vérifiez vos données et les paramètres.")
-
-    return results_df
 
 
 
@@ -1562,3 +1452,250 @@ def correlation_matrices(X, y, figsize=(24, 10), save_path=None):
         'pearson_target': pearson_target,
         'spearman_target': spearman_target
     }
+
+
+import numpy as np
+import pandas as pd
+
+
+def compute_stoch(high, low, close, session_starts, k_period=14, d_period=3, fill_value=50):
+    """
+    Calcule l'oscillateur stochastique (%K et %D) en respectant les limites de chaque session.
+    Version optimisée utilisant des opérations vectorisées.
+
+    Parameters:
+    -----------
+    high : array-like
+        Série des prix les plus hauts
+    low : array-like
+        Série des prix les plus bas
+    close : array-like
+        Série des prix de fermeture
+    session_starts : array-like (booléen)
+        Indicateur de début de session (True lorsqu'une nouvelle session commence)
+    k_period : int, default=14
+        Période pour calculer le stochastique %K
+    d_period : int, default=3
+        Période pour la moyenne mobile du %K qui donne le %D
+    fill_value : float, default=50
+        Valeur par défaut pour remplacer les NaN ou divisions par zéro
+
+    Returns:
+    --------
+    tuple
+        (k_values, d_values) - Un tuple contenant les valeurs %K et %D
+    """
+    # Créer un DataFrame pour traitement
+    df = pd.DataFrame({
+        'high': high,
+        'low': low,
+        'close': close,
+        'session_start': session_starts
+    })
+
+    # Créer identifiant de session
+    df['session_id'] = df['session_start'].cumsum()
+
+    # Indexer chaque barre dans sa session pour filtrage ultérieur
+    df['bar_index_in_session'] = df.groupby('session_id').cumcount()
+
+    # Calcul vectorisé des plus hauts et plus bas sur la période k_period
+    df['highest_high'] = (
+        df.groupby('session_id')['high']
+        .rolling(window=k_period, min_periods=1)
+        .max()
+        .reset_index(level=0, drop=True)
+    )
+
+    df['lowest_low'] = (
+        df.groupby('session_id')['low']
+        .rolling(window=k_period, min_periods=1)
+        .min()
+        .reset_index(level=0, drop=True)
+    )
+
+    # Calculer %K (Stochastique Rapide) vectorisé
+    denominator = df['highest_high'] - df['lowest_low']
+    df['%K'] = np.where(
+        denominator > 0,
+        ((df['close'] - df['lowest_low']) / denominator) * 100,
+        fill_value
+    )
+
+    # Marquer les positions n'ayant pas assez d'historique avec la valeur par défaut
+    df.loc[df['bar_index_in_session'] < (k_period - 1), '%K'] = fill_value
+
+    # Calculer %D (moyenne mobile du %K) vectorisé par session
+    df['%D'] = (
+        df.groupby('session_id')['%K']
+        .rolling(window=d_period, min_periods=1)
+        .mean()
+        .reset_index(level=0, drop=True)
+    )
+
+    # Gérer les positions n'ayant pas assez d'historique pour %D
+    # (k_period - 1 + d_period - 1) points nécessaires au total
+    df.loc[df['bar_index_in_session'] < (k_period + d_period - 2), '%D'] = fill_value
+
+    # Gestion des NaN
+    df['%K'] = df['%K'].fillna(fill_value)
+    df['%D'] = df['%D'].fillna(fill_value)
+
+    # Limiter aux valeurs valides du stochastique (entre 0 et 100)
+    df['%K'] = np.clip(df['%K'], 0, 100)
+    df['%D'] = np.clip(df['%D'], 0, 100)
+
+    # Retourner les valeurs sous forme de numpy arrays
+    return df['%K'].to_numpy(), df['%D'].to_numpy()
+
+
+def compute_wr(high, low, close, session_starts, period=14, fill_value=-50):
+    """
+    Calcule l'indicateur Williams %R en respectant les limites de chaque session.
+    Version optimisée utilisant des opérations vectorisées.
+    """
+    # Créer un DataFrame pour traitement
+    df = pd.DataFrame({
+        'high': high,
+        'low': low,
+        'close': close,
+        'session_start': session_starts
+    })
+
+    # Créer identifiant de session
+    df['session_id'] = df['session_start'].cumsum()
+
+    # Calcul du rolling max et min par session
+    df['highest_high'] = (
+        df.groupby('session_id')['high']
+        .rolling(window=period, min_periods=1)
+        .max()
+        .reset_index(level=0, drop=True)
+    )
+
+    df['lowest_low'] = (
+        df.groupby('session_id')['low']
+        .rolling(window=period, min_periods=1)
+        .min()
+        .reset_index(level=0, drop=True)
+    )
+
+    # Calculer le Williams %R vectorisé
+    denominator = df['highest_high'] - df['lowest_low']
+    df['wr'] = np.where(
+        denominator > 0,
+        ((df['highest_high'] - df['close']) / denominator) * -100,
+        fill_value
+    )
+
+    # Identifier les positions dans chaque session qui n'ont pas assez d'historique
+    df['bar_index_in_session'] = df.groupby('session_id').cumcount()
+    df.loc[df['bar_index_in_session'] < (period - 1), 'wr'] = fill_value
+
+    # Gestion des NaN
+    df['wr'] = df['wr'].fillna(fill_value)
+
+    # Limiter aux valeurs valides du Williams %R (entre -100 et 0)
+    df['wr'] = np.clip(df['wr'], -100, 0)
+
+    return df['wr'].to_numpy()
+
+import pandas as pd
+import numpy as np
+
+def compute_mfi(
+    high,
+    low,
+    close,
+    volume,
+    session_starts,
+    period=14,
+    fill_value=50
+):
+    """
+    Calcule l'indicateur Money Flow Index (MFI) en réinitialisant le calcul
+    à chaque nouvelle session, sans déborder sur la session précédente.
+
+    Parameters
+    ----------
+    high : array-like
+        Séries des prix les plus hauts
+    low : array-like
+        Séries des prix les plus bas
+    close : array-like
+        Séries des prix de clôture
+    volume : array-like
+        Séries des volumes
+    session_starts : array-like de bool
+        Indique, pour chaque barre, si c'est le début d'une nouvelle session (True) ou non (False)
+    period : int, default=14
+        Période de calcul du MFI
+    fill_value : float, default=50
+        Valeur par défaut à utiliser lorsque le MFI n'est pas calculable (ex: début de session ou NaN)
+
+    Returns
+    -------
+    np.ndarray
+        Tableau des valeurs du MFI, réinitialisé à chaque session
+    """
+
+    # Convertit tous les inputs en Series alignées sur le même index
+    df = pd.DataFrame({
+        'high'          : high,
+        'low'           : low,
+        'close'         : close,
+        'volume'        : volume,
+        'session_starts': session_starts
+    })
+
+    # Identifiants de session (on incrémente de 1 à chaque True)
+    # Exemple : [F, F, T, F, F, T, F] -> [0, 0, 1, 1, 1, 2, 2]
+    df['session_id'] = df['session_starts'].cumsum()
+
+    # Typical Price
+    df['tp'] = (df['high'] + df['low'] + df['close']) / 3
+
+    # Money Flow brut
+    df['mf'] = df['tp'] * df['volume']
+
+    # On compare la typical price avec celle de la barre précédente (shift)
+    df['tp_shifted'] = df['tp'].shift(1).fillna(df['tp'].iloc[0] if len(df) else 0)
+
+    # Déterminer la partie positive/négative du flux
+    df['positive_flow'] = np.where(df['tp'] > df['tp_shifted'], df['mf'], 0)
+    # On ajoute une très petite valeur pour éviter d'avoir 0 exact
+    df['negative_flow'] = np.where(df['tp'] < df['tp_shifted'], df['mf'], 0) + 1e-10
+
+    # Rolling sum par session_id
+    # -> groupby('session_id').rolling(window=period) ...
+    df['sum_positive'] = (
+        df.groupby('session_id')['positive_flow']
+          .rolling(window=period, min_periods=1)
+          .sum()
+          .reset_index(level=0, drop=True)
+    )
+    df['sum_negative'] = (
+        df.groupby('session_id')['negative_flow']
+          .rolling(window=period, min_periods=1)
+          .sum()
+          .reset_index(level=0, drop=True)
+    )
+
+    # Ratio
+    df['mfr'] = df['sum_positive'] / df['sum_negative'].clip(lower=1e-10)
+    df['mfi'] = 100 - (100 / (1.0 + df['mfr']))
+
+    # À l'intérieur d'une session, pour les premières barres (< period), on a trop peu d'historique
+    # => on force ces valeurs à fill_value
+    # cumcount() numérote les lignes de chaque session, à partir de 0
+    # si cumcount() < period-1, on n'a pas assez de barres pour un 'vrai' MFI
+    df['bar_index_in_session'] = df.groupby('session_id').cumcount()
+    df.loc[df['bar_index_in_session'] < (period - 1), 'mfi'] = fill_value
+
+    # Remplacer éventuellement les NaN restants par fill_value
+    df['mfi'] = df['mfi'].fillna(fill_value)
+
+    # Clip [0, 100]
+    df['mfi'] = np.clip(df['mfi'], 0, 100)
+
+    return df['mfi'].to_numpy()

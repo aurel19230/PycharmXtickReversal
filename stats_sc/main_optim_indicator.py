@@ -27,7 +27,7 @@ from pynput import keyboard as pynput_keyboard  # Alternative si keyboard pose p
 
 
 # Définir le type d'indicateur à optimiser
-indicator_type = "stochastic"
+indicator_type = "regression_std"
 # Add these global flags to control which zones to optimize
 OPTIMIZE_OVERSOLD = True  # Set to False to disable oversold zone optimization => => find the worst winrate
 OPTIMIZE_OVERBOUGHT = False  # Set to False to disable overbought zone optimization => optimize de winrate
@@ -35,7 +35,7 @@ OPTIMIZE_OVERBOUGHT = False  # Set to False to disable overbought zone optimizat
 if indicator_type == "atr":
     # Définir des constantes globales pour les contraintes
     MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
-    MAX_bin_0_win_rate = 0.455  # Maximum pour bin0 (doit être < 0.5) => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
+    MAX_bin_0_win_rate = 0.465  # Maximum pour bin0 (doit être < 0.5) => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
     MIN_bin_1_win_rate = 0.052  # Minimum pour bin1 (doit être > 0.5) => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)²
     MIN_BIN_SIZE_0 = 0.08  # Taille minimale pour un bin individuel => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
     MIN_BIN_SIZE_1 = 0.0000095  # Taille minimale pour un bin individuel => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
@@ -54,39 +54,40 @@ if indicator_type == "atr":
 if indicator_type == "regression_slope":
     # Définir des constantes globales pour les contraintes
     MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
-    MAX_bin_0_win_rate = 0.47  # Maximum pour bin0 (doit être < 0.5) => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
-    MIN_bin_1_win_rate = 0.53  # Minimum pour bin1 (doit être > 0.5) => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
-    MIN_BIN_SIZE_0 = 0.096  # Taille minimale pour un bin individuel => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
-    MIN_BIN_SIZE_1 = 0.096  # Taille minimale pour un bin individuel => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
-    COEFF_SPREAD = 0.6
-    COEFF_BIN_SIZE = 0.1
+    MAX_bin_0_win_rate = 0.46
+    # Maximum pour bin0 (doit être < 0.5) => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
+    MIN_bin_1_win_rate = 0.54  # Minimum pour bin1 (doit être > 0.5) => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
+    MIN_BIN_SIZE_0 = 0.0001  # Taille minimale pour un bin individuel => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
+    MIN_BIN_SIZE_1 = 0.1  # Taille minimale pour un bin individuel => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
+    COEFF_SPREAD = 1
+    COEFF_BIN_SIZE = 0
 
-    PERIOD_VAR_L = 4
-    PERIOD_VAR_H = 30
+    PERIOD_VAR_L = 10
+    PERIOD_VAR_H = 22
 
-    SLOPE_LOW_THRESHOLD_L = -0.5
-    SLOPE_LOW_THRESHOLD_H = -0.0
+    SLOPE_RANGE_THRESHOLD_L = -0.4
+    SLOPE_RANGE_THRESHOLD_H = -0.2
 
-    SLOPE_HIGH_THRESHOLD_L = 0.5
-    SLOPE_HIGH_THRESHOLD_H = 0
+    SLOPE_EXTREM_THRESHOLD_L = -0.3
+    SLOPE_EXTREM_THRESHOLD_H = -0.1
 
 if indicator_type == "regression_std":
     # Définir des constantes globales pour les contraintes
     MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
-    MAX_bin_0_win_rate = 0.48  # Maximum pour bin0 (doit être < 0.5)
-    MIN_bin_1_win_rate = 0.51  # Minimum pour bin1 (doit être > 0.5)
-    MIN_BIN_SIZE_0 = 0.001  # Taille minimale pour un bin individuel
-    MIN_BIN_SIZE_1 = 0.1  # Taille minimale pour un bin individuel
+    MAX_bin_0_win_rate = 0.455  # Maximum pour bin0 (doit être < 0.5)
+    MIN_bin_1_win_rate = 0.53  # Minimum pour bin1 (doit être > 0.5)
+    MIN_BIN_SIZE_0 = 0.12  # Taille minimale pour un bin individuel
+    MIN_BIN_SIZE_1 = 0.0000105  # Taille minimale pour un bin individuel
     COEFF_SPREAD = 1
     COEFF_BIN_SIZE = 0
 
-    PERIOD_VAR_L=25
-    PERIOD_VAR_H=65
+    PERIOD_VAR_L=40
+    PERIOD_VAR_H=50
 
-    STD_LOW_THRESHOLD_L=0
-    STD_LOW_THRESHOLD_H=5
+    STD_LOW_THRESHOLD_L=1.3
+    STD_LOW_THRESHOLD_H=1.4
 
-    STD_HIGH_THRESHOLD_L=0
+    STD_HIGH_THRESHOLD_L=4.7
     STD_HIGH_THRESHOLD_H=5
 
 if indicator_type == "regression_r2":
@@ -120,17 +121,17 @@ if indicator_type == "stochastic":
     COEFF_BIN_SIZE = 0
 
     # Paramètres pour l'optimisation Optuna
-    K_PERIOD_L = 10
-    K_PERIOD_H = 40
+    K_PERIOD_L = 40
+    K_PERIOD_H = 90
 
-    D_PERIOD_L = 10  # Doit être >= K_PERIOD dans la fonction
-    D_PERIOD_H = 40
+    D_PERIOD_L = 40  # Doit être >= K_PERIOD dans la fonction
+    D_PERIOD_H = 90
 
     OS_LIMIT_L = 5
     OS_LIMIT_H = 45
 
     OB_LIMIT_L = 55
-    OB_LIMIT_H = 955
+    OB_LIMIT_H = 95
 if indicator_type == "williams_r":
     # Définir des constantes globales pour les contraintes
     MIN_BIN_SPREAD = 0.03  # Écart minimum entre bins
@@ -572,22 +573,22 @@ def print_best_trial_callback(study, trial):
                 # Construction conditionnelle des paramètres de régression par écart-type
                 params_str = f"  📌 Paramètres Régression Écart-type: période={period_var_std}"
                 if OPTIMIZE_OVERSOLD:
-                    params_str += f", std_low_threshold={std_low_threshold}"
+                    params_str += f", std_low_threshold={std_low_threshold} et std_high_threshold={std_high_threshold}"
                 if OPTIMIZE_OVERBOUGHT:
-                    params_str += f", std_high_threshold={std_high_threshold}"
+                    params_str += f", std_low_threshold={std_low_threshold} et std_high_threshold={std_high_threshold}"
                 print(params_str)
 
-            elif 'slope_low_threshold' in best_trial.params or 'slope_high_threshold' in best_trial.params:
+            elif 'slope_range_threshold' in best_trial.params or 'slope_extrem_threshold' in best_trial.params:
                 period_var_slope = best_trial.params.get('period_var_slope', 'N/A')
-                slope_low_threshold = best_trial.params.get('slope_low_threshold', 'N/A')
-                slope_high_threshold = best_trial.params.get('slope_high_threshold', 'N/A')
+                slope_range_threshold = best_trial.params.get('slope_range_threshold', 'N/A')
+                slope_extrem_threshold = best_trial.params.get('slope_extrem_threshold', 'N/A')
 
                 # Construction conditionnelle des paramètres de régression par pente
                 params_str = f"  📌 Paramètres Régression Pente: période={period_var_slope}"
                 if OPTIMIZE_OVERSOLD:
-                    params_str += f", slope_low_threshold={slope_low_threshold}"
+                    params_str += f", slope_range_threshold={slope_range_threshold} et slope_extrem_threshold={slope_extrem_threshold}"
                 if OPTIMIZE_OVERBOUGHT:
-                    params_str += f", slope_high_threshold={slope_high_threshold}"
+                    params_str += f", slope_range_threshold={slope_range_threshold} et slope_extrem_threshold={slope_extrem_threshold}"
                 print(params_str)
 
             elif 'period_var_atr' in best_trial.params or 'atr_low_threshold' in best_trial.params or 'atr_high_threshold' in best_trial.params:
@@ -598,7 +599,9 @@ def print_best_trial_callback(study, trial):
                 # Construction conditionnelle des paramètres ATR
                 params_str = f"  📌 Paramètres ATR: période={period_var_atr}"
                 if OPTIMIZE_OVERSOLD:
-                    params_str += f", atr_low_threshold={atr_low_threshold:.4f}, atr_high_threshold={atr_high_threshold:.4f}"
+                    params_str += (f", atr_low_threshold={atr_low_threshold:.4f},"
+                                   #f" atr_high_threshold={atr_high_threshold:.4f}"
+                                   )
                 if OPTIMIZE_OVERBOUGHT:
                     params_str += f", atr_low_threshold={atr_low_threshold:.4f}, atr_high_threshold={atr_high_threshold:.4f}"
                 print(params_str)
@@ -612,7 +615,7 @@ def print_best_trial_callback(study, trial):
                 bin0_name = "Survente"
                 if 'slope' in best_trial.params:
                     bin0_name = "Volatilité Basse"
-                elif 'slope_low_threshold' in best_trial.params:
+                elif 'slope_range_threshold' in best_trial.params:
                     bin0_name = "Pente Faible"
                 elif 'period_var_atr' in best_trial.params:
                     bin0_name = "ATR Extrême"
@@ -632,7 +635,7 @@ def print_best_trial_callback(study, trial):
                 bin1_name = "Surachat"
                 if 'slope' in best_trial.params:
                     bin1_name = "Volatilité Haute"
-                elif 'slope_high_threshold' in best_trial.params:
+                elif 'slope_extrem_threshold' in best_trial.params:
                     bin1_name = "Pente Forte"
                 elif 'period_var_atr' in best_trial.params:
                     bin1_name = "ATR Modéré"
@@ -687,9 +690,10 @@ def objective_regressionATR_modified(trial, df):
 
     # Ensuite, suggérer le seuil haut en commençant à partir du seuil bas
     # Cela garantit que high_threshold > low_threshold
-    atr_high_threshold = trial.suggest_float('atr_high_threshold',
-                                             low,  # Commence à la valeur du seuil bas
-                                             ATR_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
+    if OPTIMIZE_OVERBOUGHT:
+        atr_high_threshold = trial.suggest_float('atr_high_threshold',
+                                                 low,  # Commence à la valeur du seuil bas
+                                                 ATR_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
 
     # 2. Calcul de l'ATR
     close = pd.to_numeric(df['close'], errors='coerce').values
@@ -763,7 +767,7 @@ def objective_regressionATR_modified(trial, df):
         'combined_score': float(combined_score),
         'period_var': period_var,
         'atr_low_threshold': atr_low_threshold,
-        'atr_high_threshold': atr_high_threshold,
+        'atr_high_threshold': atr_high_threshold if OPTIMIZE_OVERBOUGHT else "Non utilisé",
         'oversold_success_count': int(oversold_success_count),
         'overbought_success_count': int(overbought_success_count)
     }
@@ -854,16 +858,16 @@ def objective_regressionSlope_modified(trial, df):
     period_var = trial.suggest_int('period_var_slope', PERIOD_VAR_L, PERIOD_VAR_H)
 
     # D'abord, suggérer le seuil bas dans sa plage complète
-    slope_low_threshold = trial.suggest_float('slope_low_threshold', SLOPE_LOW_THRESHOLD_L, SLOPE_LOW_THRESHOLD_H)
+    slope_range_threshold = trial.suggest_float('slope_range_threshold', SLOPE_RANGE_THRESHOLD_L, SLOPE_RANGE_THRESHOLD_H)
     if OPTIMIZE_OVERBOUGHT:
-        low=slope_low_threshold
+        low=slope_range_threshold
     else:
-        low = SLOPE_HIGH_THRESHOLD_L
+        low = SLOPE_EXTREM_THRESHOLD_L
     # Ensuite, suggérer le seuil haut en commençant à partir du seuil bas
     # Cela garantit que high_threshold > low_threshold
-    slope_high_threshold = trial.suggest_float('slope_high_threshold',
+    slope_extrem_threshold = trial.suggest_float('slope_extrem_threshold',
                                                low,  # Commence à la valeur du seuil bas
-                                               SLOPE_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
+                                               SLOPE_EXTREM_THRESHOLD_H)  # Jusqu'à la limite supérieure
 
     # 2. Calcul des pentes, R² et écarts-types
     close = pd.to_numeric(df['close'], errors='coerce').values
@@ -882,9 +886,9 @@ def objective_regressionSlope_modified(trial, df):
 
     # 3. Créer les indicateurs avec une logique cohérente
     if OPTIMIZE_OVERBOUGHT:
-        df['low_slope'] = np.where((slopes > slope_low_threshold) & (slopes < slope_high_threshold), 1,0)  # Pente modéré = faible tendance maximise le Winrate
+        df['low_slope'] = np.where((slopes > slope_range_threshold) & (slopes < slope_extrem_threshold), 1,0)  # Pente modéré = faible tendance maximise le Winrate
     else:
-        df['high_slope'] = np.where((slopes < slope_low_threshold) | (slopes > slope_high_threshold), 1, 0)  # Pente élevée = forte tendance minimise le Winrate
+        df['high_slope'] = np.where((slopes < slope_range_threshold) | (slopes > slope_extrem_threshold), 1, 0)  # Pente élevée = forte tendance minimise le Winrate
 
     # 4. Filtrer df pour ne garder que les entrées avec trade (0 ou 1)
     df_filtered = df[df['class_binaire'].isin([0, 1])].copy()
@@ -941,8 +945,8 @@ def objective_regressionSlope_modified(trial, df):
         'combined_score': float(combined_score),
         'period_var': period_var,
         'slopes': slopes,
-        'slope_low_threshold': slope_low_threshold,
-        'slope_high_threshold': slope_high_threshold,
+        'slope_range_threshold': slope_range_threshold,
+        'slope_extrem_threshold': slope_extrem_threshold,
         'oversold_success_count': int(oversold_success_count),
         'overbought_success_count': int(overbought_success_count)
     }
@@ -969,9 +973,9 @@ def objective_regressionSlope_modified(trial, df):
 
         params_str = f"  Paramètres: period={period_var}"
         if OPTIMIZE_OVERSOLD:
-            params_str += f", slope_low_threshold={slope_low_threshold:.4f}"
+            params_str += f", slope_range_threshold={slope_range_threshold:.4f} et slope_extrem_threshold={slope_extrem_threshold}"
         if OPTIMIZE_OVERBOUGHT:
-            params_str += f", slope_high_threshold={slope_high_threshold:.4f}"
+            params_str += f", slope_range_threshold={slope_range_threshold:.4f} et slope_extrem_threshold={slope_extrem_threshold}"
         print(params_str)
         print(f"  Score: {combined_score:.2f}")
 
@@ -1011,9 +1015,9 @@ def objective_regressionStd_modified(trial, df):
 
     # 3. Créer les indicateurs avec une logique cohérente
     if OPTIMIZE_OVERBOUGHT:
-        df['low_volatility'] = np.where((stds > std_low_threshold) & (stds < std_high_threshold), 1, 0)  # Écart-type modéré
+        df['range_volatility'] = np.where((stds > std_low_threshold) & (stds < std_high_threshold), 1, 0)  # Écart-type modéré
     else:
-        df['high_volatility'] = np.where((stds < std_low_threshold) | (stds > std_high_threshold), 1, 0)  # Écart-type extrême
+        df['extrem_volatility'] = np.where((stds < std_low_threshold) | (stds > std_high_threshold), 1, 0)  # Écart-type extrême
 
     # 4. Filtrer df pour ne garder que les entrées avec trade (0 ou 1)
     df_filtered = df[df['class_binaire'].isin([0, 1])].copy()
@@ -1030,7 +1034,7 @@ def objective_regressionStd_modified(trial, df):
     try:
         # Calcul pour le signal de survente (oversold) - volatilité basse
         if OPTIMIZE_OVERSOLD:
-            oversold_df = df_filtered[df_filtered['high_volatility'] == 1]
+            oversold_df = df_filtered[df_filtered['extrem_volatility'] == 1]
             if len(oversold_df) == 0:
                 return -np.inf
             bin_0_win_rate = oversold_df['class_binaire'].mean()
@@ -1039,7 +1043,7 @@ def objective_regressionStd_modified(trial, df):
 
         # Calcul pour le signal de surachat (overbought) - volatilité haute
         if OPTIMIZE_OVERBOUGHT:
-            overbought_df = df_filtered[df_filtered['low_volatility'] == 1]
+            overbought_df = df_filtered[df_filtered['range_volatility'] == 1]
             if len(overbought_df) == 0:
                 return -np.inf
             bin_1_win_rate = overbought_df['class_binaire'].mean()
@@ -1098,9 +1102,9 @@ def objective_regressionStd_modified(trial, df):
 
         params_str = f"  Paramètres: period={period_var}"
         if OPTIMIZE_OVERSOLD:
-            params_str += f", std_low_threshold={std_low_threshold:.4f}"
+            params_str += f", std_low_threshold={std_low_threshold:.4f} et std_high_threshold={std_high_threshold:.4f}"
         if OPTIMIZE_OVERBOUGHT:
-            params_str += f", std_high_threshold={std_high_threshold:.4f}"
+            params_str += f", std_low_threshold={std_low_threshold:.4f} et std_high_threshold={std_high_threshold:.4f}"
         print(params_str)
         print(f"  Score: {combined_score:.2f}")
 
@@ -1133,12 +1137,12 @@ def objective_regressionR2_modified(trial, df):
         print("No valid R² values found (all are NaN)")
 
     # 3. Créer les indicateurs avec une logique cohérente
-    df['high_volatility'] = np.where(r2s < r2_low_threshold, 1, 0)  # R² faible = haute volatilité
-    df['low_volatility'] = np.where(r2s > r2_high_threshold, 1, 0)  # R² élevé = basse volatilité
+    df['extrem_volatility'] = np.where(r2s < r2_low_threshold, 1, 0)  # R² faible = haute volatilité
+    df['range_volatility'] = np.where(r2s > r2_high_threshold, 1, 0)  # R² élevé = basse volatilité
     # print(
-    #     f"Sum of low_volatility: {df['low_volatility'].sum()} out of {len(df)} ({df['low_volatility'].sum() / len(df) * 100:.2f}%)")
+    #     f"Sum of range_volatility: {df['range_volatility'].sum()} out of {len(df)} ({df['range_volatility'].sum() / len(df) * 100:.2f}%)")
     # print(
-    #     f"Sum of high_volatility: {df['high_volatility'].sum()} out of {len(df)} ({df['high_volatility'].sum() / len(df) * 100:.2f}%)")
+    #     f"Sum of extrem_volatility: {df['extrem_volatility'].sum()} out of {len(df)} ({df['extrem_volatility'].sum() / len(df) * 100:.2f}%)")
     # 4. Filtrer df pour ne garder que les entrées avec trade (0 ou 1)
     df_filtered = df[df['class_binaire'].isin([0, 1])].copy()
     target_y = df_filtered['class_binaire']
@@ -1154,7 +1158,7 @@ def objective_regressionR2_modified(trial, df):
     try:
         # Calcul pour le signal de survente (oversold)
         if OPTIMIZE_OVERSOLD:
-            oversold_df = df_filtered[df_filtered['low_volatility'] == 1]
+            oversold_df = df_filtered[df_filtered['range_volatility'] == 1]
             if len(oversold_df) == 0:
                 #print("len(oversold_df)")
                 return -np.inf
@@ -1164,7 +1168,7 @@ def objective_regressionR2_modified(trial, df):
 
         # Calcul pour le signal de surachat (overbought)
         if OPTIMIZE_OVERBOUGHT:
-            overbought_df = df_filtered[df_filtered['high_volatility'] == 1]
+            overbought_df = df_filtered[df_filtered['extrem_volatility'] == 1]
             if len(overbought_df) == 0:
                 #print("len(overbought_df)")
 
@@ -2014,24 +2018,24 @@ def run_indicator_optimization(df, df_filtered, target_y, indicator_type="stocha
             print(f"  Période de la pente: {best_trial.params.get('period_var_std', 'N/A')}")
             if OPTIMIZE_OVERSOLD:
                 print(
-                    f"  Seuil de volatilité basse (std_low_threshold): {best_trial.params.get('std_low_threshold', 'N/A')}")
+                    f"  Seuil de volatilité basse (std_low_threshold): {best_trial.params.get('std_low_threshold', 'N/A')} et (std_high_threshold): {best_trial.params.get('std_high_threshold', 'N/A')}")
             if OPTIMIZE_OVERBOUGHT:
                 print(
-                    f"  Seuil de volatilité haute (std_high_threshold): {best_trial.params.get('std_high_threshold', 'N/A')}")
+                    f"  Seuil de volatilité haute (std_low_threshold): {best_trial.params.get('std_low_threshold', 'N/A')}  et  (std_high_threshold): {best_trial.params.get('std_high_threshold', 'N/A')}")
         elif indicator_type.lower() == "regression_slope":
             print(f"  Période de la pente: {best_trial.params.get('period_var_slope', 'N/A')}")
             if OPTIMIZE_OVERSOLD:
                 print(
-                    f"  Seuil de pente faible (slope_low_threshold): {best_trial.params.get('slope_low_threshold', 'N/A')}")
+                    f"  Seuil de pente faible slope_range_threshold: {best_trial.params.get('slope_range_threshold', 'N/A')}, slope_extrem_threshold {best_trial.params.get('slope_extrem_threshold', 'N/A')} ")
             if OPTIMIZE_OVERBOUGHT:
                 print(
-                    f"  Seuil de pente forte (slope_high_threshold): {best_trial.params.get('slope_high_threshold', 'N/A')}")
+                    f"  Seuil de pente forte slope_range_threshold: {best_trial.params.get('slope_range_threshold', 'N/A')}, slope_extrem_threshold {best_trial.params.get('slope_extrem_threshold', 'N/A')} ")
         elif indicator_type.lower() == "atr":
             print(f"  Période de l'ATR: {best_trial.params.get('period_var_atr', 'N/A')}")
             if OPTIMIZE_OVERSOLD:
                 print(f"  Seuil bas de l'ATR (atr_low_threshold): {best_trial.params.get('atr_low_threshold', 'N/A')}")
-                print(
-                    f"  Seuil haut de l'ATR (atr_high_threshold): {best_trial.params.get('atr_high_threshold', 'N/A')}")
+                # print(
+                #     f"  Seuil haut de l'ATR (atr_high_threshold): {best_trial.params.get('atr_high_threshold', 'N/A')}")
             if OPTIMIZE_OVERBOUGHT:
                 print(f"  Seuil bas de l'ATR (atr_low_threshold): {best_trial.params.get('atr_low_threshold', 'N/A')}")
                 print(

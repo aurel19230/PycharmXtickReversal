@@ -169,7 +169,7 @@ def train_and_evaluate_lightgbm_model(
         'tn': tn_val,
         'fn': fn_val,
         'total_samples': len(y_val_cv),
-        'val_bestIdx_custom_metric_pnl': val_best,
+        'val_bestVal_custom_metric_pnl': val_best,
         'best_iteration': best_iteration
     }
     train_metrics = {
@@ -178,12 +178,12 @@ def train_and_evaluate_lightgbm_model(
         'tn': tn_train,
         'fn': fn_train,
         'total_samples': len(Y_train_cv),
-        'train_bestIdx_custom_metric_pnl': train_best
+        'train_bestVal_custom_metric_pnl': train_best
     }
     #print(
-    #   f"Val metrics: tp={val_metrics['tp']}, fp={val_metrics['fp']}, tn={val_metrics['tn']}, fn={val_metrics['fn']}, samples={val_metrics['total_samples']}, best_pnl={val_metrics['val_bestIdx_custom_metric_pnl']:.4f}, best_iter={val_metrics['best_iteration']}")
+    #   f"Val metrics: tp={val_metrics['tp']}, fp={val_metrics['fp']}, tn={val_metrics['tn']}, fn={val_metrics['fn']}, samples={val_metrics['total_samples']}, best_pnl={val_metrics['val_bestVal_custom_metric_pnl']:.4f}, best_iter={val_metrics['best_iteration']}")
     #print(
-    #   f"Train metrics: tp={train_metrics['tp']}, fp={train_metrics['fp']}, tn={train_metrics['tn']}, fn={train_metrics['fn']}, samples={train_metrics['total_samples']}, best_pnl={train_metrics['train_bestIdx_custom_metric_pnl']:.4f}")
+    #   f"Train metrics: tp={train_metrics['tp']}, fp={train_metrics['fp']}, tn={train_metrics['tn']}, fn={train_metrics['fn']}, samples={train_metrics['total_samples']}, best_pnl={train_metrics['train_bestVal_custom_metric_pnl']:.4f}")
     tp_fp_tn_fn_sum_val = tp_val + fp_val + tn_val + fn_val
     tp_fp_tn_fn_sum_train = tp_train + fp_train + tn_train + fn_train
     tp_fp_sum_val = tp_val + fp_val

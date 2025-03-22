@@ -45,7 +45,7 @@ def generate_output_filename(files, xtickRev_config_dir):
 
 def fix_trade_results_and_add_pnl(df, sl_value=-227, tp_value=175, output_suffix="_bugFixTradeResult1"):
     """
-    Corrige les tradeResult et ajoute des colonnes de PnL théorique.
+    Corrige les tradeResult (corrigé dans SC dans version 2) et ajoute des colonnes de PnL théorique.
 
     Args:
         df: DataFrame contenant les données
@@ -89,8 +89,8 @@ def main():
     TP_VALUE = 175
 
     # Chemin du répertoire
-    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\UnerAu15Nov\\merge\\"
-    file_name = "Step2_1erAu15Nov_311024_151124.csv"
+    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL\\version2\\merge\\"
+    file_name = "Step2_version2_170924_110325.csv"
 
     # Construction du chemin complet du fichier
     file_path = os.path.join(directory_path, file_name)

@@ -176,22 +176,23 @@ def xgb_custom_metric_ProfitBased_cpu(predt: np.ndarray, dtrain: xgb.DMatrix, me
 
 
 # Métrique personnalisée pour XGBoost
-def xgb_custom_metric_PNL(y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None,
+# Métrique personnalisée pour XGBoost
+def xgb_custom_metric_PNL(y_pnl_data_train_cv=None, y_pnl_data_val_cv_OrTest=None,
         metric_dict=None, config=None):
     #print(xgb_custom_metric_PNL)
-    def profit_metric(predt, dtrain):
+    def profit_metric(preds, y_true_class_binaire):
         """
         XGBoost custom metric pour le profit
         """
-        y_true = dtrain.get_label()
+        y_true_class_binaire = y_true_class_binaire.get_label()
 
         # Application de la sigmoid
-        predt = sigmoidCustom_cpu(predt)
-        predt = np.clip(predt, 0.0, 1.0)
+        preds = sigmoidCustom_cpu(preds)
+        preds = np.clip(preds, 0.0, 1.0)
 
         # Vérification des prédictions
-        min_val = np.min(predt)
-        max_val = np.max(predt)
+        min_val = np.min(preds)
+        max_val = np.max(preds)
         if min_val < 0 or max_val > 1:
             logging.warning(f"Les prédictions sont hors de l'intervalle [0, 1]: [{min_val:.4f}, {max_val:.4f}]")
             return 'custom_metric_ProfitBased', float('-inf')
@@ -199,18 +200,21 @@ def xgb_custom_metric_PNL(y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None
         # Application du seuil
         threshold = metric_dict.get('threshold', 0.55555555)
         #print(threshold)
-        y_pred_threshold = (predt > threshold).astype(int)
+        y_pred_threshold = (preds > threshold).astype(int)
 
         # Calcul du profit et des métriques
         total_profit, tp, fp = calculate_profitBased(
             y_true_class_binaire=y_true_class_binaire,
-            y_pred_threshold=y_pred_threshold,y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
+            y_pred_threshold=y_pred_threshold,
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
             metric_dict=metric_dict,
             config=config
         )
         #print(f"[Iter] Profit: {total_profit}, TP: {tp}, FP: {fp}, Threshold: {threshold}")
 
         # Normalisation éventuelle du profit
+        normalize = metric_dict.get('normalize', False)
         if normalize:
             total_trades_val = tp + fp
             if total_trades_val > 0:
@@ -259,6 +263,8 @@ def train_and_evaluate_xgb_model(
         X_val_cv=None,
         Y_train_cv=None,
         y_val_cv=None,
+        y_pnl_data_train_cv=None,
+        y_pnl_data_val_cv_OrTest=None,
         params=None,
         model_weight_optuna=None,
         config=None,
@@ -267,6 +273,7 @@ def train_and_evaluate_xgb_model(
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
+        log_evaluation=0,
 ):
     # Calcul des poids
     sample_weights_train, sample_weights_val = compute_sample_weights(Y_train_cv, y_val_cv)
@@ -275,19 +282,34 @@ def train_and_evaluate_xgb_model(
     dtrain = xgb.DMatrix(X_train_cv, label=Y_train_cv, weight=sample_weights_train)
     dval = xgb.DMatrix(X_val_cv, label=y_val_cv, weight=sample_weights_val)
 
-    # Configuration des paramètres et définition de la fonction objective
-    if config.get('custom_objective_lossFct', 13) == model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED:
+    # Configuration des paramètres selon l'objectif
+    custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
+    if custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED:
         obj_function = xgb_create_weighted_logistic_obj_cpu(model_weight_optuna['w_p'], model_weight_optuna['w_n'])
         params['disable_default_eval_metric'] = 1
-    else:
-        raise ValueError("Choisir une fonction objective / Fonction objective non reconnue")
+    # elif custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_BINARY:
+    #     obj_function = None
+    #     params.update({'objective': 'binary:logistic'})
+    # elif custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY:
+    #     obj_function = None
+    #     params.update({'objective': 'binary:logistic'})  # XGBoost equivalent for cross_entropy
+    # elif custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY_LAMBDA:
+    #     obj_function = None
+    #     params.update({'objective': 'binary:logitraw'})  # XGBoost closest equivalent
+    # else:
+    #     raise ValueError("Choisir une fonction objective / Fonction objective non reconnue")
 
+    # Configuration de la métrique d'évaluation personnalisée
     if config.get('custom_metric_eval', 13) == model_custom_metric.XGB_CUSTOM_METRIC_PNL:
-        custom_metric = xgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,metric_dict=model_weight_optuna, config=config, normalize=False)
+        custom_metric = xgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
+                                              metric_dict=model_weight_optuna, config=config)
     else:
-        params.update({'metric': ['auc', 'binary_logloss']})
+        custom_metric = None
+        params.update({'eval_metric': ['auc', 'logloss']})
 
     evals_result = {}
+
+    # Entraînement du modèle
     current_model = xgb.train(
         params,
         dtrain,
@@ -296,7 +318,7 @@ def train_and_evaluate_xgb_model(
         obj=obj_function,
         custom_metric=custom_metric,
         early_stopping_rounds=config.get('early_stopping_rounds', 13),
-        verbose_eval=False,
+        verbose_eval=log_evaluation,
         evals_result=evals_result,
         maximize=True
     )
@@ -304,9 +326,6 @@ def train_and_evaluate_xgb_model(
     # Extraction de la meilleure itération
     best_iteration, best_idx, val_best, train_best = get_best_iteration(evals_result,
                                                                         config.get('custom_metric_eval', 13))
-
-    print(evals_result)
-    print(f"best_iteration:{best_iteration} | val_best:{val_best} | train_best:{train_best}")
 
     # Prédictions et métriques
     val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
@@ -326,7 +345,7 @@ def train_and_evaluate_xgb_model(
         'tn': tn_val,
         'fn': fn_val,
         'total_samples': len(y_val_cv),
-        'val_bestIdx_custom_metric_pnl': val_best,
+        'val_bestVal_custom_metric_pnl': val_best,
         'best_iteration': best_iteration
     }
     train_metrics = {
@@ -335,7 +354,7 @@ def train_and_evaluate_xgb_model(
         'tn': tn_train,
         'fn': fn_train,
         'total_samples': len(Y_train_cv),
-        'train_bestIdx_custom_metric_pnl': train_best
+        'train_bestVal_custom_metric_pnl': train_best
     }
 
     # Calculs complémentaires (winrate, trades, pourcentages, etc.)

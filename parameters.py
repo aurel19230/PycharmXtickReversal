@@ -13,16 +13,16 @@ def get_path():
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly220LastFullSession_OnlyShort_feat_winsorized.csv"
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
-    FILE_NAME_ = "Step5_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-    #FILE_NAME_ = "Step5_1erAu15Nov_311024_151124_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
+    FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
 
 
     ENV = detect_environment()
     if ENV == 'pycharm':
         if platform.system() != "Darwin":
             base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
-            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\merge_I1_I2"
-            #DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\UnerAu15dec22h\merge"
+            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
+            #DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version1"
 
         else:
             base_results_path = "/Users/aurelienlachaud/Documents/trading_local/data_preprocessing/results_optim/"
@@ -142,6 +142,35 @@ def get_model_param_range(model_type):
             'bootstrap': [True], #[True, False],
 
         }
+    elif model_type == modelType.SVC:
+        return {
+            # Paramètre de régularisation - contrôle le compromis entre la marge et les erreurs
+            'C': {'min': 0.1, 'max': 100, 'log': True},
+
+            # Paramètre gamma pour les noyaux 'rbf', 'poly' et 'sigmoid'
+            'gamma': {'min': 0.0001, 'max': 10, 'log': True},
+
+            # Degré du polynôme pour le noyau 'poly'
+            'degree': {'min': 2, 'max': 5},
+
+            # Coefficient pour les noyaux 'poly' et 'sigmoid'
+            'coef0': {'min': 0.0, 'max': 10.0},
+
+            # Stratégie de gestion des classes déséquilibrées
+            'class_weight': ['balanced', None],
+
+            # Tolérance pour le critère d'arrêt
+            # 'tol': {'min': 1e-4, 'max': 1e-2, 'log': True},
+
+            # # Taille du cache pour le noyau (en MB)
+            # 'cache_size': [200, 500, 1000],
+
+            # Stratégie un-contre-un ou un-contre-tous pour la classification multiclasse
+            # 'decision_function_shape': ['ovo', 'ovr'],
+
+            # # Shrinking heuristic
+            # 'shrinking': [True, False],
+        }
     elif model_type == modelType.CATBOOST:
         return {
             # Équivalent à XGB num_boost_round : Nombre total d'arbres
@@ -250,7 +279,7 @@ def get_config():
        # 'compute_feature_stat': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
         'compute_vif':True,
         'retained_only_vif': True,
-        'vif_threshold': 7.5,
+        'vif_threshold': 15000000000000000,
         'method_powerAnaly': "analytical",#['both', 'analytical', 'montecarlo']
         'n_simulations_monte':5000,
         'powAnaly_threshold':0.5,
@@ -260,15 +289,16 @@ def get_config():
         "fisher_pvalue_threshold": 0.05,  # seuil classique p-value (optionnel)
         "mrmr_score_threshold":  0.01, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
         'use_pnl_theoric':True,
-        'scaler_choice': scalerChoice.SCALER_ROBUST,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
+        'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
         'cv_method': cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,# TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,
         # TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN TIME_SERIE_SPLIT
         # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
-        'model_type': modelType.LGBM, #XGB LGBM
-        'custom_objective_lossFct': model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
-        'custom_metric_eval': model_custom_metric.LGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
-         #'model_type': modelType.XGB, XGB_CUSTOM_METRIC_PNL
+        'svc_probability':False, #calibration interne des probabilité avec cv intterne
+        'svc_kernel':'poly', #['rbf', 'poly', 'sigmoid'],
+        'model_type': modelType.XGB, #XGB LGBM SVC
+        'custom_objective_lossFct': model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
+        'custom_metric_eval': model_custom_metric.XGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
          #'custom_objective_lossFct': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED, LGB_CUSTOM_METRIC_PNL
 
     }

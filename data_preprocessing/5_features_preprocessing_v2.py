@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from func_standard import print_notification, load_data, calculate_naked_poc_distances, CUSTOM_SESSIONS, \
-    save_features_with_sessions,remplace_0_nan_reg_slope_p_2d,process_reg_slope_replacement
+    save_features_with_sessions,remplace_0_nan_reg_slope_p_2d,process_reg_slope_replacement, calculate_slopes_and_r2_numba,calculate_atr
 from definition import *
 import math
 from sklearn.preprocessing import StandardScaler
@@ -21,6 +21,328 @@ from sklearn.preprocessing import MinMaxScaler
 # Définition de la fonction calculate_max_ratio
 import numpy as np
 import time
+
+import warnings
+from pandas.errors import PerformanceWarning
+# Nom du fichier
+
+file_name = "Step4_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
+#file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
+# Chemin du répertoire
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version1"
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
+
+# Construction du chemin complet du fichier
+file_path = os.path.join(directory_path, file_name)
+
+REPLACE_NAN = False
+REPLACED_NANVALUE_BY = 90000.54789
+REPLACED_NANVALUE_BY_INDEX = 1
+if REPLACE_NAN:
+    print(
+        f"\nINFO : Implémenter dans le code => les valeurs NaN seront remplacées par {REPLACED_NANVALUE_BY} et un index")
+else:
+    print(
+        f"\nINFO : Implémenter dans le code => les valeurs NaN ne seront pas remplacées par une valeur choisie par l'utilisateur mais laissé à NAN")
+
+# Configuration
+CONFIG = {
+    'FILE_PATH': file_path,
+}
+
+df = load_data(CONFIG['FILE_PATH'])
+# Ignorer tous les avertissements de performance pandas
+warnings.filterwarnings("ignore", category=PerformanceWarning)
+def calculate_percentiles(df_NANValue, columnName, settings, nan_replacement_values=None):
+    """
+    Calcule les percentiles tout en gérant les valeurs NaN et les valeurs de remplacement.
+    Évite les erreurs en cas de colonne entièrement NaN ou filtrée.
+    """
+
+    # Récupération des paramètres de winsorisation
+    floor_enabled, crop_enabled, floorInf_percentage, cropSup_percentage, _ = settings[columnName]
+
+    # Gestion des valeurs de remplacement NaN
+    if nan_replacement_values is not None and columnName in nan_replacement_values:
+        nan_value = nan_replacement_values[columnName]
+        mask = df_NANValue[columnName] != nan_value
+        nan_count = (~mask).sum()
+        # print(f"   In calculate_percentiles:")
+        # print(f"     - Filter out {nan_count} nan replacement value(s) {nan_value} for {columnName}")
+    else:
+        mask = df_NANValue[columnName].notna()
+        nan_count = df_NANValue[columnName].isna().sum()
+        # print(f"   In calculate_percentiles:")
+        # print(f"     - {nan_count} NaN value(s) found in {columnName}")
+
+    # Filtrage des valeurs valides
+    filtered_values = df_NANValue.loc[mask, columnName].values
+
+    # 🚨 Vérification si filtered_values est vide
+    if filtered_values.size == 0:
+        print(f"⚠️ Warning: No valid values found in '{columnName}', skipping percentile calculation.")
+        return None, None  # Ou des valeurs par défaut, ex: return 0, 1
+
+    # Calcul des percentiles en fonction des options activées
+    floor_value = np.percentile(filtered_values, floorInf_percentage) if floor_enabled else None
+    crop_value = np.percentile(filtered_values, cropSup_percentage) if crop_enabled else None
+
+    # print(f"     - floor_value: {floor_value}   crop_value: {crop_value}")
+
+    return floor_value, crop_value
+
+import numpy as np
+import pandas as pd
+
+
+def replace_nan_and_inf(df, columns_to_process, REPLACE_NAN=True):
+    # Paramètres
+    start_value = REPLACED_NANVALUE_BY
+    increment = REPLACED_NANVALUE_BY_INDEX
+    current_value = start_value
+    nan_replacement_values = {}
+    df_replaced = df.copy()
+
+    for column in columns_to_process:
+        # Combiner les masques pour NaN et Inf en une seule opération
+        is_nan_or_inf = df[column].isna() | np.isinf(df[column])
+        total_replacements = is_nan_or_inf.sum()
+
+        if total_replacements > 0:
+            nan_count = df[column].isna().sum()
+            inf_count = np.isinf(df[column]).sum()
+
+            print(f"Colonne problématique : {column}")
+            print(f"Nombre de valeurs NaN : {nan_count}")
+            print(f"Nombre de valeurs infinies : {inf_count}")
+
+            if REPLACE_NAN:
+                if start_value != 0:
+                    df_replaced.loc[is_nan_or_inf, column] = current_value
+                    nan_replacement_values[column] = current_value
+                    print(f"L'option start_value != 0 est activée.")
+                    print(
+                        f"Les {total_replacements} valeurs NaN et infinies dans la colonne '{column}' ont été remplacées par {current_value}")
+                    if increment != 0:
+                        current_value += increment
+                else:
+                    print(
+                        f"Les valeurs NaN et infinies dans la colonne '{column}' ont été laissées inchangées car start_value est 0")
+            else:
+                # Remplacer uniquement les valeurs infinies par NaN
+                df_replaced.loc[np.isinf(df[column]), column] = np.nan
+                inf_replacements = inf_count
+                print(f"REPLACE_NAN est à False.")
+                print(f"Les {inf_replacements} valeurs infinies dans la colonne '{column}' ont été remplacées par NaN")
+                print(f"Les {nan_count} valeurs NaN dans la colonne '{column}' ont été laissées inchangées")
+                print("Les valeurs NaN ne sont pas remplacées par une valeur choisie par l'utilisateur.")
+
+    number_of_elementsnan_replacement_values = len(nan_replacement_values)
+    print(f"Le dictionnaire nan_replacement_values contient {number_of_elementsnan_replacement_values} éléments.")
+    return df_replaced, nan_replacement_values
+
+
+def winsorize(features_NANReplacedVal_df, column, floor_value, crop_value, floor_enabled, crop_enabled,
+              nan_replacement_values=None):
+    # Créer une copie des données de la colonne spécifiée
+    winsorized_data = features_NANReplacedVal_df[column].copy()
+
+    # Assurez-vous que le nom de la série est préservé
+    winsorized_data.name = column
+
+    # Créer un masque pour exclure la valeur nan_value si spécifiée
+    if nan_replacement_values is not None and column in nan_replacement_values:
+        nan_value = nan_replacement_values[column]
+        mask = features_NANReplacedVal_df[column] != nan_value
+    else:
+        # Si pas de valeur à exclure, on crée un masque qui sélectionne toutes les valeurs non-NaN
+        mask = features_NANReplacedVal_df[column].notna()
+
+    # Appliquer la winsorisation seulement sur les valeurs non masquées
+    if floor_enabled:
+        winsorized_data.loc[mask & (winsorized_data < floor_value)] = floor_value
+
+    if crop_enabled:
+        winsorized_data.loc[mask & (winsorized_data > crop_value)] = crop_value
+
+    # S'assurer qu'il n'y a pas de NaN dans les données winsorisées
+    # winsorized_data = winsorized_data.fillna(nan_replacement_values.get(column, winsorized_data.median()))
+
+    return winsorized_data
+
+
+def cropFloor_dataSource(features_NANReplacedVal_df, columnName, floorInf_booleen, cropSup_booleen, floorInf_percent,
+                         cropSup_percent, nan_replacement_values=None):
+    """
+    Calcule les percentiles (floor et crop) tout en gérant les valeurs NaN et les valeurs de remplacement.
+    """
+    # Gestion des valeurs de remplacement NaN
+    if nan_replacement_values is not None and columnName in nan_replacement_values:
+        nan_value = nan_replacement_values[columnName]
+        mask = features_NANReplacedVal_df[columnName] != nan_value
+    else:
+        mask = features_NANReplacedVal_df[columnName].notna()
+
+    # Filtrage des valeurs valides
+    filtered_values = features_NANReplacedVal_df.loc[mask, columnName].values
+
+    # Vérification si filtered_values est vide
+    if filtered_values.size == 0:
+        print(f"⚠️ Warning: No valid values found in '{columnName}', skipping percentile calculation.")
+        return None, None, floorInf_booleen, cropSup_booleen, floorInf_percent, cropSup_percent
+
+    # Calcul des percentiles en fonction des options activées
+    floor_valueNANfiltered = np.percentile(filtered_values, floorInf_percent) if floorInf_booleen else None
+    crop_valueNANfiltered = np.percentile(filtered_values, cropSup_percent) if cropSup_booleen else None
+
+    return floor_valueNANfiltered, crop_valueNANfiltered, floorInf_booleen, cropSup_booleen, floorInf_percent, cropSup_percent
+
+
+import numpy as np
+
+import numpy as np
+
+
+def apply_winsorization(features_NANReplacedVal_df, columnName, floorInf_booleen, cropSup_booleen, floorInf_percent,
+                        cropSup_percent, nan_replacement_values=None):
+    """
+    Calcule les percentiles et applique la winsorisation sur les données.
+    """
+    # Récupérer les valeurs pour la winsorisation
+    floor_valueNANfiltered, crop_valueNANfiltered, _, _, _, _ = cropFloor_dataSource(
+        features_NANReplacedVal_df,
+        columnName,
+        floorInf_booleen,
+        cropSup_booleen,
+        floorInf_percent,
+        cropSup_percent,
+        nan_replacement_values
+    )
+
+    # Winsorisation avec les valeurs NaN
+    winsorized_valuesWithNanValue = winsorize(
+        features_NANReplacedVal_df,
+        columnName,
+        floor_valueNANfiltered,
+        crop_valueNANfiltered,
+        floorInf_booleen,
+        cropSup_booleen,
+        nan_replacement_values
+    )
+
+    return winsorized_valuesWithNanValue
+
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
+def plot_single_histogram(values_before, winsorized_values_after, column, floor_value, crop_value,
+                          floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, ax,
+                          nan_replacement_values=None, range_strength_percent_in_range_10_32=None,
+                          range_strength_percent_in_range_5_23=None, regimeAdx_pct_infThreshold=None,
+                          adjust_xaxis=True):
+    values_before_clean = values_before.dropna()
+
+    sns.histplot(data=pd.DataFrame({column: values_before_clean}), x=column, color="blue", kde=False, ax=ax, alpha=0.7)
+    sns.histplot(data=pd.DataFrame({column: winsorized_values_after}), x=column, color="red", kde=False, ax=ax,
+                 alpha=0.7)
+
+    if floorInf_values:
+        ax.axvline(floor_value, color='g', linestyle='--', label=f'Floor ({floorInf_percent}%)')
+    if cropSup_values:
+        ax.axvline(crop_value, color='y', linestyle='--', label=f'Crop ({cropSup_percent}%)')
+
+    def format_value(value):
+        return f"{value:.2f}" if pd.notna(value) else "nan"
+
+    initial_values = values_before_clean.sort_values()
+    winsorized_values = winsorized_values_after.dropna().sort_values()
+
+    ax.axvline(initial_values.iloc[0], color='blue',
+               label=f'Init ({format_value(initial_values.iloc[0])}, {format_value(initial_values.iloc[-1])})')
+    ax.axvline(winsorized_values.iloc[0], color='red',
+               label=f'Winso ({format_value(winsorized_values.iloc[0])}, {format_value(winsorized_values.iloc[-1])})')
+
+    if adjust_xaxis:
+        # Assurez-vous que x_min prend en compte les valeurs négatives
+        x_min = min(winsorized_values_after.min(), floor_value) if floorInf_values else winsorized_values_after.min()
+        x_max = max(winsorized_values_after.max(), crop_value) if cropSup_values else winsorized_values_after.max()
+        ax.set_xlim(left=x_min, right=x_max)
+
+    # Keep the title
+    ax.set_title(column, fontsize=6, pad=0.1)  # Title is kept
+
+    # Clear the x-axis label to avoid duplication
+    ax.set_xlabel('')  # This will clear the default x-axis label
+    ax.set_ylabel('')
+    # Reduce the font size of the legend
+    ax.legend(fontsize=5)
+
+    ax.tick_params(axis='both', which='major', labelsize=4.5)
+    ax.xaxis.set_tick_params(labelsize=4.5, pad=0.1)
+    ax.yaxis.set_tick_params(labelsize=4.5, pad=0.1)
+
+    if nan_replacement_values and column in nan_replacement_values:
+        ax.annotate(f"NaN replaced by: {nan_replacement_values[column]}",
+                    xy=(0.05, 0.95), xycoords='axes fraction',
+                    fontsize=5, ha='left', va='top')
+
+    nan_count = winsorized_values_after.isna().sum()
+    inf_count = np.isinf(winsorized_values_after).sum()
+    nan_proportion = nan_count / len(winsorized_values_after)
+    color_proportion = 'green' if nan_proportion < 0.3 else 'red'
+
+    annotation_text = (
+        f"Winsorized column:\n"
+        f"Remaining NaN: {nan_count}\n"
+        f"Remaining Inf: {inf_count}\n"
+        f"nb period: {len(winsorized_values_after)}\n"
+        f"% de np.nan : {nan_proportion:.2%}"
+    )
+
+    if column == 'range_strength_10_32' and range_strength_percent_in_range_10_32 is not None:
+        annotation_text += f"\n% time in range: {range_strength_percent_in_range_10_32:.2f}%"
+    elif column == 'range_strength_5_23' and range_strength_percent_in_range_5_23 is not None:
+        annotation_text += f"\n% time in range: {range_strength_percent_in_range_5_23:.2f}%"
+    elif column == 'market_regimeADX' and regimeAdx_pct_infThreshold is not None:
+        annotation_text += f"\n% ADX < threshold: {regimeAdx_pct_infThreshold:.2f}%"
+
+    ax.annotate(
+        annotation_text,
+        xy=(0.05, 0.85),
+        xycoords='axes fraction',
+        fontsize=5,
+        ha='left',
+        va='top',
+        color=color_proportion,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.5)
+    )
+
+
+def plot_histograms_multi_figure(columns, figsize=(28, 20), graphs_per_figure=40):
+    n_columns = len(columns)
+    ncols = 7
+    nrows = 4
+    graphs_per_figure = ncols * nrows
+    n_figures = math.ceil(n_columns / graphs_per_figure)
+
+    figures = []
+    all_axes = []
+
+    for fig_num in range(n_figures):
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+        figures.append(fig)
+        axes = axes.flatten()
+        all_axes.extend(axes)
+
+        # Hide unused subplots
+        for ax in axes[n_columns - fig_num * graphs_per_figure:]:
+            ax.set_visible(False)
+
+    return figures, all_axes
 
 
 def calculate_max_ratio(values, condition, calc_max=False, std_multiplier=1):
@@ -43,46 +365,23 @@ def calculate_max_ratio(values, condition, calc_max=False, std_multiplier=1):
 
 
 ENABLE_PANDAS_METHOD_SCALING = True
-
+fig_range_input=''
 DEFAULT_DIV_BY0 = True  # max_ratio or valuex
-user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
-                    "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
-                    "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
-if user_choice.lower() == 'd':
-    fig_range_input = input("Entrez la plage des figures à afficher au format x_y (par exemple 2_5) : \n")
+# user_choice = input("Appuyez sur Entrée pour calculer les features sans la afficher. \n"
+#                     "Appuyez sur 'd' puis Entrée pour les calculer et les afficher : \n"
+#                     "Appuyez sur 's' puis Entrée pour les calculer et les afficher :")
+# if user_choice.lower() == 'd':
+#     fig_range_input = input("Entrez la plage des figures à afficher au format x_y (par exemple 2_5) : \n")
 
 # Demander à l'utilisateur s'il souhaite ajuster l'axe des abscisses
 adjust_xaxis_input = ''
+user_choice=''
 if user_choice.lower() == 'd' or user_choice.lower() == 's':
     adjust_xaxis_input = input(
         "Voulez-vous afficher les graphiques entre les valeurs de floor et crop ? (o/n) : ").lower()
 
 adjust_xaxis = adjust_xaxis_input == 'o'
 
-# Nom du fichier
-
-file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
-
-# Chemin du répertoire
-directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\merge_I1_I2"
-
-# Construction du chemin complet du fichier
-file_path = os.path.join(directory_path, file_name)
-
-REPLACE_NAN = False
-REPLACED_NANVALUE_BY = 90000.54789
-REPLACED_NANVALUE_BY_INDEX = 1
-if REPLACE_NAN:
-    print(
-        f"\nINFO : Implémenter dans le code => les valeurs NaN seront remplacées par {REPLACED_NANVALUE_BY} et un index")
-else:
-    print(
-        f"\nINFO : Implémenter dans le code => les valeurs NaN ne seront pas remplacées par une valeur choisie par l'utilisateur mais laissé à NAN")
-
-# Configuration
-CONFIG = {
-    'FILE_PATH': file_path,
-}
 
 
 def get_custom_section(minutes: int, custom_sections: dict) -> dict:
@@ -96,7 +395,6 @@ def get_custom_section(minutes: int, custom_sections: dict) -> dict:
     return list(custom_sections.values())[-1]
 
 
-df = load_data(CONFIG['FILE_PATH'])
 
 # Calcul de la moyenne de trade_pnl pour chaque classe
 mean_pnl = df.groupby('class_binaire')['trade_pnl'].mean()
@@ -270,56 +568,6 @@ import numpy as np
 from numba import jit
 
 
-@jit(nopython=True)
-def calculate_slopes_and_r2_numba(close_values, session_starts, window):
-    """
-    Calcule les pentes et les coefficients R² pour une série temporelle de manière optimisée avec Numba.
-
-    Parameters:
-    -----------
-    close_values : np.ndarray
-        Valeurs de clôture des prix.
-    session_starts : np.ndarray
-        Masque indiquant les débuts de session.
-    window : int
-        Taille de la fenêtre pour le calcul.
-
-    Returns:
-    --------
-    np.ndarray, np.ndarray :
-        Deux tableaux numpy contenant respectivement les pentes et les coefficients R².
-    """
-    n = len(close_values)
-    slopes = np.full(n, np.nan)
-    r2s = np.full(n, np.nan)
-
-    # Pré-calculer les x pour toutes les fenêtres
-    x = np.arange(window)
-    x_mean = np.mean(x)
-    x_diff = x - x_mean
-    x_var = np.sum(x_diff ** 2)
-
-    for i in range(window - 1, n):
-        # Vérifier que la fenêtre est valide (pas de début de session à l'intérieur)
-        if np.any(session_starts[i - window + 1:i + 1]):
-            continue
-
-        # Extraire les données de la fenêtre
-        y = close_values[i - window + 1:i + 1]
-
-        # Calculer la pente (slope)
-        y_mean = np.mean(y)
-        y_diff = y - y_mean
-        slope = np.sum(x_diff * y_diff) / x_var
-        slopes[i] = slope
-
-        # Calculer le R²
-        ss_total = np.sum((y - y_mean) ** 2)
-        ss_residual = np.sum((y - (slope * x + y_mean)) ** 2)
-        r2s[i] = 1 - (ss_residual / ss_total) if ss_total > 0 else 0
-
-    return slopes, r2s
-
 
 def apply_optimized_slope_r2_calculation(data: pd.DataFrame, window: int) -> pd.DataFrame:
     """
@@ -343,12 +591,13 @@ def apply_optimized_slope_r2_calculation(data: pd.DataFrame, window: int) -> pd.
     session_starts = (data['SessionStartEnd'] == 10).values
 
     # Calcul des pentes et des coefficients R²
-    slopes, r2s = calculate_slopes_and_r2_numba(close_values, session_starts, window)
+    slopes, r2s,stds = calculate_slopes_and_r2_numba(close_values, session_starts, window)
 
     # Conversion en pandas DataFrame
     results_df = pd.DataFrame({
         f'linear_slope_{window}': slopes,
-        f'linear_slope_r2_{window}': r2s
+        f'linear_slope_r2_{window}': r2s,
+        f'linear_slope_stds_{window}': stds
     }, index=data.index)
 
     return results_df
@@ -357,7 +606,7 @@ def apply_optimized_slope_r2_calculation(data: pd.DataFrame, window: int) -> pd.
 # Utilisation
 windows = [
     #6, 14, 21,30, 40,
-     50]
+     10,50]
 for window in windows:
     slope_r2_df = apply_optimized_slope_r2_calculation(df, window)
     features_df = pd.concat([features_df, slope_r2_df], axis=1)
@@ -635,6 +884,12 @@ features_df['diffPriceClosePoc_0_4'] = df['close'] - df['pocPrice'].shift(4)
 features_df['diffPriceClosePoc_0_5'] = df['close'] - df['pocPrice'].shift(5)
 # features_df['diffPriceClosePoc_0_6'] = df['close'] - df['pocPrice'].shift(6)
 
+features_df['diffPocPrice_0_1'] = df['pocPrice'] - df['pocPrice'].shift(1)
+features_df['diffPocPrice_1_2'] = df['pocPrice'].shift(1) - df['pocPrice'].shift(2)
+features_df['diffPocPrice_2_3'] = df['pocPrice'].shift(2) - df['pocPrice'].shift(3)
+features_df['diffPocPrice_0_2'] = df['pocPrice'] - df['pocPrice'].shift(2)
+
+
 
 features_df['diffHighPrice_0_1'] = df['high'] - df['high'].shift(1)
 features_df['diffHighPrice_0_2'] = df['high'] - df['high'].shift(2)
@@ -899,8 +1154,7 @@ features_df['bullish_reversal_force'] = np.where(df['volume'] != 0, df['VolBlw']
 
 
 # Nouvelles features - Features de Momentum:
-# Moyenne des volumes
-features_df['meanVolx'] = df['volume'].shift().rolling(window=5, min_periods=1).mean()
+
 
 
 # Relatif volume evol
@@ -923,13 +1177,16 @@ features_df['diffVolDelta_3_3Ratio'] = np.where(df['volume'].shift(3) != 0,
 features_df['diffVolDelta_0_1Ratio'] = np.where(df['delta'].shift(1) != 0,
                                                 (df['delta'] - df['delta'].shift(1)) / df['delta'].shift(1),
                                                 diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
+# Définir la période comme variable
+nb_periods = 5
 
-# cumDiffVolDelta
+# Moyenne des volumes sur les nb_periods dernières périodes (de t-1 à t-nb_periods)
+features_df['meanVolx'] = df['volume'].shift(1).rolling(window=nb_periods, min_periods=1).mean()
+
+# Somme des deltas sur les mêmes nb_periods périodes
 features_df['cumDiffVolDeltaRatio'] = np.where(features_df['meanVolx'] != 0,
-                                               (df['delta'].shift(1) + df['delta'].shift(2) + \
-                                                df['delta'].shift(3) + df['delta'].shift(4) + df['delta'].shift(5)) /
-                                               features_df['meanVolx'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
-
+                                              sum(df['delta'].shift(i) for i in range(1, nb_periods + 1)) /
+                                              features_df['meanVolx'], diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 # Nouvelles features - Features de Volume Profile:
 # Importance du POC
 volconZone_zoneReversal = np.where(df['candleDir'] == -1, df['VolAbv'], df['VolBlw']) + df['vol_XticksContZone']
@@ -958,74 +1215,84 @@ features_df['asymetrie_volume'] = np.where(df['volume'] != 0, (df['VolAbv'] - df
 features_df['VolCandleMeanxRatio'] = np.where(features_df['meanVolx'] != 0, df['volume'] / features_df['meanVolx'],
                                               addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-Imb_Div0=3.5
+Imb_Div0=-6
+Imb_zone=-2
 # Nouvelles features - Order Flow:
 # Imbalances haussières
 features_df['bull_imbalance_low_1'] = np.where(
-    df['bidVolLow'] != 0,
-    df['askVolLow_1'] / df['bidVolLow'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolLow_1'] / df['bidVolLow'],
-            df['bidVolLow'] != 0
-        )
+    df['bidVolLow'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolLow'] >= 1) & (df['bidVolLow'] <= 1),
+        Imb_zone,
+        df['askVolLow_1'] / df['bidVolLow']
     )
 )
 # Imbalances haussières
+# Version simplifiée avec intervalle
 features_df['bull_imbalance_low_2'] = np.where(
-    df['bidVolLow_1'] != 0,
-    df['askVolLow_2'] / df['bidVolLow_1'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolLow_2'] / df['bidVolLow_1'],
-            df['bidVolLow_1'] != 0
-        )
+    df['bidVolLow_1'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolLow_1'] >= 1) & (df['bidVolLow_1'] <= 2),
+        Imb_zone,
+        df['askVolLow_2'] / df['bidVolLow_1']
     )
 )
 
+
+# # Définir des limites adaptées à votre distribution
+# bins = [-np.inf, -3, 0, 1.4, 4, 6, np.inf]
+# features_df['bull_imbalance_low_2'] = pd.cut(features_df['bull_imbalance_low_2'], bins=bins, labels=False)
+
+# Imbalances haussières
+# Version simplifiée avec intervalle
 features_df['bull_imbalance_low_3'] = np.where(
-    df['bidVolLow_2'] != 0,
-    df['askVolLow_3'] / df['bidVolLow_2'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolLow_3'] / df['bidVolLow_2'],
-            df['bidVolLow_2'] != 0
-        )
+    df['bidVolLow_2'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolLow_2'] >= 1) & (df['bidVolLow_2'] <= 1),
+        Imb_zone,
+        df['askVolLow_3'] / df['bidVolLow_2']
     )
 )
+
+
+
 
 features_df['bull_imbalance_high_0'] = np.where(
-    df['bidVolHigh_1'] != 0,
-    df['askVolHigh'] / df['bidVolHigh_1'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolHigh'] / df['bidVolHigh_1'],
-            df['bidVolHigh_1'] != 0
-        )
+    df['bidVolHigh_1'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolHigh_1'] >= 1) & (df['bidVolHigh_1'] <= 1),
+        Imb_zone,
+        df['askVolHigh'] / df['bidVolHigh_1']
     )
 )
 
 features_df['bull_imbalance_high_1'] = np.where(
-    df['bidVolHigh_2'] != 0,
-    df['askVolHigh_1'] / df['bidVolHigh_2'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolHigh_1'] / df['bidVolHigh_2'],
-            df['bidVolHigh_2'] != 0
-        )
+    df['bidVolHigh_2'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolHigh_2'] >= 1) & (df['bidVolHigh_2'] <= 1),
+        Imb_zone,
+        df['askVolHigh_1'] / df['bidVolHigh_2']
     )
 )
 
 features_df['bull_imbalance_high_2'] = np.where(
-    df['bidVolHigh_3'] != 0,
-    df['askVolHigh_2'] / df['bidVolHigh_3'],
-    Imb_Div0 if DEFAULT_DIV_BY0 else (
-        calculate_max_ratio(
-            df['askVolHigh_2'] / df['bidVolHigh_3'],
-            df['bidVolHigh_3'] != 0
-        )
+    df['bidVolHigh_3'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['bidVolHigh_3'] >= 1) & (df['bidVolHigh_3'] <= 1),
+        Imb_zone,
+        df['askVolHigh_2'] / df['bidVolHigh_3']
     )
 )
+
+from stats_sc.standard_stat_sc import *
+
+
 
 # Imbalances baissières
 features_df['bear_imbalance_low_0'] = np.where(
@@ -1058,6 +1325,37 @@ features_df['bear_imbalance_low_2'] = np.where(
             df['bidVolLow_2'] / df['askVolLow_3'],
             df['askVolLow_3'] != 0
         )
+    )
+)
+
+# Imbalances baissières
+features_df['bear_imbalance_low_0'] = np.where(
+    df['askVolLow_1'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['askVolLow_1'] >= 1) & (df['askVolLow_1'] <= 1),
+        Imb_zone,
+        df['bidVolLow'] / df['askVolLow_1']
+    )
+)
+
+features_df['bear_imbalance_low_1'] = np.where(
+    df['askVolLow_2'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['askVolLow_2'] >= 1) & (df['askVolLow_2'] <= 1),
+        Imb_zone,
+        df['bidVolLow_1'] / df['askVolLow_2']
+    )
+)
+
+features_df['bear_imbalance_low_2'] = np.where(
+    df['askVolLow_3'] == 0,
+    Imb_Div0,
+    np.where(
+        (df['askVolLow_3'] >= 1) & (df['askVolLow_3'] <= 1),
+        Imb_zone,
+        df['bidVolLow_2'] / df['askVolLow_3']
     )
 )
 
@@ -1152,7 +1450,7 @@ def toBeDisplayed_if_s(user_choice, choice):
     return result
 
 # Ajouter les colonnes d'absorption au dictionnaire
-absorption_settings = {f'is_absorpsion_{tick}ticks_{direction}': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False))
+absorption_settings = {f'is_absorpsion_{tick}ticks_{direction}': ("winsor",None,False, False, 10, 90, toBeDisplayed_if_s(user_choice, False))
                       for tick in range(3, candle_rev_tick + 1)
                       for direction in ['low', 'high']}
 
@@ -1239,230 +1537,1125 @@ print("Transfert réussi ! Toutes les colonnes ont été copiées avec succès."
 
 ## 0) key nom de la feature / 1) Ative Floor / 2) Active Crop / 3) % à Floored / ') % à Croped / 5) Afficher et/ou inclure Features dans fichiers cibles
 # choix des features à traiter
+
+
+
+# Liste de toutes les colonnes à inclure si la condition est remplie
+colonnes_a_inclure = [
+    "ratio_vol_VolCont_ZoneA_xTicksContZone",
+    "ratio_delta_VolCont_ZoneA_xTicksContZone",
+    "ratio_vol_VolCont_ZoneB_xTicksContZone",
+    "ratio_delta_VolCont_ZoneB_xTicksContZone",
+    "ratio_vol_VolCont_ZoneC_xTicksContZone",
+    "ratio_delta_VolCont_ZoneC_xTicksContZone"
+]
+
+# Vérifier si la colonne spécifique est présente dans df
+if "ratio_vol_VolCont_ZoneA_xTicksContZone" in df.columns:
+    # Vérifier que toutes les colonnes existent dans df
+    colonnes_existantes = [col for col in colonnes_a_inclure if col in df.columns]
+
+    # Si features_df n'existe pas encore, le créer avec ces colonnes
+    if 'features_df' not in locals():
+        features_df = df[colonnes_existantes].copy()
+    # Sinon, ajouter ces colonnes à features_df existant
+    else:
+        for col in colonnes_existantes:
+            features_df[col] = df[col]
+
+    print(f"Colonnes ajoutées à features_df: {colonnes_existantes}")
+else:
+    print("La colonne 'ratio_vol_VolCont_ZoneA_xTicksContZone' n'est pas présente dans df")
+
+
+def add_stochastic_force_indicators(df, features_df,
+                                    k_period_overbought, d_period_overbought,
+                                    k_period_oversold, d_period_oversold,
+                                    overbought_threshold=80, oversold_threshold=20,
+                                    fi_short=1, fi_long=6):
+    """
+    Ajoute le Stochastique Rapide et le Force Index aux features,
+    avec des périodes distinctes pour les zones de surachat et survente.
+
+    Paramètres:
+    - df: DataFrame source contenant les données brutes
+    - features_df: DataFrame de destination pour les features
+    - k_period_overbought: Période %K pour la détection de surachat
+    - d_period_overbought: Période %D pour la détection de surachat
+    - k_period_oversold: Période %K pour la détection de survente
+    - d_period_oversold: Période %D pour la détection de survente
+    - overbought_threshold: Seuil de surachat (défaut: 80)
+    - oversold_threshold: Seuil de survente (défaut: 20)
+    - fi_short: Période court terme pour le Force Index
+    - fi_long: Période long terme pour le Force Index
+
+    Retourne:
+    - features_df avec les nouvelles colonnes d'indicateurs techniques
+    """
+    if (k_period_overbought is None or d_period_overbought is None or
+            k_period_oversold is None or d_period_oversold is None):
+        raise ValueError("Toutes les périodes pour surachat et survente doivent être spécifiées")
+
+    try:
+        # Assurer que les données d'entrée sont numériques
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        volume = pd.to_numeric(df['volume'], errors='coerce')
+        candle_dir = pd.to_numeric(df['candleDir'], errors='coerce')
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calculer les stochastiques avec périodes spécifiques
+        k_overbought, d_overbought = compute_stoch(high, low, close,session_starts,
+                                                   k_period_overbought,
+                                                   d_period_overbought,
+                                                   fill_value=50)
+
+        k_oversold, d_oversold = compute_stoch(high, low, close,session_starts,
+                                               k_period_oversold,
+                                               d_period_oversold,
+                                               fill_value=50)
+
+        # Ajouter les stochastiques spécifiques au DataFrame
+        features_df['stoch_k_overbought'] = k_overbought
+        features_df['stoch_d_overbought'] = d_overbought
+        features_df['stoch_k_oversold'] = k_oversold
+        features_df['stoch_d_oversold'] = d_oversold
+
+        # Force Index
+        price_change = close.diff().fillna(0)
+        force_index_raw = price_change * volume
+
+        # Force Index court terme
+        features_df[f'force_index_{fi_short}'] = pd.Series(force_index_raw).ewm(span=fi_short,
+                                                                                adjust=False).mean().values
+
+        # Force Index long terme
+        features_df[f'force_index_{fi_long}'] = pd.Series(force_index_raw).ewm(span=fi_long, adjust=False).mean().values
+
+        # Assurer que les séries sont numériques pour les opérations suivantes
+        stoch_k_overbought = pd.Series(features_df['stoch_k_overbought']).astype(float)
+        stoch_d_overbought = pd.Series(features_df['stoch_d_overbought']).astype(float)
+        stoch_k_oversold = pd.Series(features_df['stoch_k_oversold']).astype(float)
+        stoch_d_oversold = pd.Series(features_df['stoch_d_oversold']).astype(float)
+
+        force_short = pd.Series(features_df[f'force_index_{fi_short}']).astype(float)
+        force_long = pd.Series(features_df[f'force_index_{fi_long}']).astype(float)
+
+        # Features dérivées du Stochastique - pour chaque variante
+        # Crossover pour la variante surachat
+        stoch_cross_overbought = np.zeros(len(stoch_k_overbought))
+        for i in range(1, len(stoch_k_overbought)):
+            if (pd.notna(stoch_k_overbought[i]) and pd.notna(stoch_d_overbought[i]) and
+                    pd.notna(stoch_k_overbought[i - 1]) and pd.notna(stoch_d_overbought[i - 1])):
+                if (stoch_k_overbought[i - 1] < stoch_d_overbought[i - 1] and
+                        stoch_k_overbought[i] > stoch_d_overbought[i]):
+                    stoch_cross_overbought[i] = 1
+                elif (stoch_k_overbought[i - 1] > stoch_d_overbought[i - 1] and
+                      stoch_k_overbought[i] < stoch_d_overbought[i]):
+                    stoch_cross_overbought[i] = -1
+
+        # Crossover pour la variante survente
+        stoch_cross_oversold = np.zeros(len(stoch_k_oversold))
+        for i in range(1, len(stoch_k_oversold)):
+            if (pd.notna(stoch_k_oversold[i]) and pd.notna(stoch_d_oversold[i]) and
+                    pd.notna(stoch_k_oversold[i - 1]) and pd.notna(stoch_d_oversold[i - 1])):
+                if (stoch_k_oversold[i - 1] < stoch_d_oversold[i - 1] and
+                        stoch_k_oversold[i] > stoch_d_oversold[i]):
+                    stoch_cross_oversold[i] = 1
+                elif (stoch_k_oversold[i - 1] > stoch_d_oversold[i - 1] and
+                      stoch_k_oversold[i] < stoch_d_oversold[i]):
+                    stoch_cross_oversold[i] = -1
+
+        features_df['stoch_crossover_overbought'] = stoch_cross_overbought
+        features_df['stoch_crossover_oversold'] = stoch_cross_oversold
+
+        # Zones de surachat/survente avec leurs stochastiques respectifs
+        features_df['stoch_overbought'] = np.where(stoch_k_overbought > overbought_threshold, 1, 0)
+        features_df['stoch_oversold'] = np.where(stoch_k_oversold < oversold_threshold, 1, 0)
+
+        # Features dérivées du Force Index
+        avg_volume_20 = volume.rolling(window=4).mean().fillna(volume)
+
+        # Normalisation avec gestion des divisions par zéro
+        fi_short_norm = np.where(avg_volume_20 > 0, force_short / avg_volume_20, 0)
+        fi_long_norm = np.where(avg_volume_20 > 0, force_long / avg_volume_20, 0)
+
+        features_df[f'force_index_{fi_short}_norm'] = fi_short_norm
+        features_df[f'force_index_{fi_long}_norm'] = fi_long_norm
+
+        # Divergence entre Force Index court et long terme
+        features_df['force_index_divergence'] = fi_short_norm - fi_long_norm
+
+        # Momentum basé sur le Force Index
+        features_df['fi_momentum'] = np.sign(force_short) * np.abs(fi_short_norm)
+
+        # Force Index combiné avec la direction de la bougie
+        features_df['fi_candle_aligned'] = np.where(
+            (candle_dir == 1) & (force_short > 0) |
+            (candle_dir == -1) & (force_short < 0),
+            1,  # Force Index aligné avec la direction de la bougie
+            0  # Force Index non aligné
+        )
+
+        # # Combinaisons spéciales de stochastiques et force index
+        # features_df['stoch_overbought_with_neg_fi'] = np.where(
+        #     (features_df['stoch_overbought'] == 1) & (force_short < 0),
+        #     1, 0
+        # )
+        #
+        # features_df['stoch_oversold_with_pos_fi'] = np.where(
+        #     (features_df['stoch_oversold'] == 1) & (force_short > 0),
+        #     1, 0
+        # )
+
+        return features_df
+
+    except Exception as e:
+        print(f"Erreur dans add_stochastic_force_indicators: {str(e)}")
+        # En cas d'erreur, retourner le DataFrame original sans modifications
+        return features_df
+
+
+def add_atr(df, features_df, atr_period_range=14, atr_period_extrem=14,
+            atr_low_threshold_range=2, atr_high_threshold_range=5,
+            atr_low_threshold_extrem=1):
+    """
+    Ajoute l'indicateur ATR (Average True Range) et des signaux dérivés au DataFrame de features.
+    Utilise potentiellement des périodes différentes pour les indicateurs de range et extremLow.
+
+    Paramètres:
+    - df: DataFrame contenant les colonnes 'high', 'low', 'close'
+    - features_df: DataFrame où ajouter les colonnes liées à l'ATR
+    - atr_period_range: Période de calcul de l'ATR pour l'indicateur range (défaut: 14)
+    - atr_period_extrem: Période de calcul de l'ATR pour l'indicateur extremLow (défaut: 14)
+    - atr_low_threshold_range: Seuil bas pour la plage modérée d'ATR (défaut: 2)
+    - atr_high_threshold_range: Seuil haut pour la plage modérée d'ATR (défaut: 5)
+    - atr_low_threshold_extrem: Seuil bas pour les valeurs extrêmes d'ATR (défaut: 1)
+
+    Retourne:
+    - features_df enrichi des colonnes ATR et dérivées
+    """
+    try:
+        # Calcul de l'ATR avec la période optimisée pour l'indicateur range
+        atr_values_range = calculate_atr(df, atr_period_range)
+
+        # Calcul de l'ATR avec la période optimisée pour l'indicateur extremLow
+        # Si les périodes sont identiques, éviter de calculer deux fois
+        if atr_period_range == atr_period_extrem:
+            atr_values_extrem = atr_values_range
+        else:
+            atr_values_extrem = calculate_atr(df, atr_period_extrem)
+
+        # Ajouter les valeurs brutes d'ATR au DataFrame de features
+        features_df['atr_range'] = atr_values_range
+        features_df['atr_extrem'] = atr_values_extrem
+
+        # Créer l'indicateur pour la plage "modérée" d'ATR (optimisée pour le win rate)
+        features_df['is_atr_range'] = np.where(
+            (atr_values_range > atr_low_threshold_range) & (atr_values_range < atr_high_threshold_range),
+            1, 0
+        )
+
+        # Créer l'indicateur pour les valeurs extrêmement basses d'ATR
+        features_df['is_atr_extremLow'] = np.where(
+            (atr_values_extrem < atr_low_threshold_extrem),
+            1, 0
+        )
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['atr_range', 'atr_extrem', 'is_atr_range', 'is_atr_extremLow']:
+            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+
+    except Exception as e:
+        print(f"Erreur dans add_atr: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes existantes
+        if 'atr_range' not in features_df.columns:
+            features_df['atr_range'] = 0
+        if 'atr_extrem' not in features_df.columns:
+            features_df['atr_extrem'] = 0
+        if 'is_atr_range' not in features_df.columns:
+            features_df['is_atr_range'] = 0
+        if 'is_atr_extremLow' not in features_df.columns:
+            features_df['is_atr_extremLow'] = 0
+
+    return features_df
+
+
+def add_regression_slope(df, features_df,
+                         period_low=14, period_high=14,
+                         slope_range_threshold_low=0.1, slope_range_threshold_high=0.5,
+                         slope_extrem_threshold_low=0.1, slope_extrem_threshold_high=0.5):
+    """
+    Ajoute les indicateurs de régression de pente au DataFrame de features.
+    Utilise des seuils spécifiques à chaque période.
+
+    Paramètres:
+    - df: DataFrame contenant les données de prix
+    - features_df: DataFrame où ajouter les indicateurs
+    - period_low: Période pour le calcul de la pente de l'indicateur is_rangeSlope
+    - period_high: Période pour le calcul de la pente de l'indicateur is_extremSlope
+    - slope_range_threshold_low: Seuil bas pour la détection des pentes modérées (period_low)
+    - slope_extrem_threshold_low: Seuil haut pour la détection des pentes modérées (period_low)
+    - slope_range_threshold_high: Seuil bas pour la détection des pentes fortes (period_high)
+    - slope_extrem_threshold_high: Seuil haut pour la détection des pentes fortes (period_high)
+
+    Retourne:
+    - features_df enrichi des indicateurs de pente
+    """
+    try:
+        close = pd.to_numeric(df['close'], errors='coerce').values
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calcul des pentes pour l'indicateur is_rangeSlope
+        slopes_low, r2_low, std_low = calculate_slopes_and_r2_numba(close, session_starts, period_low)
+
+        # Calcul des pentes pour l'indicateur is_extremSlope (uniquement si période différente)
+        if period_low == period_high:
+            slopes_high = slopes_low
+        else:
+            slopes_high, r2_high, std_high = calculate_slopes_and_r2_numba(close, session_starts, period_high)
+
+        # Ajouter les valeurs brutes au DataFrame de features
+        features_df['slope_range'] = slopes_low
+        if period_low != period_high:
+            features_df['slope_extrem'] = slopes_high
+        else:
+            features_df['slope_extrem'] = slopes_low
+
+        # Créer l'indicateur is_rangeSlope (pentes modérées optimisées pour maximiser le win rate)
+        # is_rangeSlope = 1 quand la pente est entre slope_range_threshold_low et slope_extrem_threshold_low
+        features_df['is_rangeSlope'] = np.where(
+            (slopes_low > slope_range_threshold_low) & (slopes_low < slope_range_threshold_high),
+            1, 0
+        )
+
+        # Créer l'indicateur is_extremSlope (pentes fortes optimisées pour minimiser le win rate)
+        # is_extremSlope = 1 quand la pente est soit inférieure à slope_range_threshold_high
+        # soit supérieure à slope_extrem_threshold_high
+        features_df['is_extremSlope'] = np.where(
+            (slopes_high < slope_extrem_threshold_low) | (slopes_high > slope_extrem_threshold_high),
+            1, 0
+        )
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['slope_range', 'slope_extrem', 'is_rangeSlope', 'is_extremSlope']:
+            if col in features_df.columns:
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+
+    except Exception as e:
+        print(f"Erreur dans add_regression_slope: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes existantes
+        if 'slope_range' not in features_df.columns:
+            features_df['slope_range'] = 0
+        if 'slope_extrem' not in features_df.columns:
+            features_df['slope_extrem'] = 0
+        if 'is_rangeSlope' not in features_df.columns:
+            features_df['is_rangeSlope'] = 0
+        if 'is_extremSlope' not in features_df.columns:
+            features_df['is_extremSlope'] = 0
+
+    return features_df
+
+
+def add_std_regression(df, features_df,
+                       period_range=14, period_extrem=14,
+                       std_low_threshold_range=0.1, std_high_threshold_range=0.5,
+                       std_low_threshold_extrem=0.1, std_high_threshold_extrem=0.5):
+    """
+    Ajoute les indicateurs de volatilité basés sur l'écart-type de régression au DataFrame de features.
+    Utilise des seuils spécifiques à chaque période.
+
+    Paramètres:
+    - df: DataFrame contenant les données de prix
+    - features_df: DataFrame où ajouter les indicateurs
+    - period_range: Période pour le calcul de l'écart-type de l'indicateur range_volatility
+    - period_extrem: Période pour le calcul de l'écart-type de l'indicateur extrem_volatility
+    - std_low_threshold_range: Seuil bas pour la détection de volatilité modérée
+    - std_high_threshold_range: Seuil haut pour la détection de volatilité modérée
+    - std_low_threshold_extrem: Seuil bas pour la détection de volatilité extrême
+    - std_high_threshold_extrem: Seuil haut pour la détection de volatilité extrême
+
+    Retourne:
+    - features_df enrichi des indicateurs de volatilité
+    """
+    try:
+        close = pd.to_numeric(df['close'], errors='coerce').values
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calcul des écarts-types pour l'indicateur range_volatility
+        _, _, stds_range = calculate_slopes_and_r2_numba(close, session_starts, period_range)
+
+        # Calcul des écarts-types pour l'indicateur extrem_volatility (uniquement si période différente)
+        if period_range == period_extrem:
+            stds_extrem = stds_range
+        else:
+            _, _, stds_extrem = calculate_slopes_and_r2_numba(close, session_starts, period_extrem)
+
+        # Ajouter les valeurs brutes au DataFrame de features
+        features_df['std_range'] = stds_range
+        if period_range != period_extrem:
+            features_df['std_extrem'] = stds_extrem
+        else:
+            features_df['std_extrem'] = stds_range
+
+        # Créer l'indicateur is_range_volatility (volatilité modérée optimisée pour maximiser le win rate)
+        # is_range_volatility = 1 quand l'écart-type est entre std_low_threshold_range et std_high_threshold_range
+        features_df['is_range_volatility'] = np.where(
+            (stds_range > std_low_threshold_range) & (stds_range < std_high_threshold_range),
+            1, 0
+        )
+
+        # Créer l'indicateur is_extrem_volatility (volatilité extrême optimisée pour minimiser le win rate)
+        # is_extrem_volatility = 1 quand l'écart-type est soit inférieur à std_low_threshold_extrem
+        # soit supérieur à std_high_threshold_extrem
+        features_df['is_extrem_volatility'] = np.where(
+            (stds_extrem < std_low_threshold_extrem) | (stds_extrem > std_high_threshold_extrem),
+            1, 0
+        )
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['std_range', 'std_extrem', 'is_range_volatility', 'is_extrem_volatility']:
+            if col in features_df.columns:
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+
+
+    except Exception as e:
+        print(f"Erreur dans add_std_regression: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes existantes
+        if 'std_range' not in features_df.columns:
+            features_df['std_range'] = 0
+        if 'std_extrem' not in features_df.columns:
+            features_df['std_extrem'] = 0
+        if 'is_range_volatility' not in features_df.columns:
+            features_df['is_range_volatility'] = 0
+        if 'is_extrem_volatility' not in features_df.columns:
+            features_df['is_extrem_volatility'] = 0
+
+    return features_df
+
+def add_williams_r(df, features_df, period=14, overbought_threshold=-20, oversold_threshold=-80):
+    """
+    Ajoute l'indicateur Williams %R sur la période spécifiée ainsi que des indicateurs de surachat/survente.
+
+    Paramètres:
+    - df: DataFrame contenant les colonnes 'high', 'low', 'close'
+    - features_df: DataFrame où ajouter les colonnes liées au Williams %R
+    - period: Période de calcul (ex: 14)
+    - overbought_threshold: Seuil de surachat (défaut: -20)
+    - oversold_threshold: Seuil de survente (défaut: -80)
+
+    Retourne:
+    - features_df enrichi des colonnes Williams %R et dérivées
+    """
+    try:
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        will_r=compute_wr(high, low, close, session_starts=session_starts,period=period, fill_value=-50)
+
+        features_df['williams_r']=will_r
+        # Ajouter les indicateurs de surachat/survente
+        features_df['williams_r_overbought'] = np.where(will_r >= overbought_threshold, 1, 0)
+        features_df['williams_r_oversold'] = np.where(will_r <= oversold_threshold, 1, 0)
+
+        # Ajouter l'indicateur de changement de zone
+        features_df['williams_r_zone_change'] = np.zeros(len(will_r))
+
+        # Calculer les changements de zone (sortie de surachat/survente)
+        will_r_series = pd.Series(will_r)
+
+        # Sortie de la zone de surachat (signal baissier)
+        exit_overbought = (will_r_series.shift(1) >= overbought_threshold) & (will_r_series < overbought_threshold)
+
+        # Sortie de la zone de survente (signal haussier)
+        exit_oversold = (will_r_series.shift(1) <= oversold_threshold) & (will_r_series > oversold_threshold)
+
+        # Combinaison des signaux (-1 pour baissier, 1 pour haussier)
+        features_df['williams_r_zone_change'] = np.where(
+            exit_overbought, -1,
+            np.where(exit_oversold, 1, 0)
+        )
+
+        # Tendance de l'indicateur
+        features_df['williams_r_trend'] = np.sign(will_r_series.diff(3).fillna(0))
+
+        # Normalisation entre 0 et 1 (pour faciliter l'utilisation dans les modèles ML)
+        # 0 = survente extrême, 1 = surachat extrême
+        features_df['williams_r_normalized'] = (will_r + 100) / 100
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['williams_r', 'williams_r_overbought',
+                    'williams_r_oversold', 'williams_r_zone_change',
+                    'williams_r_trend', 'williams_r_normalized']:
+            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_williams_r: {str(e)}")
+
+    return features_df
+
+def add_rsi(df, features_df, period=14):
+    """
+    Ajoute l'indicateur RSI (Relative Strength Index) sur la période spécifiée.
+
+    Paramètres:
+    - df: DataFrame contenant la colonne 'close'
+    - features_df: DataFrame où ajouter la colonne 'rsi_{period}'
+    - period: Période de calcul (ex: 14)
+
+    Retourne:
+    - features_df enrichi de la colonne RSI
+    """
+    try:
+        close = pd.to_numeric(df['close'], errors='coerce')
+
+        # Différence du cours de clôture
+        delta = close.diff().fillna(0)
+
+        # Gains (>=0) et pertes (<=0)
+        gains = delta.clip(lower=0)
+        losses = -delta.clip(upper=0)
+
+        # Moyenne (simple ou EMA) des gains/pertes
+        # Ici on utilise l'EMA pour un RSI plus classique
+        avg_gains = gains.ewm(alpha=1/period, adjust=False).mean()
+        avg_losses = losses.ewm(alpha=1/period, adjust=False).mean()
+
+        # Éviter division par zéro
+        rs = np.where(avg_losses == 0, 0, avg_gains / avg_losses)
+
+        # RSI
+        rsi = 100 - (100 / (1 + rs))
+        features_df[f'rsi_'] = rsi
+
+    except Exception as e:
+        print(f"Erreur dans add_rsi: {str(e)}")
+
+    return features_df
+
+
+def add_mfi(df, features_df,
+            overbought_period, oversold_period,
+            overbought_threshold=80, oversold_threshold=20):
+    """
+    Ajoute l'indicateur MFI (Money Flow Index) avec des périodes obligatoires
+    et distinctes pour les zones de surachat et survente.
+
+    Paramètres:
+    - df: DataFrame contenant 'high', 'low', 'close', 'volume'
+    - features_df: DataFrame où ajouter les colonnes MFI
+    - overbought_period: Période spécifique pour la détection de surachat (obligatoire)
+    - oversold_period: Période spécifique pour la détection de survente (obligatoire)
+    - overbought_threshold: Seuil de surachat (défaut: 80)
+    - oversold_threshold: Seuil de survente (défaut: 20)
+
+    Retourne:
+    - features_df enrichi des colonnes MFI et dérivées
+
+    Lève:
+    - ValueError si overbought_period ou oversold_period est None
+    """
+
+
+
+    if overbought_period is None or oversold_period is None:
+        raise ValueError("Les périodes de surachat et de survente doivent être spécifiées")
+
+    try:
+        session_starts = (df['SessionStartEnd'] == 10).values
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        volume = pd.to_numeric(df['volume'], errors='coerce')
+
+        # Calcul des MFI avec périodes spécifiques pour surachat/survente
+        mfi_overbought = compute_mfi(high, low, close,volume,session_starts, period=overbought_period, fill_value=50)
+        mfi_oversold = compute_mfi(high, low, close,volume,session_starts,period=oversold_period, fill_value=50)
+
+        # Indicateurs principaux avec périodes distinctes
+        features_df['mfi_overbought_period'] = mfi_overbought
+        features_df['mfi_oversold_period'] = mfi_oversold
+
+        # Indicateurs de surachat/survente avec périodes spécifiques
+        features_df['mfi_overbought'] = np.where(mfi_overbought > overbought_threshold, 1, 0)
+        features_df['mfi_oversold'] = np.where(mfi_oversold < oversold_threshold, 1, 0)
+
+        # Indicateur de changement de zone (basé sur les MFI spécifiques)
+        mfi_overbought_series = pd.Series(mfi_overbought)
+        mfi_oversold_series = pd.Series(mfi_oversold)
+
+        # Sortie de la zone de surachat (signal baissier)
+        exit_overbought = (mfi_overbought_series.shift(1) > overbought_threshold) & (
+                    mfi_overbought_series <= overbought_threshold)
+
+        # Sortie de la zone de survente (signal haussier)
+        exit_oversold = (mfi_oversold_series.shift(1) < oversold_threshold) & (
+                    mfi_oversold_series >= oversold_threshold)
+
+        # Combinaison des signaux
+        features_df['mfi_zone_change'] = np.where(
+            exit_overbought, -1,
+            np.where(exit_oversold, 1, 0)
+        )
+
+        # Tendances des indicateurs
+        features_df['mfi_overbought_trend'] = np.sign(mfi_overbought_series.diff(3).fillna(0))
+        features_df['mfi_oversold_trend'] = np.sign(mfi_oversold_series.diff(3).fillna(0))
+
+        # Normalisation entre 0 et 1
+        features_df['mfi_overbought_normalized'] = mfi_overbought / 100
+        features_df['mfi_oversold_normalized'] = mfi_oversold / 100
+
+        # S'assurer que toutes les colonnes sont numériques
+        columns = ['mfi_overbought_period', 'mfi_oversold_period',
+                   'mfi_overbought', 'mfi_oversold', 'mfi_zone_change',
+                   'mfi_overbought_trend', 'mfi_oversold_trend',
+                   'mfi_overbought_normalized', 'mfi_oversold_normalized']
+
+        for col in columns:
+            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_mfi: {str(e)}")
+        raise  # Relancer l'exception pour la traiter en amont
+
+    return features_df
+
+
+def add_mfi_divergence(df, features_df, mfi_period=14, div_lookback=10):
+    """
+    Ajoute les indicateurs de divergence MFI/prix.
+
+    Paramètres:
+    - df: DataFrame contenant 'high', 'low', 'close', 'volume'
+    - features_df: DataFrame où ajouter les colonnes de divergence
+    - mfi_period: Période pour le calcul du MFI (ex: 14)
+    - div_lookback: Période pour détecter les divergences (ex: 10)
+
+    Retourne:
+    - features_df enrichi des colonnes de divergence MFI
+    """
+    try:
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        volume = pd.to_numeric(df['volume'], errors='coerce')
+
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calcul du MFI s'il n'existe pas déjà
+        mfi = compute_mfi(high, low, close, volume, session_starts,period=mfi_period, fill_value=50)
+        #features_df['mfi'] = mfi
+
+
+        # Conversion en Series pour faciliter les calculs
+        close_series = pd.Series(close)
+        mfi_series = pd.Series(mfi)
+
+        # Calcul des extrema locaux sur la période de lookback
+        price_highs = close_series.rolling(window=div_lookback).max()
+        price_lows = close_series.rolling(window=div_lookback).min()
+        mfi_highs = mfi_series.rolling(window=div_lookback).max()
+        mfi_lows = mfi_series.rolling(window=div_lookback).min()
+
+        # Nouveaux sommets/creux (comparaison avec la période précédente)
+        price_new_high = close > price_highs.shift(1)
+        price_new_low = close < price_lows.shift(1)
+        mfi_new_high = mfi > mfi_highs.shift(1)
+        mfi_new_low = mfi < mfi_lows.shift(1)
+
+        # Divergences
+        # Divergence baissière: prix fait un nouveau haut mais pas le MFI
+        # Divergence haussière: prix fait un nouveau bas mais pas le MFI
+        features_df['mfi_short_divergence'] = np.where(price_new_high & ~mfi_new_high, 1, 0)
+        features_df['mfi_long_divergence'] = np.where(price_new_low & ~mfi_new_low, 1, 0)
+
+        # S'assurer que toutes les colonnes sont numériques
+        columns = ['mfi', 'mfi_short_divergence', 'mfi_long_divergence']
+
+        for col in columns:
+            if col in features_df.columns:
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_mfi_divergence: {str(e)}")
+
+    return features_df
+
+def add_macd(df, features_df, short_period=12, long_period=26, signal_period=9):
+    """
+    Ajoute les indicateurs MACD (Moving Average Convergence Divergence)
+    et sa ligne de signal.
+
+    Paramètres:
+    - df: DataFrame contenant la colonne 'close'
+    - features_df: DataFrame où ajouter les colonnes:
+        * macd
+        * macd_signal
+        * macd_hist
+    - short_period: Période de l'EMA courte (par défaut 12)
+    - long_period: Période de l'EMA longue (par défaut 26)
+    - signal_period: Période de la ligne de signal (par défaut 9)
+
+    Retourne:
+    - features_df enrichi de 'macd', 'macd_signal', et 'macd_hist'
+    """
+    try:
+        close = pd.to_numeric(df['close'], errors='coerce')
+
+        ema_short = close.ewm(span=short_period, adjust=False).mean()
+        ema_long = close.ewm(span=long_period, adjust=False).mean()
+        macd = ema_short - ema_long
+        macd_signal = macd.ewm(span=signal_period, adjust=False).mean()
+        macd_hist = macd - macd_signal
+
+        features_df['macd'] = macd
+        features_df['macd_signal'] = macd_signal
+        features_df['macd_hist'] = macd_hist
+
+    except Exception as e:
+        print(f"Erreur dans add_macd: {str(e)}")
+
+    return features_df
+
+
+
+
+
+
+def add_adx(df, features_df, period=14):
+    """
+    Ajoute l'Average Directional Index (ADX).
+
+    Paramètres:
+    - df: DataFrame contenant 'high', 'low', 'close'
+    - features_df: DataFrame où ajouter la colonne 'adx_{period}'
+    - period: Période pour le calcul (ex: 14)
+
+    Retourne:
+    - features_df enrichi de la colonne ADX
+    """
+    try:
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+
+        # Calcul du True Range
+        shift_close = close.shift(1).fillna(close[0])
+        tr = pd.DataFrame({
+            'tr1': high - low,
+            'tr2': (high - shift_close).abs(),
+            'tr3': (low - shift_close).abs()
+        }).max(axis=1)
+
+        # +DM et -DM
+        shift_high = high.shift(1).fillna(high[0])
+        shift_low = low.shift(1).fillna(low[0])
+
+        plus_dm = (high - shift_high).clip(lower=0)
+        minus_dm = (shift_low - low).clip(lower=0)
+
+        plus_dm[plus_dm < minus_dm] = 0
+        minus_dm[minus_dm <= plus_dm] = 0
+
+        # Moyenne exponentielle ou simple
+        tr_ewm = tr.ewm(span=period, adjust=False).mean()
+        plus_dm_ewm = plus_dm.ewm(span=period, adjust=False).mean()
+        minus_dm_ewm = minus_dm.ewm(span=period, adjust=False).mean()
+
+        # +DI et -DI
+        plus_di = 100 * (plus_dm_ewm / tr_ewm)
+        minus_di = 100 * (minus_dm_ewm / tr_ewm)
+
+        # DX
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+
+        # ADX
+        adx = dx.ewm(span=period, adjust=False).mean()
+
+        features_df[f'adx_'] = adx
+        features_df[f'plus_di_'] = plus_di
+        features_df[f'minus_di_'] = minus_di
+
+    except Exception as e:
+        print(f"Erreur dans add_adx: {str(e)}")
+
+    return features_df
+
+
+
+features_df = add_rsi(df, features_df, period=5)
+features_df = add_macd(df, features_df, short_period=4, long_period=8, signal_period=5)
+
+
+features_df = add_atr(df, features_df, atr_period_range=20, atr_period_extrem=25,
+            atr_low_threshold_range= 2.124, atr_high_threshold_range= 3.7641,
+            atr_low_threshold_extrem=1.5297)
+
+add_regression_slope(df, features_df, period_low=16, period_high=19,
+                     slope_range_threshold_low=-0.3598, slope_range_threshold_high=-0.214,
+                     slope_extrem_threshold_low=-0.358, slope_extrem_threshold_high=0.999)
+
+
+add_std_regression(df, features_df,
+                  period_range=29, period_extrem=45,
+                  std_low_threshold_range=1.77111553336117, std_high_threshold_range=1.9662301588456284,
+                  std_low_threshold_extrem=1.3693042751948086 ,std_high_threshold_extrem=4.8800554539004475)
+
+add_stochastic_force_indicators(df, features_df,
+                                    k_period_overbought=51, d_period_overbought=52,
+                                    k_period_oversold=105, d_period_oversold=106,
+                                    overbought_threshold=94, oversold_threshold=21,
+                                    fi_short=4, fi_long=4)
+
+features_df = add_williams_r(df, features_df, period=3, overbought_threshold=-11, oversold_threshold=-86)
+features_df = add_mfi(df, features_df, overbought_period=33,oversold_period=50,overbought_threshold=67, oversold_threshold=39)
+features_df = add_mfi_divergence(df, features_df, mfi_period=3, div_lookback=30)
+
 column_settings = {
     # Time-based features
-    'deltaTimestampOpening': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession1min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession1index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession5min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession5index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession15min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession15index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession30min': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaTimestampOpeningSession30index': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaCustomSessionMin': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'deltaCustomSessionIndex': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpening': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession1min': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession1index': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession5min': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession5index': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession15min': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession15index': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession30min': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaTimestampOpeningSession30index': (
+    "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSessionMin': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'deltaCustomSessionIndex': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    # Stochastic indicators
+    'stoch_k_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_k_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_d_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_d_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_crossover_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_crossover_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    'stoch_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'stoch_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    # Force index indicators
+    'force_index_4': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'force_index_4': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'force_index_4_norm': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'force_index_4_norm': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'force_index_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'fi_momentum': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'fi_candle_aligned': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    # Other technical indicators
+    'rsi_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'macd': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'macd_signal': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'macd_hist': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    #'adx_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    #'plus_di_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    #'minus_di_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    # Williams R indicators
+    'williams_r_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'williams_r_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'williams_r_zone_change': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'williams_r_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'williams_r_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'williams_r': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    # MFI indicators
+    #'mfi': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    'mfi_overbought_period': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_oversold_period': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    'mfi_zone_change': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_overbought_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_oversold_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    'mfi_overbought_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_oversold_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
+    'mfi_short_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_long_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
-    'VolAbvState': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'VolBlwState': (False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'candleSizeTicks': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_0': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClosePoc_0_5': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    # 'diffPriceClosePoc_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'VolAbvState': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'VolBlwState': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'candleSizeTicks': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_0': ("winsor", None, True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_1': ("winsor", None, True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_2': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_3': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_4': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClosePoc_0_5': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    'diffHighPrice_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_3': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffHighPrice_0_5': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    # 'diffHighPrice_0_6': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    # High/Low price differentials
+    'diffHighPrice_0_1': ("winsor", None, True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffHighPrice_0_2': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffHighPrice_0_3': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffHighPrice_0_4': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffHighPrice_0_5': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffLowPrice_0_1': ("winsor", None, False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffLowPrice_0_2': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffLowPrice_0_3': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffLowPrice_0_4': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffLowPrice_0_5': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
 
-    'diffLowPrice_0_1': (True, True, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_2': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_4': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffLowPrice_0_5': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    #'diffLowPriceMean_2_3': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
+    # POC price differentials
+    'diffPocPrice_0_1': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'diffPocPrice_1_2': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'diffPocPrice_2_3': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'diffPocPrice_0_2': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-    'diffPriceCloseVWAP': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, True)),  # ok
-    'diffPriceCloseVWAPbyIndex': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, True)),  # ok
+    # VWAP related
+    'diffPriceCloseVWAP': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, True)),
+    'diffPriceCloseVWAPbyIndex': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, True)),
 
     # Technical indicators
-    'atr': (True, True, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'bandWidthBB': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'perctBB': (True, True, 12, 92, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'atr': ("winsor", None, True, True, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'atr_range': ("winsor", None, False, False, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'atr_extrem': ("winsor", None, False, False, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'is_atr_range': ("winsor", None, False, False, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'is_atr_extremLow': ("winsor", None, False, False, 0.1, 99, toBeDisplayed_if_s(user_choice, False)),
 
-    'perct_VA6P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA6P': (True, True, 4, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClose_VA6PPoc': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA6PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA6PvaL': (True, True, 12, 88, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'perct_VA11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA11P': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClose_VA11PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA11PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA11PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'perct_VA16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClose_VA16PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA16PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA16PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'perct_VA21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'ratio_delta_vol_VA21P': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffPriceClose_VA21PPoc': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA21PvaH': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
-    'diffPriceClose_VA21PvaL': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),  # ok':
+    'bandWidthBB': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'perctBB': ("winsor", None, True, True, 12, 92, toBeDisplayed_if_s(user_choice, False)),
 
-    # Chevauchement des Zones de Valeur
-    'overlap_ratio_VA_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'overlap_ratio_VA_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'overlap_ratio_VA_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'overlap_ratio_VA_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # VA (Value Area) metrics
+    'perct_VA6P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_vol_VA6P': ("winsor", None, True, True, 4, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA6PPoc': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA6PvaH': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA6PvaL': ("winsor", None, True, True, 12, 88, toBeDisplayed_if_s(user_choice, False)),
+    'perct_VA11P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_vol_VA11P': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA11PPoc': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA11PvaH': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA11PvaL': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'perct_VA16P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_vol_VA16P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA16PPoc': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA16PvaH': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA16PvaL': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'perct_VA21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_vol_VA21P': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA21PPoc': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA21PvaH': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceClose_VA21PvaL': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Analyse des POC
-    'poc_diff_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_ratio_6P_11P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_ratio_6P_16P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_ratio_6P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'poc_diff_ratio_11P_21P': (True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # VA overlap ratios
+    'overlap_ratio_VA_6P_11P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'overlap_ratio_VA_6P_16P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'overlap_ratio_VA_6P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'overlap_ratio_VA_11P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    'market_regimeADX': (True, False, 2, 99, toBeDisplayed_if_s(user_choice, True)),
-    'market_regimeADX_state': (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
+    # POC analysis
+    'poc_diff_6P_11P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_6P_11P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_6P_16P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_6P_16P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_6P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_6P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_11P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'poc_diff_ratio_11P_21P': ("winsor", None, True, True, 0.1, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    'is_in_range_10_32': (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
-    'is_in_range_5_23': (False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
+    # Market regime metrics
+    'market_regimeADX': ("winsor", None, True, False, 2, 99, toBeDisplayed_if_s(user_choice, True)),
+    'market_regimeADX_state': ("winsor", None, False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
+    'is_in_range_10_32': ("winsor", None, False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
+    'is_in_range_5_23': ("winsor", None, False, False, 0.5, 99.8, toBeDisplayed_if_s(user_choice, True)),
 
     # Reversal and momentum features
-    'bearish_reversal_force': (False, True, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'bullish_reversal_force': (False, True, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-      'meanVolx': (False, True, 1, 99.7, toBeDisplayed_if_s(user_choice, False)),  # ok
-
-    'diffVolCandle_0_1Ratio': (False, True, 1, 98.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_0_1Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_0_0Ratio': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),  # ok
-
-    'diffVolDelta_1_1Ratio': (True, True, 2.5, 97.5, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_2_2Ratio': (True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'diffVolDelta_3_3Ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-
-    'cumDiffVolDeltaRatio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
+    'bearish_reversal_force': ("winsor", None, False, True, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'bullish_reversal_force': ("winsor", None, False, True, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'meanVolx': ("winsor", None, False, True, 1, 99.7, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolCandle_0_1Ratio': ("winsor", None, False, True, 1, 98.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolDelta_0_1Ratio': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolDelta_0_0Ratio': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolDelta_1_1Ratio': ("winsor", None, True, True, 2.5, 97.5, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolDelta_2_2Ratio': ("winsor", None, True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),
+    'diffVolDelta_3_3Ratio': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'cumDiffVolDeltaRatio': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
     # Volume profile features
-    'VolPocVolCandleRatio': (True, True, 2, 65, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'VolPocVolRevesalXContRatio': (True, True, 2, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
-
-    'pocDeltaPocVolRatio': (True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'VolAbv_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'VolBlw_vol_ratio': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-
-    'asymetrie_volume': (True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-    'VolCandleMeanxRatio': (False, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok
-
+    'VolPocVolCandleRatio': ("winsor", None, True, True, 2, 65, toBeDisplayed_if_s(user_choice, False)),
+    'VolPocVolRevesalXContRatio': ("winsor", None, True, True, 2, 95, toBeDisplayed_if_s(user_choice, False)),
+    'pocDeltaPocVolRatio': ("winsor", None, True, True, 5, 95, toBeDisplayed_if_s(user_choice, False)),
+    'VolAbv_vol_ratio': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'VolBlw_vol_ratio': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'asymetrie_volume': ("winsor", None, True, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'VolCandleMeanxRatio': ("winsor", None, False, True, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
     # Imbalance features
-    'bull_imbalance_low_1': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bull_imbalance_low_2': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bull_imbalance_low_3': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bull_imbalance_high_0': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bull_imbalance_high_1': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bull_imbalance_high_2': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_low_0': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_low_1': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_low_2': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_high_1': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_high_2': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'bear_imbalance_high_3': (False, True, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'imbalance_score_low': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'imbalance_score_high': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
+    'bull_imbalance_low_1': ("winsor", None, False, False, 1, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'bull_imbalance_low_2': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)), #Yeo-Johnson
+    'bull_imbalance_low_3': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bull_imbalance_high_0': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bull_imbalance_high_1': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bull_imbalance_high_2': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_low_0': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_low_1': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_low_2': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_high_1': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_high_2': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'bear_imbalance_high_3': ("winsor", None, False, False, 1, 96.5, toBeDisplayed_if_s(user_choice, False)),
+    'imbalance_score_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'imbalance_score_high': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
     # Auction features
-    'finished_auction_high': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'finished_auction_low': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'staked00_high': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
-    'staked00_low': (False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),  # ok1
+    'finished_auction_high': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'finished_auction_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'staked00_high': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'staked00_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
-    'naked_poc_dist_above': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'naked_poc_dist_below': (True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    #'linear_slope_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    #'linear_slope_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'linear_slope_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_r2_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_r2_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'linear_slope_r2_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    #'linear_slope_r2_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    #'linear_slope_r2_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'linear_slope_r2_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'linear_slope_prevSession': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_ratio_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_ratio_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_ratio_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_ratio_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_ratio_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_zscore_6': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_zscore_14': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_zscore_21': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-     'close_sma_zscore_30': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_40': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    # 'close_sma_zscore_50': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'diffPriceCloseVAH_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'diffPriceCloseVAL_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'ratio_delta_vol_VA_0': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # POC distances
+    'naked_poc_dist_above': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'naked_poc_dist_below': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios de volume et de mouvement
-    'ratio_volRevMove_volImpulsMove': (False, True, 0.0, 75, toBeDisplayed_if_s(user_choice, False)),      # 1 - Ratio volume reversion/impulsion
-    'ratio_deltaImpulsMove_volImpulsMove': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 2 - Delta/Volume ratio pour mouvement impulsif
-    'ratio_deltaRevMove_volRevMove': (True, True, 3, 80, toBeDisplayed_if_s(user_choice, False)),       # 3 - Delta/Volume ratio pour mouvement de reversion
+    # Linear slope metrics
+    'linear_slope_10': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_10': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_stds_10': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios de zones
-    'ratio_volZone1_volExtrem': (False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),           # 3.1 - Ratio volume Zone1/Extreme
-    'ratio_deltaZone1_volZone1': (False, False, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),          # 3.2 - Delta/Volume ratio pour Zone1
-    'ratio_deltaExtrem_volExtrem': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),        # 3.3 - Delta/Volume ratio pour zone Extreme
+    'linear_slope_50': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_r2_50': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'linear_slope_stds_50': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios de zones de continuation
-    'ratio_VolRevZone_XticksContZone': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),    # 4 - Ratio volume reversion/continuation
-    'ratioDeltaXticksContZone_VolXticksContZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 5 - Delta/Volume ratio zone continuation
+    'linear_slope_prevSession': ("winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios de force de mouvement
-    'ratio_impulsMoveStrengthVol_XRevZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 6 - Force volumique mouvement impulsif
-    'ratio_revMoveStrengthVol_XRevZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),    # 7 - Force volumique mouvement reversion
+    # SMA ratio metrics
+    'close_sma_ratio_6': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_14': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_21': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_ratio_30': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Type d'imbalance
-    'imbType_contZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),                     # 8 - Type d'imbalance zone continuation
+    # SMA z-score metrics
+    'close_sma_zscore_6': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_14': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_21': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'close_sma_zscore_30': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios détaillés de zones
-    'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': (False, True, 0.0, 80, toBeDisplayed_if_s(user_choice, False)), # 9.09
-    'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': (False, True, 0.0, 97.5, toBeDisplayed_if_s(user_choice, False)),    # 9.10
-    'ratio_deltaRevMoveZone1_volRevMoveZone1': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),            # 9.11
-    'ratio_deltaRevMoveExtrem_volRevMoveExtrem': (True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),          # 9.12
-    'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 9.13
-    'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),         # 9.14
-    'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)), # 9.15
+    # VA price differences
+    'diffPriceCloseVAH_0': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'diffPriceCloseVAL_0': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_vol_VA_0': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-    # Métriques DOM et VA
-    'cumDOM_AskBid_avgRatio': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),                # 10 - Ratio moyen Ask/Bid cumulé
-    'cumDOM_AskBid_pullStack_avgDiff_ratio': (True, True, 2, 99, toBeDisplayed_if_s(user_choice, False)), # 11 - Ratio différence moyenne pull stack
-    'delta_impulsMove_XRevZone_bigStand_extrem': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)), # 12
-    'delta_revMove_XRevZone_bigStand_extrem': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),    # 13
+    # Volume and movement ratios
+    'ratio_volRevMove_volImpulsMove': (
+    "winsor", None, False, True, 0.0, 80, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaImpulsMove_volImpulsMove': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaRevMove_volRevMove': ("winsor", None, True, True, 3, 80, toBeDisplayed_if_s(user_choice, False)),
 
-    # Ratios divers
-    'ratio_delta_VaVolVa': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),                   # 14 - Ratio delta/volume VA
-    'borderVa_vs_close': (False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),                     # 15 - Position relative à la bordure VA
-    'ratio_volRevZone_VolCandle': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),           # 16 - Ratio volume reversion/bougie
-    'ratio_deltaRevZone_VolCandle': (False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),         # 17 - Ratio delta reversion/volume bougie
+    # Zone ratios
+    'ratio_volZone1_volExtrem': ("winsor", None, False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaZone1_volZone1': ("winsor", None, True, True, 6, 96, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaExtrem_volExtrem': ("winsor", None, True, True, 2, 97, toBeDisplayed_if_s(user_choice, False)),
 
-     'sc_reg_slope_5P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)), # generated bu sierra chart      18
-     'sc_reg_std_5P_2': (False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart         19
-     'sc_reg_slope_10P_2': (False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_std_10P_2': (False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_slope_15P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart      20
-     'sc_reg_std_15P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart        21
-     'sc_reg_slope_30P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-     'sc_reg_std_30P_2': (False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),# generated bu sierra chart
-# Temps
-    'timeElapsed2LastBar': (False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),                   # 22 - Temps écoulé depuis dernière barre
-    **absorption_settings  # Fusionner les dictionnaires
+    # Continuation zone ratios
+    'ratio_VolRevZone_XticksContZone': (
+    "winsor", None, False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),
+    'ratioDeltaXticksContZone_VolXticksContZone': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Movement strength ratios
+    'ratio_impulsMoveStrengthVol_XRevZone': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_revMoveStrengthVol_XRevZone': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Imbalance type
+    'imbType_contZone': ("winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Detailed zone ratios
+    'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': (
+    "winsor", None, False, True, 0.0, 90, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': (
+    "winsor", None, False, True, 0.0, 95, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaRevMoveZone1_volRevMoveZone1': (
+    "winsor", None, True, True, 2, 95, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaRevMoveExtrem_volRevMoveExtrem': (
+    "winsor", None, True, True, 2, 98, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone': (
+    "winsor", None, False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # DOM and VA metrics
+    'cumDOM_AskBid_avgRatio': ("winsor", None, False, True, 0.0, 98, toBeDisplayed_if_s(user_choice, False)),
+    'cumDOM_AskBid_pullStack_avgDiff_ratio': (
+    "winsor", None, True, True, 2, 99, toBeDisplayed_if_s(user_choice, False)),
+    'delta_impulsMove_XRevZone_bigStand_extrem': (
+    "winsor", None, False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),
+    'delta_revMove_XRevZone_bigStand_extrem': (
+    "winsor", None, False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),
+
+    # Misc ratios
+    'ratio_delta_VaVolVa': ("winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'borderVa_vs_close': ("winsor", None, False, True, 0.0, 99, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_volRevZone_VolCandle': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_deltaRevZone_VolCandle': (
+    "winsor", None, False, False, 0.0, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Sierra chart regression metrics
+    'sc_reg_slope_5P_2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_std_5P_2': ("winsor", None, False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_slope_10P_2': ("winsor", None, False, False, 0.5, 99.5, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_std_10P_2': ("winsor", None, False, True, 0.5, 95, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_slope_15P_2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_std_15P_2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_slope_30P_2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'sc_reg_std_30P_2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'slope_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'slope_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_rangeSlope': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_extremSlope': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+'std_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'std_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_range_volatility': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_extrem_volatility': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Zone volume ratios
+    'ratio_vol_VolCont_ZoneA_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_VolCont_ZoneA_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_vol_VolCont_ZoneB_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_VolCont_ZoneB_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_vol_VolCont_ZoneC_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'ratio_delta_VolCont_ZoneC_xTicksContZone': (
+    "winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # Time-related
+    'timeElapsed2LastBar': ("winsor", None, False, True, 0.0, 95, toBeDisplayed_if_s(user_choice, False)),
+
+    # Include any absorption settings
+    **absorption_settings
 }
 
 
@@ -1495,391 +2688,109 @@ if missing_columns or extra_columns:
 print(
     "Toutes les features nécessaires sont présentes et aucune colonne supplémentaire n'a été détectée. Poursuite du traitement.")
 
-def calculate_percentiles(df_NANValue, columnName, settings, nan_replacement_values=None):
-    """
-    Calcule les percentiles tout en gérant les valeurs NaN et les valeurs de remplacement.
-    Évite les erreurs en cas de colonne entièrement NaN ou filtrée.
-    """
-
-    # Récupération des paramètres de winsorisation
-    floor_enabled, crop_enabled, floorInf_percentage, cropSup_percentage, _ = settings[columnName]
-
-    # Gestion des valeurs de remplacement NaN
-    if nan_replacement_values is not None and columnName in nan_replacement_values:
-        nan_value = nan_replacement_values[columnName]
-        mask = df_NANValue[columnName] != nan_value
-        nan_count = (~mask).sum()
-        print(f"   In calculate_percentiles:")
-        print(f"     - Filter out {nan_count} nan replacement value(s) {nan_value} for {columnName}")
-    else:
-        mask = df_NANValue[columnName].notna()
-        nan_count = df_NANValue[columnName].isna().sum()
-        print(f"   In calculate_percentiles:")
-        print(f"     - {nan_count} NaN value(s) found in {columnName}")
-
-    # Filtrage des valeurs valides
-    filtered_values = df_NANValue.loc[mask, columnName].values
-
-    # 🚨 Vérification si filtered_values est vide
-    if filtered_values.size == 0:
-        print(f"⚠️ Warning: No valid values found in '{columnName}', skipping percentile calculation.")
-        return None, None  # Ou des valeurs par défaut, ex: return 0, 1
-
-    # Calcul des percentiles en fonction des options activées
-    floor_value = np.percentile(filtered_values, floorInf_percentage) if floor_enabled else None
-    crop_value = np.percentile(filtered_values, cropSup_percentage) if crop_enabled else None
-
-    print(f"     - floor_value: {floor_value}   crop_value: {crop_value}")
-
-    return floor_value, crop_value
-
-import numpy as np
-import pandas as pd
-
-
-def replace_nan_and_inf(df, columns_to_process, start_value, increment, REPLACE_NAN=True):
-    current_value = start_value
-    nan_replacement_values = {}
-    df_replaced = df.copy()
-
-    for column in columns_to_process:
-        # Combiner les masques pour NaN et Inf en une seule opération
-        is_nan_or_inf = df[column].isna() | np.isinf(df[column])
-        total_replacements = is_nan_or_inf.sum()
-
-        if total_replacements > 0:
-            nan_count = df[column].isna().sum()
-            inf_count = np.isinf(df[column]).sum()
-
-            print(f"Colonne problématique : {column}")
-            print(f"Nombre de valeurs NaN : {nan_count}")
-            print(f"Nombre de valeurs infinies : {inf_count}")
-
-            if REPLACE_NAN:
-                if start_value != 0:
-                    df_replaced.loc[is_nan_or_inf, column] = current_value
-                    nan_replacement_values[column] = current_value
-                    print(f"L'option start_value != 0 est activée.")
-                    print(
-                        f"Les {total_replacements} valeurs NaN et infinies dans la colonne '{column}' ont été remplacées par {current_value}")
-                    if increment != 0:
-                        current_value += increment
-                else:
-                    print(
-                        f"Les valeurs NaN et infinies dans la colonne '{column}' ont été laissées inchangées car start_value est 0")
-            else:
-                # Remplacer uniquement les valeurs infinies par NaN
-                df_replaced.loc[np.isinf(df[column]), column] = np.nan
-                inf_replacements = inf_count
-                print(f"REPLACE_NAN est à False.")
-                print(f"Les {inf_replacements} valeurs infinies dans la colonne '{column}' ont été remplacées par NaN")
-                print(f"Les {nan_count} valeurs NaN dans la colonne '{column}' ont été laissées inchangées")
-                print("Les valeurs NaN ne sont pas remplacées par une valeur choisie par l'utilisateur.")
-
-    return df_replaced, nan_replacement_values
-
-
-def winsorize(features_NANReplacedVal_df, column, floor_value, crop_value, floor_enabled, crop_enabled,
-              nan_replacement_values=None):
-    # Créer une copie des données de la colonne spécifiée
-    winsorized_data = features_NANReplacedVal_df[column].copy()
-
-    # Assurez-vous que le nom de la série est préservé
-    winsorized_data.name = column
-
-    # Créer un masque pour exclure la valeur nan_value si spécifiée
-    if nan_replacement_values is not None and column in nan_replacement_values:
-        nan_value = nan_replacement_values[column]
-        mask = features_NANReplacedVal_df[column] != nan_value
-    else:
-        # Si pas de valeur à exclure, on crée un masque qui sélectionne toutes les valeurs non-NaN
-        mask = features_NANReplacedVal_df[column].notna()
-
-    # Appliquer la winsorisation seulement sur les valeurs non masquées
-    if floor_enabled:
-        winsorized_data.loc[mask & (winsorized_data < floor_value)] = floor_value
-
-    if crop_enabled:
-        winsorized_data.loc[mask & (winsorized_data > crop_value)] = crop_value
-
-    # S'assurer qu'il n'y a pas de NaN dans les données winsorisées
-    # winsorized_data = winsorized_data.fillna(nan_replacement_values.get(column, winsorized_data.median()))
-
-    return winsorized_data
-
-
-def cropFloor_dataSource(features_NANReplacedVal_df, columnName, settings, nan_replacement_values=None):
-    floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, _ = settings[columnName]
-
-    floor_valueNANfiltered, crop_valueNANfiltered = calculate_percentiles(
-        features_NANReplacedVal_df, columnName, settings, nan_replacement_values)
-
-    return floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent
-
-
-import pandas as pd
-import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-
-def plot_single_histogram(values_before, winsorized_values_after, column, floor_value, crop_value,
-                          floorInf_values, cropSup_values, floorInf_percent, cropSup_percent, ax,
-                          nan_replacement_values=None, range_strength_percent_in_range_10_32=None,
-                          range_strength_percent_in_range_5_23=None, regimeAdx_pct_infThreshold=None,
-                          adjust_xaxis=True):
-    values_before_clean = values_before.dropna()
-
-    sns.histplot(data=pd.DataFrame({column: values_before_clean}), x=column, color="blue", kde=False, ax=ax, alpha=0.7)
-    sns.histplot(data=pd.DataFrame({column: winsorized_values_after}), x=column, color="red", kde=False, ax=ax,
-                 alpha=0.7)
-
-    if floorInf_values:
-        ax.axvline(floor_value, color='g', linestyle='--', label=f'Floor ({floorInf_percent}%)')
-    if cropSup_values:
-        ax.axvline(crop_value, color='y', linestyle='--', label=f'Crop ({cropSup_percent}%)')
-
-    def format_value(value):
-        return f"{value:.2f}" if pd.notna(value) else "nan"
-
-    initial_values = values_before_clean.sort_values()
-    winsorized_values = winsorized_values_after.dropna().sort_values()
-
-    ax.axvline(initial_values.iloc[0], color='blue',
-               label=f'Init ({format_value(initial_values.iloc[0])}, {format_value(initial_values.iloc[-1])})')
-    ax.axvline(winsorized_values.iloc[0], color='red',
-               label=f'Winso ({format_value(winsorized_values.iloc[0])}, {format_value(winsorized_values.iloc[-1])})')
-
-    if adjust_xaxis:
-        # Assurez-vous que x_min prend en compte les valeurs négatives
-        x_min = min(winsorized_values_after.min(), floor_value) if floorInf_values else winsorized_values_after.min()
-        x_max = max(winsorized_values_after.max(), crop_value) if cropSup_values else winsorized_values_after.max()
-        ax.set_xlim(left=x_min, right=x_max)
-
-    # Keep the title
-    ax.set_title(column, fontsize=6, pad=0.1)  # Title is kept
-
-    # Clear the x-axis label to avoid duplication
-    ax.set_xlabel('')  # This will clear the default x-axis label
-    ax.set_ylabel('')
-    # Reduce the font size of the legend
-    ax.legend(fontsize=5)
-
-    ax.tick_params(axis='both', which='major', labelsize=4.5)
-    ax.xaxis.set_tick_params(labelsize=4.5, pad=0.1)
-    ax.yaxis.set_tick_params(labelsize=4.5, pad=0.1)
-
-    if nan_replacement_values and column in nan_replacement_values:
-        ax.annotate(f"NaN replaced by: {nan_replacement_values[column]}",
-                    xy=(0.05, 0.95), xycoords='axes fraction',
-                    fontsize=5, ha='left', va='top')
-
-    nan_count = winsorized_values_after.isna().sum()
-    inf_count = np.isinf(winsorized_values_after).sum()
-    nan_proportion = nan_count / len(winsorized_values_after)
-    color_proportion = 'green' if nan_proportion < 0.3 else 'red'
-
-    annotation_text = (
-        f"Winsorized column:\n"
-        f"Remaining NaN: {nan_count}\n"
-        f"Remaining Inf: {inf_count}\n"
-        f"nb period: {len(winsorized_values_after)}\n"
-        f"% de np.nan : {nan_proportion:.2%}"
-    )
-
-    if column == 'range_strength_10_32' and range_strength_percent_in_range_10_32 is not None:
-        annotation_text += f"\n% time in range: {range_strength_percent_in_range_10_32:.2f}%"
-    elif column == 'range_strength_5_23' and range_strength_percent_in_range_5_23 is not None:
-        annotation_text += f"\n% time in range: {range_strength_percent_in_range_5_23:.2f}%"
-    elif column == 'market_regimeADX' and regimeAdx_pct_infThreshold is not None:
-        annotation_text += f"\n% ADX < threshold: {regimeAdx_pct_infThreshold:.2f}%"
-
-    ax.annotate(
-        annotation_text,
-        xy=(0.05, 0.85),
-        xycoords='axes fraction',
-        fontsize=5,
-        ha='left',
-        va='top',
-        color=color_proportion,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.5)
-    )
-
-
-def plot_histograms_multi_figure(columns, figsize=(28, 20), graphs_per_figure=40):
-    n_columns = len(columns)
-    ncols = 7
-    nrows = 4
-    graphs_per_figure = ncols * nrows
-    n_figures = math.ceil(n_columns / graphs_per_figure)
-
-    figures = []
-    all_axes = []
-
-    for fig_num in range(n_figures):
-        fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
-        figures.append(fig)
-        axes = axes.flatten()
-        all_axes.extend(axes)
-
-        # Hide unused subplots
-        for ax in axes[n_columns - fig_num * graphs_per_figure:]:
-            ax.set_visible(False)
-
-    return figures, all_axes
-
-
 # Utilisation
 
-# Paramètres
-start_value = REPLACED_NANVALUE_BY
-increment = REPLACED_NANVALUE_BY_INDEX
+
 
 # Appliquer la fonction à features_df
 features_NANReplacedVal_df, nan_replacement_values = replace_nan_and_inf(features_df.copy(), columns_to_process,
-                                                                         start_value, increment, REPLACE_NAN)
-number_of_elementsnan_replacement_values = len(nan_replacement_values)
-print(f"Le dictionnaire nan_replacement_values contient {number_of_elementsnan_replacement_values} éléments.")
+                                                                        REPLACE_NAN)
 
-# print(features_NANReplacedVal_df['bearish_bid_score'].describe())
-# print("Traitement des valeurs NaN et infinies terminé.")
-#
-# print("Suppression des valeurs NAN ajoutées terminée.")
-
-print("\n")
-
-# Récupérer la liste du nom des features pour paramétrage
-all_columns = [col for col, settings in column_settings.items() if
-               settings[4] or all(not s[4] for s in column_settings.values())]
-
-# Déterminer les colonnes à traiter en fonction du choix de l'utilisateur
-if user_choice.lower() == 'd':
-    try:
-        x, y = map(int, fig_range_input.split('_'))
-        start_index = (x - 1) * 28  # 28 graphiques par figure
-        end_index = y * 28
-        columns_to_process = all_columns[start_index:end_index]
-    except ValueError:
-        print("Erreur : Format invalide. Traitement de toutes les colonnes.")
-        columns_to_process = all_columns
-elif user_choice.lower() == 's':
-    columns_to_process = all_columns
-else:
-    columns_to_process = all_columns  # Traiter toutes les colonnes si aucun affichage n'est demandé
-
-# Initialisation des variables pour l'affichage si nécessaire
-if user_choice.lower() in ['d', 's']:
-    figures, all_axes = plot_histograms_multi_figure(columns_to_process, figsize=(28, 20))
 
 # Initialisation des DataFrames avec le même index que le DataFrame d'entrée
-winsorized_df = pd.DataFrame(index=features_NANReplacedVal_df.index)
+outliersTransform_df = pd.DataFrame(index=features_NANReplacedVal_df.index)
 winsorized_scaledWithNanValue_df = pd.DataFrame(index=features_NANReplacedVal_df.index)
 
 total_features = len(columns_to_process)
 
-# Parcours de la liste des features
 for i, columnName in enumerate(columns_to_process):
-    current_feature = i + 1
-    print(f"\nFeature ({current_feature}/{total_features}) -> Début du traitement de {columnName}:")
+    # Récupérer les paramètres de la colonne
+    (
+        transformation_method,
+        transformation_params,
+        floorInf_booleen,
+        cropSup_booleen,
+        floorInf_percent,
+        cropSup_percent,
+        _
+    ) = column_settings[columnName]
 
-    # Récupérer les valeurs pour la winsorisation
-    floor_valueNANfiltered, crop_valueNANfiltered, floorInf_values, cropSup_values, floorInf_percent, cropSup_percent = (
-        cropFloor_dataSource(features_NANReplacedVal_df, columnName, column_settings, nan_replacement_values)
-    )
-
-    # Winsorisation avec les valeurs NaN
-    winsorized_valuesWithNanValue = winsorize(
-        features_NANReplacedVal_df,
-        columnName,
-        floor_valueNANfiltered,
-        crop_valueNANfiltered,
-        floorInf_values,
-        cropSup_values,
-        nan_replacement_values
-    )
-
-    # Assignation directe de la série winsorisée au DataFrame
-    winsorized_df[columnName] = winsorized_valuesWithNanValue
-
-    # Préparation de la colonne pour la normalisation
-    """
-    scaled_column = winsorized_valuesWithNanValue.copy()
-    if ENABLE_PANDAS_METHOD_SCALING:
-        # Sélectionner la colonne 'columnName'
-        column_to_scale = winsorized_df[columnName]
-        scaled_column = (column_to_scale - column_to_scale.min(skipna=True)) / (
-                    column_to_scale.max(skipna=True) - column_to_scale.min(skipna=True))
-        #tester nan_policy='omit' pour minmaxscaler ?
-
-    else:
-        if nan_replacement_values is not None and columnName in nan_replacement_values:
-            nan_value = nan_replacement_values[columnName]
-            mask = scaled_column != nan_value
-            # Sauvegarde des positions des nan_value
-            nan_positions = ~mask
-        else:
-            mask = scaled_column.notna()  # Sélectionne les lignes non-NaN
-            nan_positions = scaled_column.isna()  # Positions des valeurs NaN (si nécessaire)
-
-        # Normalisation des valeurs
-        scaler = MinMaxScaler()
-        normalized_values = scaler.fit_transform(scaled_column.loc[mask].values.reshape(-1, 1)).flatten()
-
-        # Convertir la colonne en float64 si ce n'est pas déjà le cas
-        scaled_column = scaled_column.astype('float64')
-
-        # Assignation des valeurs normalisées aux positions correspondantes
-        scaled_column.loc[mask] = normalized_values
-
-        # Remettre les nan_value à leur place seulement s'il y en avait
-        if nan_replacement_values is not None and columnName in nan_replacement_values:
-            scaled_column.loc[nan_positions] = nan_value
-    """
-    """
-    # Assignation directe de la colonne normalisée au DataFrame
-    winsorized_scaledWithNanValue_df[columnName] = scaled_column
-
-    # Affichage des graphiques si demandé
-    if user_choice.lower() in ['d', 's']:
-        winsorized_values_4Plotting = winsorized_valuesWithNanValue[
-            winsorized_valuesWithNanValue != nan_replacement_values.get(columnName, np.nan)
-            ]
-        print(f"   Graphiques de {columnName} avant et après les modifications (colonnes sélectionnées) :")
-        print(f"   Taille de winsorized_values_after (sans NaN) pour plotting: {len(winsorized_values_4Plotting)}")
-
-        value_before_df = features_df.copy()
-        plot_single_histogram(
-            value_before_df[columnName],
-            winsorized_values_4Plotting,
+    # Selon la méthode, on applique le traitement adéquat
+    if transformation_method == "winsor":
+        # On applique la winsorisation
+        outliersTransform_df[columnName] = apply_winsorization(
+            features_NANReplacedVal_df,
             columnName,
-            floor_valueNANfiltered,
-            crop_valueNANfiltered,
-            floorInf_values,
-            cropSup_values,
+            floorInf_booleen,
+            cropSup_booleen,
             floorInf_percent,
             cropSup_percent,
-            all_axes[i],
-            nan_replacement_values,
-            range_strength_percent_in_range_10_32=(
-                range_strength_percent_in_range_10_32 if columnName == 'range_strength_10_32' else None
-            ),
-            range_strength_percent_in_range_5_23=(
-                range_strength_percent_in_range_5_23 if columnName == 'range_strength_5_23' else None
-            ),
-            regimeAdx_pct_infThreshold=(
-                regimeAdx_pct_infThreshold if columnName == 'market_regimeADX' else None
-            ),
-            adjust_xaxis=adjust_xaxis
+            nan_replacement_values
         )
-    """
+    elif transformation_method == "log":
+        #outliersTransform_df[columnName] = np.log(features_NANReplacedVal_df['columnName'])
+
+        #outliersTransform_df[columnName] = transformer.fit_transform(features_NANReplacedVal_df[[columnName]])
+        outliersTransform_df[columnName] = np.sqrt(features_NANReplacedVal_df[columnName])
+
+    elif transformation_method == "Yeo-Johnson":
+        # Exemple: placeholder d'une fonction Yeo-Johnson
+        # ==============================================
+        def apply_yeo_johnson(features_NANReplacedVal_df, columnName, transformation_params=None, standardize=False):
+            """
+            Applique la transformation Yeo-Johnson via scikit-learn sur une seule colonne.
+            Si la colonne contient des NaN, la transformation est ignorée.
+            """
+            # Vérification des valeurs NaN
+            from sklearn.preprocessing import PowerTransformer
+
+            if features_NANReplacedVal_df[columnName].isna().any():
+                print(f"⚠️ Warning: Column '{columnName}' contains NaN values. Transformation skipped.")
+                exit(27)
+                return features_NANReplacedVal_df[columnName]
+
+            # Récupération des valeurs valides
+            valid_values = features_NANReplacedVal_df[[columnName]].values  # Scikit-learn exige un 2D array
+
+            if valid_values.size == 0:
+                raise ValueError(
+                    f"🚨 Error: No valid values found in '{columnName}', cannot apply Yeo-Johnson transformation.")
+
+            # Application de la transformation Yeo-Johnson via PowerTransformer
+            transformer = PowerTransformer(method='yeo-johnson', standardize=standardize)
+            transformed_values = transformer.fit_transform(valid_values)
+
+            # Mise à jour des valeurs transformées dans le DataFrame
+            transformed_column = features_NANReplacedVal_df[columnName].copy()
+            transformed_column[:] = transformed_values.flatten()
+
+            return transformed_column
+
+        outliersTransform_df[columnName] = apply_yeo_johnson(
+            features_NANReplacedVal_df,
+            columnName,
+            transformation_params
+        )
+        # ==============================================
+
+    else:
+        print("error aucune transformation")
+
+        exit(45)
+
+features_NANReplacedVal_df = features_NANReplacedVal_df[columns_to_process]
+
+print(f"arpès on a features_NANReplacedVal_df:{features_NANReplacedVal_df.shape}")
+print(f"arpès on a outliersTransform_df:{outliersTransform_df.shape}")
+
 print("\n")
 print("Vérification finale :")
-print(f"   - Nombre de colonnes dans winsorized_df : {len(winsorized_df.columns)}")
+print(f"   - Nombre de colonnes dans outliersTransform_df : {len(outliersTransform_df.columns)}")
 
 print(f"\n")
 
 # print(f"   - Nombre de colonnes dans winsorized_scaledWithNanValue_df : {len(winsorized_scaledWithNanValue_df.columns)}")
-# assert len(winsorized_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
+# assert len(outliersTransform_df.columns) == len(winsorized_scaledWithNanValue_df.columns), "Le nombre de colonnes ne correspond pas entre les DataFrames"
 
 
 print_notification(
@@ -1900,9 +2811,10 @@ if missing_columns:
 # Créez un DataFrame avec les colonnes à ajouter
 
 columns_df = df[columns_to_add]
-# Ajoutez ces colonnes à features_df, winsorized_df en une seule opération
+# Ajoutez ces colonnes à features_df, outliersTransform_df en une seule opération
 features_NANReplacedVal_df = pd.concat([features_NANReplacedVal_df, columns_df], axis=1)
-winsorized_df = pd.concat([winsorized_df, columns_df], axis=1)
+outliersTransform_df = pd.concat([outliersTransform_df, columns_df], axis=1)
+
 
 # winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
 
@@ -1919,45 +2831,16 @@ new_file_name = file_without_extension + '_feat.csv'
 # Construire le chemin complet du nouveau fichier
 feat_file = os.path.join(file_dir, new_file_name)
 
-# Créer le nouveau nom de fichier pour winsorized_df
+# Créer le nouveau nom de fichier pour outliersTransform_df
 winsorized_file_name = file_without_extension + '_feat_winsorized.csv'
 
 # Construire le chemin complet du nouveau fichier winsorized
 winsorized_file = os.path.join(file_dir, winsorized_file_name)
 
 # Sauvegarder le fichier des features originales
-print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
-save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
+#print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
+#save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
 
 # Sauvegarder le fichier winsorized
 print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")
-save_features_with_sessions(winsorized_df, CUSTOM_SESSIONS, winsorized_file)
-"""
-# Créer le nouveau nom de fichier pour winsorized_scaledWithNanValue_df
-scaled_file_name = file_without_extension+ '_feat_winsorizedScaledWithNanVal.csv'
-
-# Construire le chemin complet du nouveau fichier scaled
-scaled_file = os.path.join(file_dir, scaled_file_name)
-
-# Sauvegarder le fichier scaled
-winsorized_scaledWithNanValue_df.to_csv(scaled_file, sep=';', index=False, encoding='iso-8859-1')
-print_notification(f"Enregistrement du fichier de features winsorisées et normalisées : {scaled_file}")
-"""
-
-# Affichage final des graphiques si demandé
-if user_choice.lower() in ['d', 's']:
-    if user_choice.lower() == 'd':
-        try:
-            x, y = map(int, fig_range_input.split('_'))
-            figures_to_show = [fig for fig in figures if x <= fig.number <= y]
-        except ValueError:
-            print("Erreur : Format invalide. Affichage de toutes les figures.")
-            figures_to_show = figures
-    else:
-        figures_to_show = figures  # Si 's', toutes les figures seront affichées
-
-    for fig in figures_to_show:
-        print(f"Affichage de la figure: {fig.number}")
-        plt.figure(fig.number)
-        plt.tight_layout()
-    plt.show()
+save_features_with_sessions(outliersTransform_df, CUSTOM_SESSIONS, winsorized_file)

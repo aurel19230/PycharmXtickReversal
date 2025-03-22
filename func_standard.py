@@ -30,6 +30,8 @@ from definition import *
 from func_xgb import *
 from func_lightgbm import *
 from func_RF import *
+from func_SVC import *
+
 
 CUSTOM_SESSIONS = {
     "Opening": {
@@ -1885,6 +1887,283 @@ def check_original_alignment(y_train_label, df_pnl_data_train):
     print("Les données d'origine sont alignées et cohérentes.")
 
 
+def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
+                    df_pnl_data_train=None, df_pnl_data_test=None,
+                    selected_columns_manual=None, config=None,
+                    results_directory=None, X_train_full=None):
+    """
+    Filtre les features en utilisant diverses méthodes (VIF, corrélation, information mutuelle)
+    et nettoie les dataframes des valeurs NaN et Inf.
+
+    Parameters:
+    -----------
+    X_train : pandas.DataFrame
+        DataFrame contenant les features d'entraînement
+    y_train_label : pandas.Series
+        Variable cible pour l'entraînement
+    X_test : pandas.DataFrame, optional
+        DataFrame contenant les features de test
+    y_test_label : pandas.Series, optional
+        Variable cible pour le test
+    df_pnl_data_train : pandas.DataFrame, optional
+        Données PnL pour l'entraînement
+    df_pnl_data_test : pandas.DataFrame, optional
+        Données PnL pour le test
+    selected_columns_manual : list, optional
+        Liste des colonnes déjà sélectionnées manuellement
+    config : dict, optional
+        Configuration des paramètres d'analyse et filtrage
+    results_directory : str, optional
+        Répertoire où stocker les résultats
+    X_train_full : pandas.DataFrame, optional
+        DataFrame complet des features d'entraînement avant sélection manuelle
+
+    Returns:
+    --------
+    dict
+        Dictionnaire contenant:
+        - 'selected_columns': liste des colonnes sélectionnées après filtrage
+        - 'X_train': X_train nettoyé des valeurs NaN et Inf
+        - 'y_train_label': y_train_label nettoyé des valeurs NaN et Inf
+        - 'X_test': X_test nettoyé des valeurs NaN et Inf (si fourni)
+        - 'y_test_label': y_test_label nettoyé des valeurs NaN et Inf (si fourni)
+        - 'df_pnl_data_train': df_pnl_data_train nettoyé des valeurs NaN et Inf (si fourni)
+        - 'df_pnl_data_test': df_pnl_data_test nettoyé des valeurs NaN et Inf (si fourni)
+        - 'scaler': l'objet scaler utilisé (si scaling appliqué)
+    """
+    import pandas as pd
+    import numpy as np
+
+    # Valeurs par défaut
+    if config is None:
+        config = {}
+    if selected_columns_manual is None:
+        selected_columns_manual = list(X_train.columns)
+
+    # Résultat à retourner
+    result = {
+        'X_train': X_train,
+        'y_train_label': y_train_label
+    }
+
+    # Ajouter les éléments optionnels s'ils sont fournis
+    if X_test is not None:
+        result['X_test'] = X_test
+    if y_test_label is not None:
+        result['y_test_label'] = y_test_label
+    if df_pnl_data_train is not None:
+        result['df_pnl_data_train'] = df_pnl_data_train
+    if df_pnl_data_test is not None:
+        result['df_pnl_data_test'] = df_pnl_data_test
+
+    # Affichage des informations sur les features après exclusion manuelle
+    if X_train_full is not None:
+        print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
+        compute_display_statistic(X=X_train_full, name="X_train_full",
+                                             config=config, compute_feature_stat=False)
+
+    print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
+    compute_display_statistic(X=X_train, name="X_train",
+                                         config=config, compute_feature_stat=False)
+
+    # Affichage des valeurs NaN dans les ensembles de données
+    print(f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}", end="")
+    if X_test is not None and y_test_label is not None:
+        print(f", X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
+    else:
+        print("\n")
+
+    print(f"Dimensions de X_train: {X_train.shape} (lignes, colonnes)", end="")
+    if X_test is not None:
+        print(f" | Dimensions de X_test: {X_test.shape} (lignes, colonnes)")
+    else:
+        print("")
+
+    print(f"Nb de features après exlusion manuelle: {len(selected_columns_manual)}\n")
+
+    # Variables pour stocker les masques après nettoyage
+    mask_train = None
+    mask_test = None
+
+    # Nettoyage des valeurs NaN et Inf si demandé dans la configuration
+    if config.get("remove_inf_nan_afterFeaturesSelections", False):
+        if df_pnl_data_train is not None:
+            X_train, y_train_label, df_pnl_data_train, mask_train = remove_nan_inf(
+                X=X_train, y=y_train_label, df_pnl_data=df_pnl_data_train, dataset_name="train")
+            result['X_train'] = X_train
+            result['y_train_label'] = y_train_label
+            result['df_pnl_data_train'] = df_pnl_data_train
+        else:
+            X_train, y_train_label, _, mask_train = remove_nan_inf(
+                X=X_train, y=y_train_label, df_pnl_data=None, dataset_name="train")
+            result['X_train'] = X_train
+            result['y_train_label'] = y_train_label
+
+        if X_test is not None and y_test_label is not None:
+            if df_pnl_data_test is not None:
+                X_test, y_test_label, df_pnl_data_test, mask_test = remove_nan_inf(
+                    X=X_test, y=y_test_label, df_pnl_data=df_pnl_data_test, dataset_name="test")
+                result['X_test'] = X_test
+                result['y_test_label'] = y_test_label
+                result['df_pnl_data_test'] = df_pnl_data_test
+            else:
+                X_test, y_test_label, _, mask_test = remove_nan_inf(
+                    X=X_test, y=y_test_label, df_pnl_data=None, dataset_name="test")
+                result['X_test'] = X_test
+                result['y_test_label'] = y_test_label
+
+    # Application éventuelle du scaling (normalisation/standardisation) des features
+    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+    scaler = None
+
+    if chosen_scaler != scalerChoice.SCALER_DISABLE:
+        print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+        # Appliquer le scaling
+        if X_test is not None and y_test_label is not None:
+            X_train_scaled, X_test_scaled, y_train_label_scaled, y_test_label_scaled, scaler, scaler_params = apply_data_feature_scaling(
+                X_train, X_test, y_train_label, y_test_label,
+                mask_train, mask_test,
+                chosen_scaler=chosen_scaler,
+                results_directory=results_directory,
+                config=config
+            )
+            # On conserve les données originales pour le retour mais on utilise les données scalées pour le filtrage
+            X_train_for_filtering = X_train_scaled
+            y_train_label_for_filtering = y_train_label_scaled
+        else:
+            # Cas où X_test ou y_test_label n'est pas fourni
+            X_train_scaled, _, y_train_label_scaled, _, scaler, scaler_params = apply_data_feature_scaling(
+                X_train, X_train.copy(), y_train_label, y_train_label.copy(),
+                mask_train, mask_train,
+                chosen_scaler=chosen_scaler,
+                results_directory=results_directory,
+                config=config
+            )
+            # On conserve les données originales pour le retour mais on utilise les données scalées pour le filtrage
+            X_train_for_filtering = X_train_scaled
+            y_train_label_for_filtering = y_train_label_scaled
+
+        result['scaler'] = scaler
+    else:
+        print("\n-- Pas de scaler actif ---\n")
+        # Si pas de scaling, on utilise les données originales pour le filtrage
+        X_train_for_filtering = X_train
+        y_train_label_for_filtering = y_train_label
+
+    # Filtrage automatique des features basé sur VIF, corrélation et information mutuelle (si activé)
+    auto_filtering_mode = config.get('auto_filtering_mode', None)
+    is_compute_vif = config.get('compute_vif', True)  # Par défaut True pour garder le comportement d'origine
+
+    if auto_filtering_mode != AutoFilteringOptions.DISPLAY_MODE_NOFILTERING:
+        if chosen_scaler == scalerChoice.SCALER_DISABLE:
+            print(
+                f"\n!!!!!!!!!!!!!!!!!!!!!! POur la mutuelle information et MRMR il est préférable de normaliser les données  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+
+        selected_columns_afterVifCorrMiFiltering = compute_display_statistic(
+            X=X_train_for_filtering, Y=y_train_label_for_filtering,
+            name="X_train", config=config,
+            compute_feature_stat=True,
+            is_compute_vif=is_compute_vif)
+
+        explanation = """
+        🔍 **Explication des variables du tableau de résultats :**
+
+        - **Feature** : Nom de la feature analysée.
+        - **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
+        - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
+          - **> 0.8** : Effet fort ✅
+          - **0.5 - 0.8** : Effet moyen ⚠️
+          - **< 0.5** : Effet faible ❌
+
+        - **P-Value** : Probabilité d'observer la relation par hasard.
+          - **< 0.01** : Très significatif ✅✅
+          - **0.01 - 0.05** : Significatif ✅
+          - **0.05 - 0.10** : Marginalement significatif ⚠️
+          - **> 0.10** : Non significatif ❌
+
+        - **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
+          - **> 20** : Exceptionnellement puissant ✅✅
+          - **10 - 20** : Très intéressant ✅
+          - **5 - 10** : Modérément intéressant ⚠️
+          - **1 - 5** : Faiblement intéressant ❌
+
+        - **MI (Information Mutuelle)** : Quantifie la dépendance entre la feature et la cible.
+          - **> 0.1** : Dépendance forte ✅✅
+          - **0.05 - 0.1** : Dépendance significative ✅
+          - **0.01 - 0.05** : Dépendance modérée ⚠️
+          - **< 0.01** : Dépendance faible ❌
+
+        - **mRMR_Score** : Information Mutuelle avec la cible moins redondance moyenne avec autres features.
+          - **> 0.05** : Signal fort et unique ✅✅
+          - **0.02 - 0.05** : Signal modéré peu redondant ✅
+          - **0.01 - 0.02** : Signal faible ou partiellement redondant ⚠️
+          - **< 0.01** : Signal très faible ou hautement redondant ❌
+
+        - **VIF (Variance Inflation Factor)** : Mesure la multicolinéarité avec les autres features.
+          - **< 2.5** : Excellente indépendance ✅✅
+          - **2.5 - 5** : Bonne indépendance ✅
+          - **5 - 7.5** : Redondance modérée, à évaluer ⚠️
+          - **> 7.5** : Forte redondance, potentiellement problématique ❌
+          - Crucial en trading pour éviter le surapprentissage et garantir la stabilité du modèle.
+
+        - **lr_target (Corrélation de Pearson)** : Mesure la relation linéaire avec la cible.
+          - **|r| > 0.3** : Corrélation linéaire forte en trading ✅✅
+          - **0.2 < |r| < 0.3** : Corrélation linéaire modérée ✅
+          - **0.1 < |r| < 0.2** : Corrélation linéaire faible ⚠️
+          - **|r| < 0.1** : Corrélation linéaire négligeable ❌
+          - Note: En trading, même des corrélations de 0.02-0.05 peuvent être significatives si elles sont persistantes et exploitables à haute fréquence.
+
+        - **nlr_target (Corrélation de Spearman)** : Mesure la relation monotone (non-linéaire) avec la cible.
+          - **|ρ| > 0.25** : Corrélation de rang forte en trading ✅✅
+          - **0.15 < |ρ| < 0.25** : Corrélation de rang modérée ✅
+          - **0.08 < |ρ| < 0.15** : Corrélation de rang faible ⚠️
+          - **|ρ| < 0.08** : Corrélation de rang négligeable ❌
+          - Particulièrement utile pour détecter des patterns de marché non-linéaires.
+
+        - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
+        - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
+        - **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
+        - **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
+
+        🎯 **Interprétation des seuils de puissance statistique** :
+        - ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
+        - ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
+        - ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
+
+        📈 **Considérations spécifiques pour le trading** :
+        - Une feature avec un score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
+        - La différence entre les corrélations de Pearson (lr_target) et Spearman (nlr_target) peut révéler la nature de la relation avec le marché:
+          - Si Spearman > Pearson: Présence probable d'une relation non-linéaire (ex: effets de seuil, comportements asymétriques).
+          - Si Pearson > Spearman: Relation principalement linéaire, mais potentiellement influencée par des valeurs extrêmes.
+        - En trading algorithmique, des corrélations faibles (même 0.02-0.05) peuvent générer un avantage significatif si elles sont exploitées systématiquement et à grande échelle.
+        - Le VIF est crucial pour construire des modèles robustes: des features avec un fort pouvoir prédictif mais un VIF élevé peuvent déstabiliser le modèle en conditions réelles.
+        - Pour les stratégies haute fréquence, privilégiez des VIF plus stricts (<3-4) et des signaux faiblement corrélés entre eux.
+        - Pour les stratégies à plus long terme, des VIF jusqu'à 7-8 peuvent être acceptables si la feature apporte une information précieuse.
+        - Les scores mRMR élevés sont particulièrement précieux car ils identifient des signaux à la fois informatifs et non redondants.
+        - Testez toujours la stabilité temporelle de ces métriques sur différentes périodes de marché pour vérifier la persistance du signal.
+        """
+
+        print(explanation)
+        print("=" * 60)
+        print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
+        print(
+            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
+        print("=" * 60)
+
+        # Nous ne faisons pas exit(77) ici pour permettre à la fonction de continuer
+    else:
+        # Pas de filtrage automatique, on garde les features sélectionnées manuellement
+        selected_columns_afterVifCorrMiFiltering = selected_columns_manual
+        print("\nRésumé:")
+        print(f"Nombre total de features filtrées manuellement: {len(selected_columns_manual)}")
+        print(
+            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
+
+    # Ajouter les colonnes sélectionnées au résultat
+    result['selected_columns'] = selected_columns_afterVifCorrMiFiltering
+
+    return result
+
 def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None,
                  results_directory=None):
     """
@@ -2097,162 +2376,47 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
 
 
 
-    # Affichage des informations sur les features après exclusion manuelle
-    print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
-    displaytNan_vifMiCorr_mRMR_Filtering(X=X_train_full, name="X_train_full",
-                                   config=config, compute_feature_stat=False)
-    print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
-    displaytNan_vifMiCorr_mRMR_Filtering(X=X_train, name="X_train",
-                                   config=config, compute_feature_stat=False)
+    # # Affichage des informations sur les features après exclusion manuelle
+    # print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
+    # compute_display_statistic(X=X_train_full, name="X_train_full",
+    #                                config=config, compute_feature_stat=False)
+    # print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
+    # compute_display_statistic(X=X_train, name="X_train",
+    #                                config=config, compute_feature_stat=False)
 
 
 
+    # Appel de la fonction
+    result = filter_features(
+        X_train=X_train,
+        y_train_label=y_train_label,
+        X_test=X_test,
+        y_test_label=y_test_label,
+        df_pnl_data_train=df_pnl_data_train,
+        df_pnl_data_test=df_pnl_data_test,
+        selected_columns_manual=selected_columns_manual,
+        config=config,
+        results_directory=results_directory,
+        X_train_full=X_train_full
+    )
 
-    # Affichage des valeurs NaN dans les ensembles de données
-    print(
-        f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}, X_test={X_test.isna().sum().sum()}, y_test_label={y_test_label.isna().sum()}\n")
-    print(
-        f"Dimensions de X_train: {X_train.shape} (lignes, colonnes) | Dimensions de X_test: {X_test.shape} (lignes, colonnes)")
-    print(f"Nb de features après exlusion manuelle: {len(selected_columns_manual)}\n")
+    # Récupération des données nettoyées et des colonnes sélectionnées
+    X_train_clean = result['X_train']
+    y_train_label_clean = result['y_train_label']
+    X_test_clean = result['X_test']
+    y_test_label_clean = result['y_test_label']
+    df_pnl_data_train_clean = result['df_pnl_data_train']  # Ajouté
+    df_pnl_data_test_clean = result['df_pnl_data_test']  # Ajouté
+    selected_columns = result['selected_columns']
 
-    # Nettoyage des valeurs NaN et Inf si demandé dans la configuration
-    if config["remove_inf_nan_afterFeaturesSelections"] == True:
-        X_train, y_train_label,df_pnl_data_train, mask_train = remove_nan_inf(X=X_train,y= y_train_label,df_pnl_data=df_pnl_data_train, dataset_name="train")
-        X_test, y_test_label,df_pnl_data_test ,mask_test = remove_nan_inf(X=X_test ,y=y_test_label,df_pnl_data= df_pnl_data_test,dataset_name="test")
+    # Utilisation des colonnes sélectionnées
+    X_train_filtered = X_train_clean[selected_columns]
+    X_test_filtered = X_test_clean[selected_columns]
 
-    # Application éventuelle du scaling (normalisation/standardisation) des features
-    #ATTENTION : préférable de le faire pour la mutuelle information et mRMR
-    #Approche par mRMR (minimum Redundancy Maximum Relevance)
-
-    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
-
-    if chosen_scaler != scalerChoice.SCALER_DISABLE:
-        print(f"\n-- Scaler {chosen_scaler} actif ---\n")
-        # Appliquer le scaling
-        X_train, X_test, y_train_label, y_test_label, scaler, scaler_params = apply_data_feature_scaling(
-            X_train, X_test, y_train_label, y_test_label,
-            mask_train, mask_test,
-            chosen_scaler=chosen_scaler,
-            results_directory=results_directory,
-            config=config
-        )
-    else:
-        print("\n-- Pas de scaler actif ---\n")
-
-
-    # Filtrage automatique des features basé sur VIF, corrélation et information mutuelle (si activé)
-    auto_filtering_mode = config.get('auto_filtering_mode', None)
-    is_compute_vif = config.get('compute_vif', True)  # Par défaut True pour garder le comportement d'origine
-
-    if auto_filtering_mode!=AutoFilteringOptions.DISPLAY_MODE_NOFILTERING:
-        if chosen_scaler == scalerChoice.SCALER_DISABLE:
-            print(f"\n!!!!!!!!!!!!!!!!!!!!!! POur la mutuelle information et MRMR il est préférable de normaliser les données  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-        selected_columns_afterVifCorrMiFiltering = displaytNan_vifMiCorr_mRMR_Filtering(
-            X=X_train, Y=y_train_label,
-            name="X_train", config=config,
-            compute_feature_stat=True,
-            is_compute_vif=True)
-
-        explanation = """
-        🔍 **Explication des variables du tableau de résultats :**
-
-        - **Feature** : Nom de la feature analysée.
-        - **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
-        - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
-          - **> 0.8** : Effet fort ✅
-          - **0.5 - 0.8** : Effet moyen ⚠️
-          - **< 0.5** : Effet faible ❌
-
-        - **P-Value** : Probabilité d'observer la relation par hasard.
-          - **< 0.01** : Très significatif ✅✅
-          - **0.01 - 0.05** : Significatif ✅
-          - **0.05 - 0.10** : Marginalement significatif ⚠️
-          - **> 0.10** : Non significatif ❌
-
-        - **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
-          - **> 20** : Exceptionnellement puissant ✅✅
-          - **10 - 20** : Très intéressant ✅
-          - **5 - 10** : Modérément intéressant ⚠️
-          - **1 - 5** : Faiblement intéressant ❌
-
-        - **MI (Information Mutuelle)** : Quantifie la dépendance entre la feature et la cible.
-          - **> 0.1** : Dépendance forte ✅✅
-          - **0.05 - 0.1** : Dépendance significative ✅
-          - **0.01 - 0.05** : Dépendance modérée ⚠️
-          - **< 0.01** : Dépendance faible ❌
-
-        - **mRMR_Score** : Information Mutuelle avec la cible moins redondance moyenne avec autres features.
-          - **> 0.05** : Signal fort et unique ✅✅
-          - **0.02 - 0.05** : Signal modéré peu redondant ✅
-          - **0.01 - 0.02** : Signal faible ou partiellement redondant ⚠️
-          - **< 0.01** : Signal très faible ou hautement redondant ❌
-
-        - **VIF (Variance Inflation Factor)** : Mesure la multicolinéarité avec les autres features.
-          - **< 2.5** : Excellente indépendance ✅✅
-          - **2.5 - 5** : Bonne indépendance ✅
-          - **5 - 7.5** : Redondance modérée, à évaluer ⚠️
-          - **> 7.5** : Forte redondance, potentiellement problématique ❌
-          - Crucial en trading pour éviter le surapprentissage et garantir la stabilité du modèle.
-
-        - **lr_target (Corrélation de Pearson)** : Mesure la relation linéaire avec la cible.
-          - **|r| > 0.3** : Corrélation linéaire forte en trading ✅✅
-          - **0.2 < |r| < 0.3** : Corrélation linéaire modérée ✅
-          - **0.1 < |r| < 0.2** : Corrélation linéaire faible ⚠️
-          - **|r| < 0.1** : Corrélation linéaire négligeable ❌
-          - Note: En trading, même des corrélations de 0.02-0.05 peuvent être significatives si elles sont persistantes et exploitables à haute fréquence.
-
-        - **nlr_target (Corrélation de Spearman)** : Mesure la relation monotone (non-linéaire) avec la cible.
-          - **|ρ| > 0.25** : Corrélation de rang forte en trading ✅✅
-          - **0.15 < |ρ| < 0.25** : Corrélation de rang modérée ✅
-          - **0.08 < |ρ| < 0.15** : Corrélation de rang faible ⚠️
-          - **|ρ| < 0.08** : Corrélation de rang négligeable ❌
-          - Particulièrement utile pour détecter des patterns de marché non-linéaires.
-
-        - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
-        - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
-        - **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
-        - **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
-
-        🎯 **Interprétation des seuils de puissance statistique** :
-        - ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
-        - ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
-        - ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
-
-        📈 **Considérations spécifiques pour le trading** :
-        - Une feature avec un score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
-        - La différence entre les corrélations de Pearson (lr_target) et Spearman (nlr_target) peut révéler la nature de la relation avec le marché:
-          - Si Spearman > Pearson: Présence probable d'une relation non-linéaire (ex: effets de seuil, comportements asymétriques).
-          - Si Pearson > Spearman: Relation principalement linéaire, mais potentiellement influencée par des valeurs extrêmes.
-        - En trading algorithmique, des corrélations faibles (même 0.02-0.05) peuvent générer un avantage significatif si elles sont exploitées systématiquement et à grande échelle.
-        - Le VIF est crucial pour construire des modèles robustes: des features avec un fort pouvoir prédictif mais un VIF élevé peuvent déstabiliser le modèle en conditions réelles.
-        - Pour les stratégies haute fréquence, privilégiez des VIF plus stricts (<3-4) et des signaux faiblement corrélés entre eux.
-        - Pour les stratégies à plus long terme, des VIF jusqu'à 7-8 peuvent être acceptables si la feature apporte une information précieuse.
-        - Les scores mRMR élevés sont particulièrement précieux car ils identifient des signaux à la fois informatifs et non redondants.
-        - Testez toujours la stabilité temporelle de ces métriques sur différentes périodes de marché pour vérifier la persistance du signal.
-        """
-
-        print(explanation)
-        print("=" * 60)
-        print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
-        print(
-            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
-        print("=" * 60)
-        exit(77)
-    else:
-        # Pas de filtrage automatique, on garde les features sélectionnées manuellement
-        selected_columns_afterVifCorrMiFiltering = selected_columns_manual
-        print("\nRésumé:")
-        print(f"Nombre total de features filtrées manuellement: {len(selected_columns_manual)}")
-        print(
-            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
-
-    # Application de la sélection finale des features sur les colonnes de celles_ci.
-    X_train = X_train[selected_columns_afterVifCorrMiFiltering]
-    X_test = X_test[selected_columns_afterVifCorrMiFiltering]
 
     # Retour des ensembles de données préparés
     return (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
-            X_train, y_train_label, X_test, y_test_label, df_pnl_data_train, df_pnl_data_test,
+            X_train_clean, y_train_label_clean, X_test_clean, y_test_label_clean, df_pnl_data_train_clean, df_pnl_data_test_clean,
             nb_SessionTrain, nb_SessionTest, nan_value)
 
 
@@ -2693,8 +2857,8 @@ def reTrain_finalModel_analyse(
     print(f"Sur X_Test :")
     print(f"  - Meilleur nombre d'itérations : {final_model.best_iteration}")
     print(f"  - Meilleur score : {final_model.best_score}")
-    print(f"        - soit PNL {results['eval_metrics']['val_bestIdx_custom_metric_pnl']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
-    print(f"        - Rappel sur train: PNL de {results['train_metrics']['train_bestIdx_custom_metric_pnl']} | pour {results['train_metrics']['total_samples']}  samples")
+    print(f"        - soit PNL {results['eval_metrics']['val_bestVal_custom_metric_pnl']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
+    print(f"        - Rappel sur train: PNL de {results['train_metrics']['train_bestVal_custom_metric_pnl']} | pour {results['train_metrics']['total_samples']}  samples")
     # Création du nom de fichier avec timestamp
     current_time = datetime.now()
     timestamp = current_time.strftime("%y%m%d_%H_%M_%S")  # Format: YYMMDD_HH_MM_SS
@@ -4395,6 +4559,79 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
             'warm_start': False,  # Ne pas réutiliser la solution précédente
             'class_weight': None  # Pas de pondération spécifique des classes
         }
+    elif model_type == modelType.SVC:
+        params = {
+            # Paramètre de régularisation - contrôle le compromis entre la marge et les erreurs
+            'C': trial.suggest_float(
+                'C',
+                modele_param_optuna_range['C']['min'],
+                modele_param_optuna_range['C']['max'],
+                log=modele_param_optuna_range['C'].get('log', True)
+            ),
+
+            # Paramètre gamma pour les noyaux 'rbf', 'poly' et 'sigmoid'
+            'gamma': trial.suggest_float(
+                'gamma',
+                modele_param_optuna_range['gamma']['min'],
+                modele_param_optuna_range['gamma']['max'],
+                log=modele_param_optuna_range['gamma'].get('log', True)
+            ),
+
+            # Degré du polynôme pour le noyau 'poly'
+            'degree': trial.suggest_int(
+                'degree',
+                modele_param_optuna_range['degree']['min'],
+                modele_param_optuna_range['degree']['max']
+            ),
+
+            # Coefficient pour les noyaux 'poly' et 'sigmoid'
+            'coef0': trial.suggest_float(
+                'coef0',
+                modele_param_optuna_range['coef0']['min'],
+                modele_param_optuna_range['coef0']['max']
+            ),
+
+            # # Tolérance pour le critère d'arrêt
+            # 'tol': trial.suggest_float(
+            #     'tol',
+            #     modele_param_optuna_range['tol']['min'],
+            #     modele_param_optuna_range['tol']['max'],
+            #     log=modele_param_optuna_range['tol'].get('log', True)
+            # ),
+
+            # Taille du cache pour le noyau (en MB)
+            # 'cache_size': trial.suggest_categorical(
+            #     'cache_size',
+            #     modele_param_optuna_range['cache_size']
+            # ),
+
+            # Stratégie un-contre-un ou un-contre-tous pour la classification multiclasse
+            # 'decision_function_shape': trial.suggest_categorical(
+            #     'decision_function_shape',
+            #     modele_param_optuna_range['decision_function_shape']
+            # ),
+
+            # # Shrinking heuristic
+            # 'shrinking': trial.suggest_categorical(
+            #     'shrinking',
+            #     modele_param_optuna_range['shrinking']
+            # ),
+
+            # Stratégie de gestion des classes déséquilibrées
+            'class_weight': trial.suggest_categorical(
+                'class_weight',
+                modele_param_optuna_range['class_weight']
+            ),
+
+            # Paramètres fixes
+            'random_state': random_state_seed_,
+            'verbose': 0,  # Réduire les logs
+
+            # Ces paramètres seront définis dans la fonction train_and_evaluate_svc_model
+            # depuis la configuration
+            # 'kernel': config.get('svc_kernel', 'rbf'),
+            # 'probability': config.get('svc_probability', False)
+        }
     elif model_type == modelType.CATBOOST:
         params = {
             'loss_function': 'Logloss',
@@ -4543,7 +4780,7 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
             'winrate_raw_data_train_by_fold': arrays['winrate_raw_data_train_by_fold'],
             'train_pred_proba_log_odds': arrays['train_pred_proba_log_odds'],
             'train_trades_samples_perct': arrays['train_trades_samples_perct'],
-            'train_bestIdx_custom_metric_pnl': arrays['train_bestIdx_custom_metric_pnl'],
+            'train_bestVal_custom_metric_pnl': arrays['train_bestVal_custom_metric_pnl'],
 
             # Validation
             'winrates_val_by_fold': arrays['winrates_val'],
@@ -4557,7 +4794,7 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
             'winrate_raw_data_val_by_fold': arrays['winrate_raw_data_val_by_fold'],
             'val_pred_proba_log_odds': arrays['val_pred_proba_log_odds'],
             'val_trades_samples_perct': arrays['val_trades_samples_perct'],
-            'val_bestIdx_custom_metric_pnl': arrays['val_bestIdx_custom_metric_pnl'],
+            'val_bestVal_custom_metric_pnl': arrays['val_bestVal_custom_metric_pnl'],
 
             'mean_val_score': mean_val_score,
             'std_val_score': std_val_score,
@@ -4654,7 +4891,7 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['train_trades_samples_perct'][fold_num] = fold_results['fold_stats']['train_trades_samples_perct']
         arrays['tp_train'][fold_num] = fold_results['train_metrics']['tp']
         arrays['fp_train'][fold_num] = fold_results['train_metrics']['fp']
-        arrays['train_bestIdx_custom_metric_pnl'][fold_num] = fold_results['train_metrics']['train_bestIdx_custom_metric_pnl']
+        arrays['train_bestVal_custom_metric_pnl'][fold_num] = fold_results['train_metrics']['train_bestVal_custom_metric_pnl']
 
         arrays['class0_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(0, 0)
         arrays['class1_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(1, 0)
@@ -4679,7 +4916,7 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['val_trades_samples_perct'][fold_num] = fold_results['fold_stats']['val_trades_samples_perct']
         arrays['tp_val'][fold_num] = fold_results['eval_metrics']['tp']
         arrays['fp_val'][fold_num] = fold_results['eval_metrics']['fp']
-        arrays['val_bestIdx_custom_metric_pnl'][fold_num] = fold_results['eval_metrics']['val_bestIdx_custom_metric_pnl']
+        arrays['val_bestVal_custom_metric_pnl'][fold_num] = fold_results['eval_metrics']['val_bestVal_custom_metric_pnl']
         arrays['class0_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(0, 0)
         arrays['class1_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(1, 0)
 
@@ -4895,7 +5132,8 @@ def select_fold_processor(model: None):
     processors = {
         modelType.XGB: process_cv_fold_xgboost,
         modelType.LGBM: process_cv_fold_lightgbm,
-        modelType.RF: process_cv_fold_randomforest_model
+        modelType.RF: process_cv_fold_randomforest_model,
+        modelType.SVC: process_cv_fold_svc_model,
         # modelType.CATBOOST: process_cv_fold_catboost
     }
     if model not in processors:
@@ -4915,7 +5153,18 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
             = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
+        # Application éventuelle du scaling (normalisation/standardisation) des features
+        chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+        scaler = None
 
+        if chosen_scaler != scalerChoice.SCALER_DISABLE:
+            print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+            X_train_cv, X_val_cv, scaler, scaler_params = apply_scaling(
+                X_train_cv,
+                X_val_cv,
+                save_path=None,
+                chosen_scaler=chosen_scaler
+            )
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -4962,9 +5211,22 @@ def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, 
        which returns the full set of metrics and debug_info.
        """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv \
             = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
+
+        # Application éventuelle du scaling (normalisation/standardisation) des features
+        chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+        scaler = None
+
+        if chosen_scaler != scalerChoice.SCALER_DISABLE:
+            print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+            X_train_cv, X_val_cv, scaler, scaler_params = apply_scaling(
+                X_train_cv,
+                X_val_cv,
+                save_path=None,
+                chosen_scaler=chosen_scaler
+            )
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -4999,25 +5261,31 @@ def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, 
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
         raise
-
 def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
-                             data=None, model_weight_optuna=None,
-                             is_log_enabled=False, config=None,nb_split_tscv=0):
+                          data=None, model_weight_optuna=None,
+                          is_log_enabled=False, config=None, nb_split_tscv=0):
     """
-       Process a cross-validation fold for LightGBM training and evaluation.
-       This version delegates training and evaluation steps to train_and_evaluate_lightgbm_model,
-       which returns the full set of metrics and debug_info.
-       """
+    Process a cross-validation fold for XGBoost training and evaluation.
+    This version delegates training and evaluation steps to train_and_evaluate_xgb_model,
+    which returns the full set of metrics and debug_info.
+    """
     try:
         X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
             = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
-        # for a later use in custom metric to compute the pnl we store in config
-        config.update({
-            'y_pnl_data_train_cv': y_pnl_data_train_cv,
-            'y_pnl_data_val_cv_OrTest': y_pnl_data_val_cv,
-        })
+        # Application éventuelle du scaling (normalisation/standardisation) des features
+        chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+        scaler = None
+
+        if chosen_scaler != scalerChoice.SCALER_DISABLE:
+            print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+            X_train_cv, X_val_cv, scaler, scaler_params = apply_scaling(
+                X_train_cv,
+                X_val_cv,
+                save_path=None,
+                chosen_scaler=chosen_scaler
+            )
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -5028,10 +5296,10 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
         fold_results = train_and_evaluate_xgb_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
-
             Y_train_cv=Y_train_cv,
             y_val_cv=y_val_cv,
-
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
             params=params,
             model_weight_optuna=model_weight_optuna,
             config=config,
@@ -5040,6 +5308,7 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
+            log_evaluation=0 if not is_log_enabled else 10,
         )
 
         # Retourner le résultat tel quel
@@ -5049,8 +5318,77 @@ def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0,
         print(f"\nErreur dans process_cv_fold xgboost:")
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
+        traceback.print_exc()  # Affiche la trace complète de l'erreur
         raise
 
+
+def process_cv_fold_svc_model(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,
+                             train_pos=None, val_pos=None, params=None,
+                             data=None, model_weight_optuna=None,
+                             is_log_enabled=False, config=None, nb_split_tscv=0):
+    """
+    Process a cross-validation fold for SVC (Support Vector Classifier) training and evaluation.
+    This version delegates training and evaluation steps to train_and_evaluate_svc_model,
+    which returns the full set of metrics and debug_info.
+    """
+    try:
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(
+            config, data, train_pos, val_pos)
+
+        # Application éventuelle du scaling (normalisation/standardisation) des features
+        # Pour SVC, le scaling est fortement recommandé
+        chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_STANDARD)  # Standard par défaut pour SVC
+        scaler = None
+
+        if chosen_scaler != scalerChoice.SCALER_DISABLE:
+            print(f"\n-- Scaler {chosen_scaler} actif (recommandé pour SVC) ---\n")
+            X_train_cv, X_val_cv, scaler, scaler_params = apply_scaling(
+                X_train_cv,
+                X_val_cv,
+                save_path=None,
+                chosen_scaler=chosen_scaler
+            )
+        else:
+            print("\n⚠️ ATTENTION: SVC sans scaling peut mal performer. Scaling recommandé.\n")
+
+        # Calculate initial fold statistics
+        fold_stats_current = {
+            **calculate_fold_stats(Y_train_cv, "train", config),
+            **calculate_fold_stats(y_val_cv, "val", config)
+        }
+
+        fold_results = train_and_evaluate_svc_model(
+            X_train_cv=X_train_cv,
+            X_val_cv=X_val_cv,
+            y_train_cv=Y_train_cv,
+            y_val_cv=y_val_cv,
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
+            params=params,
+            model_weight_optuna=model_weight_optuna,
+            config=config,
+            fold_num=fold_num,
+            fold_raw_data=fold_raw_data,
+            fold_stats_current=fold_stats_current,
+            train_pos=train_pos,
+            val_pos=val_pos,
+            log_evaluation=0,
+        )
+
+        # Conserver le scaler pour une utilisation ultérieure
+        if scaler is not None:
+            fold_results['scaler'] = scaler
+            fold_results['scaler_params'] = scaler_params
+
+        # Retourner le résultat tel quel
+        return fold_results
+
+    except Exception as e:
+        print(f"\nErreur dans process_cv_fold_svc_model:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Message: {str(e)}")
+        raise
 """
 def process_cv_fold_xgboost(X_train=None, X_train_full=None, fold_num=None, train_pos=None, val_pos=None, params=None,
                             num_boost_round=None,
@@ -5249,7 +5587,7 @@ def initialize_arrays(nb_split_tscv, config,len):
         'winrate_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'val_pred_proba_log_odds': [None] * nb_split_tscv,
         'val_trades_samples_perct': xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'val_bestIdx_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'val_bestVal_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
 
             # Entraînement
         'winrates_train':   xp.zeros(nb_split_tscv, dtype=xp.float32),
@@ -5263,7 +5601,7 @@ def initialize_arrays(nb_split_tscv, config,len):
         'winrate_raw_data_train_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'train_pred_proba_log_odds': [None] * nb_split_tscv,
         'train_trades_samples_perct': xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'train_bestIdx_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'train_bestVal_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
 
         'perctDiff_winrateRatio_train_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'perctDiff_ratioTradeSample_train_val': xp.zeros(nb_split_tscv, dtype=xp.float32)
@@ -6759,31 +7097,46 @@ def compute_mRMR_filtering(X, Y, config):
     if verbose:
         print(f"✓ Pertinence calculée pour {len(features)} features")
 
+    from joblib import Parallel, delayed
+
+    # Fonction pour calculer une seule valeur d'information mutuelle
+    from joblib import Parallel, delayed
+    from tqdm import tqdm
+    import numpy as np
+    import os
+
+    # Fonction pour calculer une seule valeur d'information mutuelle
+    def compute_mi_pair(i, j, X_values):
+        xi = X_values[:, i].reshape(-1, 1)
+        xj = X_values[:, j]
+        return (i, j, mutual_info_regression(xi, xj, random_state=0)[0])
+
     # 3) Calcul de la matrice de redondance : MI(feature_i; feature_j)
     n = len(features)
     mi_matrix = np.zeros((n, n))
 
-    if verbose:
-        print(f"🔄 Calcul de la matrice de redondance ({n}x{n})...")
-        # Nombre total de paires à calculer
-        total_pairs = n * (n - 1) // 2
-        pbar = tqdm(total=total_pairs, desc="Calcul MI", disable=not verbose)
+    # Convertir le DataFrame en numpy array
+    X_values = X.values
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            # On utilise mutual_info_regression comme mesure "générique".
-            xi = X.iloc[:, i].values.reshape(-1, 1)
-            xj = X.iloc[:, j].values
-            mi_val = mutual_info_regression(xi, xj, random_state=0)[0]
-            mi_matrix[i, j] = mi_val
-            mi_matrix[j, i] = mi_val
-
-            if verbose:
-                pbar.update(1)
+    # Générer toutes les paires à calculer
+    pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
 
     if verbose:
-        pbar.close()
-        print(f"✓ Matrice de redondance calculée")
+        print(f"🔄 Calcul parallèle de la matrice de redondance ({n}x{n})...")
+        print(f"Total: {len(pairs)} paires à calculer")
+
+    # Définir un niveau de verbose plus bas pour joblib
+    joblib_verbose = 1  # Un niveau bas mais qui montre quand même quelque chose
+
+    # Exécuter les calculs en parallèle
+    results = Parallel(n_jobs=-1, verbose=joblib_verbose if verbose else 0)(
+        delayed(compute_mi_pair)(i, j, X_values) for i, j in pairs
+    )
+
+    # Remplir la matrice avec les résultats
+    for i, j, mi_val in results:
+        mi_matrix[i, j] = mi_val
+        mi_matrix[j, i] = mi_val  # Symétrique
 
     # 4) Sélection mRMR itérative
     selected = []
@@ -6913,8 +7266,8 @@ def fisher_score_feature_selection(X: pd.DataFrame, Y: pd.Series, name: str, con
 
     fisher_df.reset_index(drop=True, inplace=True)
 
-    print(f"\nFisher Score Feature Selection [{name}]:")
-    print(fisher_df)
+    # print(f"\nFisher Score Feature Selection [{name}]:")
+    # print(fisher_df)
 
     return fisher_df
 
@@ -7005,10 +7358,94 @@ def compute_vif_optimized(df, threshold):
     return pd.concat(vif_dfs, axis=1)
 
 
+def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_components=2,
+                                    plot_correlation=True, pca_prefix="diffPriceClosePoc_PCA_"):
+    """
+    Vérifie la présence des colonnes, identifie les variables fortement corrélées et applique la PCA.
+
+    Paramètres :
+    - X : DataFrame pandas contenant les données
+    - feature_list : Liste des colonnes sur lesquelles appliquer la PCA
+    - corr_threshold : Seuil de corrélation au-dessus duquel on applique la PCA (par défaut 0.6)
+    - n_components : Nombre de composantes PCA à conserver (par défaut 2)
+    - plot_correlation : Booléen, si True affiche la heatmap de corrélation
+    - pca_prefix : Préfixe pour nommer les nouvelles features PCA (par défaut "diffPriceClosePoc_PCA_")
+
+    Retourne :
+    - X modifié avec les nouvelles features PCA
+    """
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    from sklearn.decomposition import PCA
+    # Vérifier la présence des colonnes dans X
+    missing_columns = [col for col in feature_list if col not in X.columns]
+    if missing_columns:
+        raise ValueError(f"❌ Colonnes manquantes pour la PCA : {missing_columns}")
+
+    # 1️⃣ Calculer la matrice de corrélation
+    corr_matrix = X[feature_list].corr(
+    #    method='spearman'
+    )
+
+    # Affichage de la heatmap de corrélation si demandé
+    if plot_correlation:
+        # Supposons que corr_matrix est votre matrice de corrélation
+        plt.figure(figsize=(12, 10))  # Augmenter la taille de la figure
+
+        # Créer la heatmap avec des ajustements pour les labels
+        sns.heatmap(corr_matrix, annot=True, cmap="coolwarm", fmt=".2f")
+
+        # Rotation des labels sur l'axe x et ajustement de l'espacement
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
+
+        # Ajuster les marges pour éviter la troncation
+        plt.tight_layout()
+
+        plt.title("Matrice de Corrélation des Variables")
+        plt.show()
+
+    # 2️⃣ Identifier les colonnes fortement corrélées
+    high_corr_columns = set()
+
+    for i in range(len(feature_list)):
+        for j in range(i + 1, len(feature_list)):  # On évite les doublons et la diagonale
+            if abs(corr_matrix.iloc[i, j]) >= corr_threshold:
+                high_corr_columns.add(feature_list[i])
+                high_corr_columns.add(feature_list[j])
+
+    high_corr_columns = sorted(high_corr_columns)  # Trier pour l'affichage
+
+    if not high_corr_columns:
+        print(f"✅ Aucune variable fortement corrélée (> {corr_threshold}), la PCA n'est pas appliquée.")
+        return X
+
+    print(f"✅ Variables retenues pour la PCA (corrélation ≥ {corr_threshold}) : {high_corr_columns}")
+
+    # 3️⃣ Appliquer la PCA sur ces variables
+    # Appliquer la PCA avec le bon nombre de composantes
+    pca = PCA(n_components=n_components)
+    # Correction ici : utiliser les données de X pour les colonnes à forte corrélation
+    X_pca_transformed = pca.fit_transform(X[high_corr_columns])
+
+    # Ajouter les nouvelles features PCA à X avec le préfixe personnalisé
+    for i in range(pca.n_components_):
+        X[f'{pca_prefix}{i + 1}'] = X_pca_transformed[:, i]
+        print(f'{pca_prefix}{i + 1} generated')
+
+    essential_columns = {'deltaTimestampOpeningSession1min'}  # Liste des colonnes à ne PAS supprimer
+    high_corr_columns = [col for col in high_corr_columns if col not in essential_columns]
+
+    # Optionnel : Supprimer les anciennes colonnes après la PCA
+    X.drop(columns=high_corr_columns, inplace=True)
+
+    return X  # Retourne X modifié
 ###############################################################################
 # Fonction Gestion de la selection des features
 ###############################################################################
-def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
+def compute_display_statistic(X=None, Y=None, name="Dataset",
                                          config=None,
                                          compute_feature_stat=False,
                                          is_compute_vif=False):
@@ -7038,12 +7475,25 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     Returns:
         list: Liste des colonnes conservées (si filtrage) ou None si pas de filtrage.
     """
-    import numpy as np
-    import pandas as pd
-    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+    if compute_feature_stat:
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+        from sklearn.decomposition import PCA
 
-    if config is None:
-        config = {}
+        # Liste des colonnes à analyser pour la PCA
+        pca_columns = [
+            'overlap_ratio_VA_11P_21P','poc_diff_11P_21P','poc_diff_ratio_6P_11P',
+            'poc_diff_6P_21P','poc_diff_ratio_11P_21P','poc_diff_6P_16P','ratio_delta_vol_VA11P','overlap_ratio_VA_6P_11P','poc_diff_6P_11P'
+          #  ,'ratio_vol_VolCont_ZoneA_xTicksContZone','ratio_vol_VolCont_ZoneB_xTicksContZone','ratio_vol_VolCont_ZoneC_xTicksContZone',
+            #           'ratio_delta_VolCont_ZoneA_xTicksContZone','ratio_delta_VolCont_ZoneB_xTicksContZone','ratio_delta_VolCont_ZoneC_xTicksContZone',
+        ]
+        # pca_columns = list(X.columns)
+        #pca_columns=[]
+        # Pour les mettre dans pca_columns
+        if pca_columns:
+            pca_columns = pca_columns
+            apply_pca_on_high_corr_features(X, pca_columns, corr_threshold=0.3, n_components=5,
+                                            plot_correlation=True, pca_prefix="pca_")
 
     # Chargement des paramètres
     vif_threshold = config.get('vif_threshold', 0)
@@ -7054,10 +7504,36 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     corr_threshold = config.get('corr_threshold', 0)
     mi_threshold = config.get('mi_threshold', 0)
 
+    # Calculer les min et max pour chaque colonne de X_non_sc (l'original non transformé)
+    min_values = X.min()
+    max_values = X.max()
+
+    # Fonction pour formater de manière sécurisée les valeurs
+    def format_range(min_val, max_val):
+        try:
+            # Essayer de formater comme nombre
+            return f"[{float(min_val):.2f}, {float(max_val):.2f}]"
+        except (ValueError, TypeError):
+            # Si ce n'est pas un nombre, retourner comme chaîne
+            return f"[{min_val}, {max_val}]"
+
+    # Créer une liste de chaînes formatées "[min, max]" pour chaque feature
+    ranges = [format_range(min_values[col], max_values[col]) for col in X.columns]
+
+    # # Vérifier les valeurs min et max spécifiquement pour cette colonne
+    # print("Type de deltaTimestampOpeningSession1min:", type(X['deltaTimestampOpeningSession1min'].iloc[0]))
+    # print("Min:", X['deltaTimestampOpeningSession1min'].min())
+    # print("Max:", X['deltaTimestampOpeningSession1min'].max())
+
 
     # 1) Création du DataFrame d'analyse basique
     analysis_df = pd.DataFrame()
     analysis_df['Feature'] = X.columns
+    if is_compute_vif:
+        analysis_df['Range_scaled'] = ranges
+    else:
+        analysis_df['Range'] = ranges
+
     analysis_df['NaN Count'] = X.isna().sum().values
     analysis_df['NaN%'] = (X.isna().mean() * 100).values
     analysis_df['Zeros%'] = ((X == 0).mean() * 100).values
@@ -7065,6 +7541,8 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
     analysis_df['non NaN'] = len(X) - analysis_df['NaN Count']
     analysis_df['non NaN%'] = 100 - analysis_df['NaN%']
 
+    # for col in X.columns:
+    #     print(f"🔍 {col}: Min={X[col].min()}, Max={X[col].max()}")
     has_status = False
     retained_columns = None
     vif_full = None
@@ -7134,8 +7612,7 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         analysis_df = pd.merge(analysis_df, power_results_subset, on='Feature', how='left')
 
         # Afficher les colonnes 'Feature' et 'powStat' pour vérification
-        print("\nAperçu de Feature et powStat:")
-        print(analysis_df[['Feature', 'powStat']].head(10))
+
 
         # 3.1) Corrélation
         merged_dfVIF_target = pd.concat([X_afterVIF, Y], axis=1)
@@ -7168,36 +7645,38 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
 
         # On peut décider d'un 'Status' final → Par exemple, on conserve toutes les colonnes
         # ou bien on applique un filtrage selon un critère global.
-        analysis_df['Status'] = True
-        has_status = True
+        #analysis_df['Status'] = True
         retained_columns = X_afterVIF.columns.tolist()
 
     else:
         # 4) Mode NO_FILTERING : aucun calcul
         print("✋ compute_feature_stat=False → Aucune statistique (CORR, MI, mRMR, Fisher) n'est calculée.")
-        analysis_df['Status'] = True  # tout est "conservé"
-        has_status = False
+        #analysis_df['Status'] = True  # tout est "conservé"
         retained_columns = None
 
     ############################################################################
     # Préparation des colonnes pour l'affichage
     ############################################################################
-    # Fixed section of the displaytNan_vifMiCorr_mRMR_Filtering function
+    # Fixed section of the compute_display_statistic function
     # Replace the section where headers are defined
 
     # Préparation des colonnes pour l'affichage
     ############################################################################
     # Préparation des colonnes pour l'affichage
-    base_columns = ['Feature']
-    if has_status:
-        base_columns.append('Status')
+    if is_compute_vif:
+        base_columns = ['Feature', 'Range_scaled']
+    else :
+        base_columns = ['Feature', 'Range']
+
+    # if has_status:
+    #     base_columns.append('Status')
 
     # Création de is_vif et is_stat
     if is_compute_vif:
         conserved_features = set(vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'])
         analysis_df['is_vif'] = analysis_df['Feature'].apply(lambda x: x in conserved_features)
         df_vif_true = analysis_df[analysis_df['is_vif'] == True]
-        print(df_vif_true[['Feature', 'is_vif']])
+        # print(df_vif_true[['Feature', 'is_vif']])
 
     if compute_feature_stat:
         analysis_df['is_stat'] = compute_feature_stat
@@ -7253,28 +7732,15 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
 
     # Instead of building headers piecewise again, just copy them directly:
     headers = analysis_df_columns.copy()
-
-    # # Construction des en-têtes à afficher (même ordre que analysis_df_columns)
-    # headers = base_columns.copy()  # => [Feature, Status, is_vif, is_stat]
-    # if power_column:
-    #     headers += power_column
-    # if correlation_columns:
-    #     headers += correlation_columns
-    # if mi_column:
-    #     headers += mi_column
-    # if mrmr_col:
-    #     headers += mrmr_col
-    # headers += fisher_cols
-    # headers += nan_columns
     # headers += vif_cols
 
     #####################
     # Définition des formats d'affichage
     #####################
     base_format = ["{:<56}"]  # Pour 'Feature'
-
-    if has_status:
-        base_format.append("{:<6}")  # Pour 'Status'
+    base_format.append("{:<15}")  # Range
+    # if has_status:
+    #     base_format.append("{:<6}")  # Pour 'Status'
 
     # Ensuite pour is_vif et is_stat
     if is_compute_vif:
@@ -7315,25 +7781,6 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
             + vif_formats
     )
 
-    row_count = 0
-    print(f"DataFrame shape before display loop: {analysis_df.shape}")
-    print("== Columns in analysis_df just before printing ==")
-    print(analysis_df.columns)
-
-    print("\n== A sample of the rows with the NaN stats ==")
-    print(
-        analysis_df[
-            [
-                "Feature",
-                "NaN Count",
-                "NaN%",
-                "Zeros%",
-                "NaN+Zeros%",
-                "non NaN",
-                "non NaN%",
-            ]
-        ].head(20)
-    )
     # Impression de l'entête (UNE SEULE FOIS)
     header_line = ''
     for header, fmt in zip(headers, full_format):
@@ -7467,6 +7914,8 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
 
     ############# debut du tri par groupe #################
 
+    ############# debut du tri par groupe #################
+
     def group_order(row):
         vif = row["is_vif"]  # True/False
         stat = row["is_stat"]  # True/False
@@ -7474,44 +7923,44 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         # Groupe 1 : non retenu VIF + ne valide pas stat
         if (not vif) and (not stat):
             return 1
-        # Groupe 2 : retenu VIF + ne valide pas stat
-        elif vif and (not stat):
-            return 2
-        # Groupe 3 : non retenu VIF + valide stat
+        # Groupe 2 : non retenu VIF + valide stat
         elif (not vif) and stat:
+            return 2
+        # Groupe 3 : retenu VIF + ne valide pas stat
+        elif vif and (not stat):
             return 3
         # Groupe 4 : retenu VIF + valide stat
         else:
             return 4
 
     if is_compute_vif:
+        # Appliquer group_order UNE SEULE FOIS
         analysis_df["group_order"] = analysis_df.apply(group_order, axis=1)
+
+        # Effectuer UN SEUL tri qui prend en compte les deux critères
+        if 'powStat' in analysis_df.columns:
+            analysis_df = analysis_df.sort_values(
+                by=["group_order", "powStat"],
+                ascending=[True, True]
+            )
+        else:
+            # Si powStat n'existe pas, trier uniquement par groupe
+            analysis_df = analysis_df.sort_values(by="group_order", ascending=True)
+    else:
+        # Si is_compute_vif est False, trier uniquement par powStat si disponible
+        if 'powStat' in analysis_df.columns:
+            analysis_df = analysis_df.sort_values(by='powStat', ascending=True)
 
     ############# fin du tri par groupe #################
 
-    ############# ordonner le df #################
-    if is_compute_vif:
-        analysis_df = analysis_df.sort_values(by="group_order", ascending=True)
+    # SUPPRIMER OU COMMENTER ces lignes qui recalculent et trient une deuxième fois
+    # if is_compute_vif:
+    #     analysis_df = analysis_df.sort_values(by="group_order", ascending=True)
 
+    # Vérification qu'elles existent
+    analysis_df_columns = [c for c in analysis_df_columns if c in analysis_df.columns]
+    analysis_df = analysis_df[analysis_df_columns]
 
-        # Par exemple, on les insère juste après Feature :
-
-
-
-        # Vérification qu'elles existent
-        analysis_df_columns = [c for c in analysis_df_columns if c in analysis_df.columns]
-        analysis_df = analysis_df[analysis_df_columns]
-
-        # Idem pour `headers` et `full_format` (ajouter deux formats "{}" par exemple)
-
-        headers.insert(1, "is_vif")
-        headers.insert(2, "is_stat")
-
-        base_format.insert(1, "{:>6}")  # ex. 5 caractères
-        base_format.insert(2, "{:>6}")
-
-    # --- Début de la boucle d'affichage ---
-    # --- Début de la boucle d'affichage ---
 
 
     for i in range(len(analysis_df)):
@@ -7522,40 +7971,57 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         # (1) Feature
         output_values.append(row['Feature'])
         output_colors.append('')
+        if is_compute_vif:
+            output_values.append(row['Range_scaled'])
+        else:
+            output_values.append(row['Range'])
+
+
+        output_colors.append('')
+
+        # 🔥 Vérification stricte AVANT impression de la ligne
+        # if len(output_values) != len(full_format):
+        #     print("🚨 ERREUR : Décalage entre output_values et full_format !")
+        #     print(f"➡ Nombre d'éléments dans output_values : {len(output_values)}")
+        #     print(f"➡ Nombre d'éléments attendus (full_format) : {len(full_format)}")
+        #     print(f"❌ Différence = {len(full_format) - len(output_values)}")
+        #     print(f"👉 Contenu de output_values : {output_values}\n")
+        #     print(f"👉 Contenu de full_format  : {full_format}\n")
+        #
+        #     raise ValueError("Décalage entre output_values et full_format. Vérifiez l'ajout des colonnes.")
 
         # (2) Status (si présent)
-        if has_status:
-            # True/False => on ne colorie pas ici
-            status_str = 'True' if bool(row['Status']) else 'False'
-            output_values.append(status_str)
-            output_colors.append('')
+        # if has_status:
+        #     # True/False => on ne colorie pas ici
+        #     status_str = 'True' if bool(row['Status']) else 'False'
+        #     output_values.append(status_str)
+        #     output_colors.append('')
 
-        # (3) is_vif → color
-        if is_compute_vif:
-            try:
-                # Convertir explicitement en bool
-                vif_val = bool(row['is_vif'])
-                if vif_val:
-                    output_values.append(f"{BLUE}True{RESET}")
-                else:
-                    output_values.append(f"{RED}False{RESET}")
-            except Exception as e:
-                # Fallback en cas d'erreur
-                output_values.append(f"{RED}False{RESET}")  # Valeur par défaut
-            output_colors.append('')  # pas besoin d'autre coloration par cell
+        ######################################################
+        # (3) Gérer la colonne 'is_vif' si elle existe
+        ######################################################
+        if 'is_vif' in analysis_df.columns:
 
-        # (4) is_stat → color
-        if compute_feature_stat:
-            try:
-                # Convertir explicitement en bool
-                stat_val = bool(row['is_stat'])
-                if stat_val:
-                    output_values.append(f"{BLUE}True{RESET}")
-                else:
-                    output_values.append(f"{RED}False{RESET}")
-            except Exception as e:
-                # Fallback en cas d'erreur
-                output_values.append(f"{RED}False{RESET}")  # Valeur par défaut
+            vif_val = bool(row['is_vif'])
+            if is_compute_vif:
+                # Couleur si True/False
+                output_values.append(f"{BLUE}True{RESET}" if vif_val else f"{RED}False{RESET}")
+            else:
+                # On affiche juste la valeur brute "True" / "False"
+                output_values.append(str(vif_val))
+
+            output_colors.append('')  # ou la couleur de fond, etc.
+
+        ######################################################
+        # (4) Gérer la colonne 'is_stat' si elle existe
+        ######################################################
+        if 'is_stat' in analysis_df.columns:
+            stat_val = bool(row['is_stat'])
+            if compute_feature_stat:
+                output_values.append(f"{BLUE}True{RESET}" if stat_val else f"{RED}False{RESET}")
+            else:
+                output_values.append(str(stat_val))
+
             output_colors.append('')
 
         # 4.0) Power stat
@@ -7565,9 +8031,10 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 power_format = f"{powStat:.2f}"
                 output_values.append(power_format)
                 output_colors.append(BLUE if powStat > powAnaly_threshold else '')
-            # else:
-            #     output_values.append('n.a')
-            #     output_colors.append('')
+            elif 'is_vif' in analysis_df.columns:
+
+                output_values.append('n.a')
+                output_colors.append('')
         
         # 4) Corrélation (lr_target et nlr_target), s'ils existent
         if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
@@ -7581,7 +8048,7 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 output_values.append(lr_formatted)
                 # Exemple : colorier en BLEU si la corrélation dépasse un seuil
                 output_colors.append(BLUE if abs(lr_val) > corr_threshold else '')
-            else:
+            elif 'is_vif' in analysis_df.columns:
                 output_values.append('n.a')
                 output_colors.append('')
 
@@ -7590,14 +8057,10 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 nlr_formatted = f"{nlr_val:.2f}"
                 output_values.append(nlr_formatted)
                 output_colors.append(BLUE if abs(nlr_val) > corr_threshold else '')
-            else:
+            elif 'is_vif' in analysis_df.columns:
                 output_values.append('n.a')
                 output_colors.append('')
-        # else:
-        #     # Si les colonnes lr_target et nlr_target n'existent pas du tout
-        #     for _ in range(2):  # on ajoute deux fois 'n.a'
-        #         output_values.append('n.a')
-        #         output_colors.append('')
+
 
         # 5) MI (Mutual Information)
         if 'mi' in analysis_df.columns:
@@ -7606,26 +8069,24 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 mi_formatted = f"{mi_val:.3f}"
                 output_values.append(mi_formatted)
                 output_colors.append(BLUE if mi_val > mi_threshold else '')
-            else:
+            elif 'is_vif' in analysis_df.columns:
                 output_values.append('n.a')
                 output_colors.append('')
-        # else:
-        #     # Si la colonne 'mi' n'existe pas du tout
-        #     output_values.append('n.a')
-        #     output_colors.append('')
+
 
         # 6) mrmr_score
         if 'mrmr_score' in analysis_df.columns:
-            mrmr_val = row.get('mrmr_score', 0.0)
-            mrmr_score_threshold = config.get('mrmr_score_threshold', -np.inf)
-            # Format 4 décimales
-            output_values.append(f"{mrmr_val:.4f}")
-            # Colorer en BLEU si la valeur > threshold
-            output_colors.append(BLUE if mrmr_val > mrmr_score_threshold else '')
-        # else:
-        #     # Colonne 'mrmr_score' inexistante
-        #     output_values.append('n.a')
-        #     output_colors.append('')
+            mrmr_val = row.get('mrmr_score', 'n.a')
+            if mrmr_val != 'n.a' and not pd.isna(mrmr_val):
+                # Format 4 décimales
+                output_values.append(f"{mrmr_val:.4f}")
+                # Colorer en BLEU si la valeur > threshold
+                mrmr_score_threshold = config.get('mrmr_score_threshold', -np.inf)
+                output_colors.append(BLUE if mrmr_val > mrmr_score_threshold else '')
+            elif 'is_vif' in analysis_df.columns:
+                output_values.append('n.a')
+                output_colors.append('')
+
 
         # ───────────────────────────────────────────────────────────
         # 7) Fisher columns : Fisher_Score et p-value
@@ -7639,9 +8100,9 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 fisher_score_threshold = config.get('fisher_score_threshold', 0.0)
                 # Coloration en BLEU si le fisher_score dépasse un seuil
                 output_colors.append(BLUE if fisher_score > fisher_score_threshold else '')
-            # else:
-            #     output_values.append('n.a')
-            #     output_colors.append('')
+            elif 'is_vif' in analysis_df.columns:
+                output_values.append('n.a')
+                output_colors.append('')
         if 'p-value' in analysis_df.columns:
             p_value = row.get('p-value', 'n.a')
             if p_value != 'n.a' and not pd.isna(p_value):
@@ -7649,9 +8110,9 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
                 # Colorer si p-value < 0.05, par exemple
                 p_value_threshold = config.get('fisher_pvalue_threshold', 0.05)
                 output_colors.append(BLUE if p_value <= p_value_threshold else '')
-            # else:
-            #     output_values.append('n.a')
-            #     output_colors.append('')
+            elif 'is_vif' in analysis_df.columns:
+                output_values.append('n.a')
+                output_colors.append('')
 
         # 8) Statistiques NaN + Zeros
         nan_count = row['NaN Count']
@@ -7714,9 +8175,9 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
 
         # 10) Couleur de ligne selon exclusions
         row_color = ''
-        # Si la feature est Status = False
-        if has_status and not row['Status']:
-            row_color = RED
+        # # Si la feature est Status = False
+        # if has_status and not row['Status']:
+        #     row_color = RED
 
         feature_name = row['Feature']
         if feature_name in excluded_columns_principal:
@@ -7745,7 +8206,12 @@ def displaytNan_vifMiCorr_mRMR_Filtering(X=None, Y=None, name="Dataset",
         # # Retourne la liste des colonnes retenues si un filtrage a été appliqué
     # if auto_filtering_mode in [AutoFilteringOptions.ENABLE_VIF_CORR_MI, AutoFilteringOptions.ENABLE_MRMR,
     #                            AutoFilteringOptions.ENABLE_FISHER]:
-
+    # Impression de l'entête (UNE SEULE FOIS)
+    header_line = ''
+    for header, fmt in zip(headers, full_format):
+        header_line += fmt.format(header) + ' '
+    print("-" * len(header_line))
+    print(header_line.strip())
     if compute_feature_stat ==True:
         return retained_columns
 
@@ -7812,16 +8278,25 @@ def check_value_ranges(X_train, X_test):
 def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
     """
     Applique la normalisation sur les données d'entraînement et de test.
+    Compatible avec DataFrame et numpy array.
 
     Args:
-        X_train (pd.DataFrame): Données d'entraînement à normaliser
-        X_test (pd.DataFrame): Données de test à normaliser
-        config (dict): Configuration contenant le choix du scaler
+        X_train: Données d'entraînement à normaliser (DataFrame ou array)
+        X_test: Données de test à normaliser (DataFrame ou array)
         save_path: Chemin optionnel pour sauvegarder les paramètres du scaler
+        chosen_scaler: Type de scaler à utiliser
 
     Returns:
         tuple: (X_train_scaled, X_test_scaled, scaler, scaler_params)
     """
+    # Détection du type d'entrée
+    is_dataframe = isinstance(X_train, pd.DataFrame)
+
+    # Si entrée DataFrame, sauvegarder les colonnes et les index
+    if is_dataframe:
+        columns = X_train.columns
+        train_index = X_train.index
+        test_index = X_test.index
 
     # Si le scaling est désactivé
     if chosen_scaler == scalerChoice.SCALER_DISABLE:
@@ -7842,60 +8317,102 @@ def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
         scaler_name = "MaxAbsScaler"
     else:
         exit(98)
-    # Fit sur train et transform sur les deux
-    X_train_scaled = pd.DataFrame(
-        scaler.fit_transform(X_train),
-        columns=X_train.columns,
-        index=X_train.index
-    )
 
-    X_test_scaled = pd.DataFrame(
-        scaler.transform(X_test),
-        columns=X_test.columns,
-        index=X_test.index
-    )
+    # Convertir en numpy pour le scaling si nécessaire
+    X_train_np = X_train.values if is_dataframe else X_train
+    X_test_np = X_test.values if is_dataframe else X_test
 
-    # Stockage des paramètres selon le type de scaler
-    scaler_params = {
-        'scaler_type': scaler_name,
-        'features': X_train.columns.tolist()
-    }
+    # Fit sur train et transform
+    X_train_scaled_np = scaler.fit_transform(X_train_np)
+    X_test_scaled_np = scaler.transform(X_test_np)
 
-    if chosen_scaler == scalerChoice.SCALER_ROBUST:
-        scaler_params.update({
-            'center': dict(zip(X_train.columns, scaler.center_)),
-            'scale': dict(zip(X_train.columns, scaler.scale_))
-        })
-        print("\nParamètres du RobustScaler:")
-        print("Médianes:", scaler_params['center'])
-        print("IQRs:", scaler_params['scale'])
-    elif chosen_scaler == scalerChoice.SCALER_MINMAX:
-        scaler_params.update({
-            'min': dict(zip(X_train.columns, scaler.min_)),
-            'scale': dict(zip(X_train.columns, scaler.scale_))
-        })
-        print("\nParamètres du MinMaxScaler:")
-        print("Minimums:", scaler_params['min'])
-        print("Échelles:", scaler_params['scale'])
-    elif chosen_scaler == scalerChoice.SCALER_MAXABS:  # Ajout de cette condition
-        scaler_params.update({
-            'scale': dict(zip(X_train.columns, scaler.scale_)),
-            'max_abs': dict(zip(X_train.columns, scaler.max_abs_))
-        })
-        print("\nParamètres du MaxAbsScaler:")
-        print("Valeurs max absolues:", scaler_params['max_abs'])
-        print("Échelles:", scaler_params['scale'])
-    else:  # Pour StandardScaler ou autres
-        scaler_params.update({
-            'mean': dict(zip(X_train.columns, scaler.mean_)),
-            'scale': dict(zip(X_train.columns, scaler.scale_))
-        })
-        print("\nParamètres du StandardScaler:")
-        print("Moyennes:", scaler_params['mean'])
-        print("Écarts-types:", scaler_params['scale'])
+    # Reconvertir en DataFrame si l'entrée était un DataFrame
+    if is_dataframe:
+        X_train_scaled = pd.DataFrame(
+            X_train_scaled_np,
+            columns=columns,
+            index=train_index
+        )
+
+        X_test_scaled = pd.DataFrame(
+            X_test_scaled_np,
+            columns=columns,
+            index=test_index
+        )
+
+        # Stockage des paramètres avec noms de colonnes
+        scaler_params = {
+            'scaler_type': scaler_name,
+            'features': columns.tolist()
+        }
+
+        # Enregistrement des paramètres spécifiques à chaque scaler
+        if chosen_scaler == scalerChoice.SCALER_ROBUST:
+            scaler_params.update({
+                'center': dict(zip(columns, scaler.center_)),
+                'scale': dict(zip(columns, scaler.scale_))
+            })
+            print("\nParamètres du RobustScaler:")
+            print("Médianes:", scaler_params['center'])
+            print("IQRs:", scaler_params['scale'])
+        elif chosen_scaler == scalerChoice.SCALER_MINMAX:
+            scaler_params.update({
+                'min': dict(zip(columns, scaler.min_)),
+                'scale': dict(zip(columns, scaler.scale_))
+            })
+            print("\nParamètres du MinMaxScaler:")
+            print("Minimums:", scaler_params['min'])
+            print("Échelles:", scaler_params['scale'])
+        elif chosen_scaler == scalerChoice.SCALER_MAXABS:
+            scaler_params.update({
+                'scale': dict(zip(columns, scaler.scale_)),
+                'max_abs': dict(zip(columns, scaler.max_abs_))
+            })
+            print("\nParamètres du MaxAbsScaler:")
+            print("Valeurs max absolues:", scaler_params['max_abs'])
+            print("Échelles:", scaler_params['scale'])
+        else:  # Pour StandardScaler ou autres
+            scaler_params.update({
+                'mean': dict(zip(columns, scaler.mean_)),
+                'scale': dict(zip(columns, scaler.scale_))
+            })
+            print("\nParamètres du StandardScaler:")
+            print("Moyennes:", scaler_params['mean'])
+            print("Écarts-types:", scaler_params['scale'])
+    else:
+        # Si l'entrée était un array, retourner des arrays et des paramètres simplifiés
+        X_train_scaled = X_train_scaled_np
+        X_test_scaled = X_test_scaled_np
+
+        scaler_params = {
+            'scaler_type': scaler_name
+        }
+
+        # Pour les arrays, on ne peut pas associer les paramètres à des noms de colonnes
+        # donc on stocke juste les valeurs brutes
+        if chosen_scaler == scalerChoice.SCALER_ROBUST:
+            scaler_params.update({
+                'center': scaler.center_.tolist(),
+                'scale': scaler.scale_.tolist()
+            })
+        elif chosen_scaler == scalerChoice.SCALER_MINMAX:
+            scaler_params.update({
+                'min': scaler.min_.tolist(),
+                'scale': scaler.scale_.tolist()
+            })
+        elif chosen_scaler == scalerChoice.SCALER_MAXABS:
+            scaler_params.update({
+                'scale': scaler.scale_.tolist(),
+                'max_abs': scaler.max_abs_.tolist()
+            })
+        else:  # Pour StandardScaler ou autres
+            scaler_params.update({
+                'mean': scaler.mean_.tolist(),
+                'scale': scaler.scale_.tolist()
+            })
 
     # Sauvegarde des paramètres si un chemin est fourni
-    if save_path is not None:
+    if save_path is not None and is_dataframe:  # Sauvegarder uniquement si on a des noms de colonnes
         import os
         import json
 
@@ -8670,7 +9187,7 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
     class1_raw_data_val_by_fold = to_numpy_if_needed(cv_results['class1_raw_data_val_by_fold'])
     winrate_raw_data_val_by_fold = to_numpy_if_needed(cv_results['winrate_raw_data_val_by_fold'])
     val_trades_samples_perct = to_numpy_if_needed(cv_results['val_trades_samples_perct'])
-    val_bestIdx_custom_metric_pnl = to_numpy_if_needed(cv_results['val_bestIdx_custom_metric_pnl'])
+    val_bestVal_custom_metric_pnl = to_numpy_if_needed(cv_results['val_bestVal_custom_metric_pnl'])
 
 
     winrates_train_by_fold = to_numpy_if_needed(cv_results['winrates_train_by_fold'])
@@ -8684,7 +9201,7 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
     class1_raw_data_train_by_fold = to_numpy_if_needed(cv_results['class1_raw_data_train_by_fold'])
     winrate_raw_data_train_by_fold = to_numpy_if_needed(cv_results['winrate_raw_data_train_by_fold'])
     train_trades_samples_perct = to_numpy_if_needed(cv_results['train_trades_samples_perct'])
-    train_bestIdx_custom_metric_pnl = to_numpy_if_needed(cv_results['train_bestIdx_custom_metric_pnl'])
+    train_bestVal_custom_metric_pnl = to_numpy_if_needed(cv_results['train_bestVal_custom_metric_pnl'])
 
 
     perctDiff_winrateRatio_train_val = to_numpy_if_needed(cv_results['perctDiff_winrateRatio_train_val'])
@@ -8736,7 +9253,7 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'class1_raw_data_val_by_fold': class1_raw_data_val_by_fold,
         'winrate_raw_data_val_by_fold': winrate_raw_data_val_by_fold,
         'val_trades_samples_perct': val_trades_samples_perct,
-        'val_bestIdx_custom_metric_pnl':val_bestIdx_custom_metric_pnl,
+        'val_bestVal_custom_metric_pnl':val_bestVal_custom_metric_pnl,
 
         'winrates_train_by_fold': winrates_train_by_fold,
         'nb_trades_train_by_fold': nb_trades_train_by_fold,
@@ -8745,7 +9262,7 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'fp_train_by_fold': fp_train_by_fold,
         'scores_train_by_fold': scores_train_by_fold,
         'train_pred_proba_log_odds': train_pred_proba_log_odds,
-        'train_bestIdx_custom_metric_pnl': train_bestIdx_custom_metric_pnl,
+        'train_bestVal_custom_metric_pnl': train_bestVal_custom_metric_pnl,
 
         'class0_raw_data_train_by_fold': class0_raw_data_train_by_fold,
         'class1_raw_data_train_by_fold': class1_raw_data_train_by_fold,
@@ -8873,6 +9390,92 @@ def process_reg_slope_replacement(df, session_starts, windows_list, reg_feature_
 
     return df_results
 
+
+import numpy as np
+from numba import jit
+
+import numpy as np
+
+
+@jit(nopython=True)
+def calculate_slopes_and_r2_numba(close_values, session_starts, window):
+    """
+    Version optimisée qui calcule les statistiques et stocke les résultats
+    aux indices window, window+1, etc.
+    """
+    n = len(close_values)
+    slopes = np.full(n, np.nan)
+    r2s = np.full(n, np.nan)
+    stds = np.full(n, np.nan)
+
+    # Pré-calcul des constantes x (1-based)
+    x = np.arange(1, window + 1)
+    sumX = np.sum(x)
+    sumXX = np.sum(x ** 2)
+    n_float = float(window)
+
+    # Pour chaque fenêtre possible de longueur window
+    for start_idx in range(n - window + 1):
+        end_idx = start_idx + window - 1
+        result_idx = start_idx + window  # Écrire le résultat à start_idx + window
+
+        # Ne pas calculer si result_idx dépasse la longueur du tableau
+        if result_idx >= n:
+            continue
+
+        # Vérifier s'il y a un début de session autre qu'au début de la fenêtre
+        has_internal_session_start = False
+        for i in range(start_idx + 1, end_idx + 1):
+            if session_starts[i]:
+                has_internal_session_start = True
+                break
+
+        if has_internal_session_start:
+            continue
+
+        # Extraire les valeurs y pour la fenêtre
+        y = close_values[start_idx:end_idx + 1]
+
+        # Calcul des sommes
+        sumY = np.sum(y)
+        sumXY = np.sum(x * y)
+
+        # Calcul de la pente et de l'ordonnée à l'origine
+        denominator = n_float * sumXX - sumX * sumX
+        if denominator == 0:
+            continue
+
+        slope = (n_float * sumXY - sumX * sumY) / denominator
+        if slope > 1.0:
+            slope = 1.0
+        elif slope < -1.0:
+            slope = -1.0
+
+        a = (sumY - slope * sumX) / n_float
+
+        # Calcul de l'écart-type
+        sumSqDiff = 0.0
+        for j in range(window):
+            fitted_val = a + slope * x[j]
+            diff = y[j] - fitted_val
+            sumSqDiff += diff * diff
+
+        if window > 1:
+            std_dev = np.sqrt(sumSqDiff / n_float)
+        else:
+            std_dev = 0.0
+
+        # Calcul du R²
+        y_mean = sumY / n_float
+        ss_total = np.sum((y - y_mean) ** 2)
+        r2 = 1.0 - (sumSqDiff / ss_total) if ss_total > 0 else 0.0
+
+        # Assigner les valeurs à l'indice result_idx
+        slopes[result_idx] = slope
+        r2s[result_idx] = r2
+        stds[result_idx] = std_dev
+
+    return slopes, r2s, stds
 
 def check_lower_higher_bound_consistency(X_train, X_test, max_values_to_show=5):
     """
@@ -9046,3 +9649,94 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
                          f"X_test ({len(X_test_result)}) et y_test_label ({len(y_test_label_result)})")
 
     return X_train_result, X_test_result, y_train_label_result, y_test_label_result, scaler, scaler_params
+def calculate_atr(df, period=6, avg_type='sma', fill_value=0):
+    """
+    Calcule l'ATR (Average True Range) par session, en réinitialisant à chaque
+    début de session sans chevaucher la session précédente. Les premières barres
+    (< period) de chaque session sont forcées à fill_value.
+
+    Paramètres
+    ----------
+    df : DataFrame
+        Doit contenir au moins les colonnes :
+          - 'high'
+          - 'low'
+          - 'close'
+          - 'session_starts' (booléen) : True pour la 1ère bougie d'une session
+    period : int
+        Fenêtre de calcul de l’ATR (défaut 6).
+    avg_type : str
+        Type de moyenne pour lisser l'ATR :
+          - 'sma' (Simple Moving Average)
+          - 'ema' (Exponential Moving Average)
+          - 'wma' (Weighted Moving Average)
+    fill_value : float
+        Valeur utilisée lorsque l'ATR n'est pas calculable (début de session).
+
+    Retourne
+    -------
+    pandas.Series
+        Série ATR alignée sur l'index de df, sans chevauchement entre sessions.
+        Les premières barres de chaque session (moins de `period`) sont à fill_value.
+    """
+    df = df.copy()  # Pour éviter de modifier l'original
+
+    # Détection des débuts de session
+    session_starts = (df['SessionStartEnd'] == 10).values
+
+    # Ajout dans le DataFrame si nécessaire
+    df['session_starts'] = session_starts
+
+    # Création d’un identifiant unique pour chaque session
+    df['session_id'] = df['session_starts'].cumsum()
+
+    # Calculer le True Range (TR) pour chaque barre
+    high_low = df['high'] - df['low']
+    high_close_prev = (df['high'] - df['close'].shift(1)).abs()
+    low_close_prev  = (df['low']  - df['close'].shift(1)).abs()
+
+    # TR est le max des trois
+    df['tr'] = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+
+    # Préparer une colonne ATR que l'on remplira session par session
+    df['atr'] = np.nan
+
+    # Parcourir chaque session pour calculer un ATR local sans chevauchement
+    for sid, grp in df.groupby('session_id', sort=False):
+        # Indices locaux de cette session
+        indices = grp.index
+
+        # Calcul du lissage selon avg_type
+        if avg_type.lower() == 'sma':
+            # Moyenne mobile simple
+            atr_values = grp['tr'].rolling(window=period, min_periods=1).mean()
+
+        elif avg_type.lower() == 'wma':
+            # Moyenne mobile pondérée
+            weights = np.arange(1, period + 1)
+            atr_values = grp['tr'].rolling(window=period, min_periods=1).apply(
+                lambda x: np.sum(weights * x) / weights.sum(), raw=True
+            )
+
+        elif avg_type.lower() == 'ema':
+            # Moyenne mobile exponentielle
+            # ewm n'a pas de paramètre "min_periods=1", mais la première barre aura quand même
+            # une valeur identique à TR lui-même. On va ensuite forcer manuellement
+            # les (period-1) premières barres à fill_value.
+            atr_values = grp['tr'].ewm(span=period, adjust=False).mean()
+
+        else:
+            raise ValueError("Type de moyenne non reconnu. Options: 'sma', 'ema', 'wma'.")
+
+        # Barres de la session (de 0 à n-1)
+        bar_idx_in_session = np.arange(len(grp))
+        # Forcer les premières barres (< period) à fill_value
+        atr_values.iloc[bar_idx_in_session < (period - 1)] = fill_value
+
+        # Insérer dans la DataFrame finale
+        df.loc[indices, 'atr'] = atr_values
+
+    # Éventuellement forcer tout NaN résiduel à fill_value
+    df['atr'] = df['atr'].fillna(fill_value)
+
+    return df['atr']

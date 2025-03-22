@@ -29,6 +29,7 @@ class modelType (Enum):
     LGBM=1
     CATBOOST=2
     RF=3
+    SVC=4
 
 class optuna_doubleMetrics(Enum):
     DISABLE = 0
@@ -1126,7 +1127,7 @@ def compile_fold_stats(fold_num, best_iteration, train_pred_proba_log_odds, trai
         'train_winrate': winrate_train,
         'train_trades': tp_fp_sum_train,
         'train_samples': tp_fp_tn_fn_sum_train,
-        'train_bestIdx_custom_metric_pnl': train_best,
+        'train_bestVal_custom_metric_pnl': train_best,
         'train_size': len(train_pos) if train_pos is not None else None,
         'train_trades_samples_perct': train_trades_samples_perct,
         'val_pred_proba_log_odds': val_pred_proba_log_odds,
@@ -1134,7 +1135,7 @@ def compile_fold_stats(fold_num, best_iteration, train_pred_proba_log_odds, trai
         'val_winrate': winrate_val,
         'val_trades': tp_fp_sum_val,
         'val_samples': tp_fp_tn_fn_sum_val,
-        'val_bestIdx_custom_metric_pnl': val_best,
+        'val_bestVal_custom_metric_pnl': val_best,
         'val_size': len(val_pos) if val_pos is not None else None,
         'val_trades_samples_perct': val_trades_samples_perct,
         'perctDiff_winrateRatio_train_val': ratio_difference,

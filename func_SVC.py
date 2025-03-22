@@ -1,9 +1,7 @@
-import lightgbm as lgb
 
 from definition import *
 
-
-def train_and_evaluate_randomforest_model(
+def train_and_evaluate_svc_model(
         X_train_cv=None,
         X_val_cv=None,
         y_train_cv=None,
@@ -20,7 +18,7 @@ def train_and_evaluate_randomforest_model(
         val_pos=None,
         log_evaluation=0,
 ):
-    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.svm import SVC
     import numpy as np
     import time
 
@@ -33,20 +31,43 @@ def train_and_evaluate_randomforest_model(
     weights_time = time.time() - start_time_weights
     #print(f"Temps de calcul des poids: {weights_time:.4f} secondes")
 
+    # Assurer que les paramètres par défaut sont définis
+    if params is None:
+        params = {}
+
+    # Récupérer l'option de probabilité depuis la configuration
+    svc_probability = config.get('svc_probability', False)
+    params['probability'] = svc_probability
+
+    # Récupérer le type de noyau depuis la configuration
+    svc_kernel = config.get('svc_kernel', 'rbf')
+    params['kernel'] = svc_kernel
+
     # Mesure du temps d'entraînement
     start_time_train = time.time()
-    # Entraînement du modèle RandomForest
-    current_model = RandomForestClassifier(**params)
+    # Entraînement du modèle SVC
+    current_model = SVC(**params)
     current_model.fit(X_train_cv, y_train_cv, sample_weight=sample_weights_train)
     train_time = time.time() - start_time_train
-    #print(f"Temps d'entraînement du modèle: {train_time:.4f} secondes")
+    print(f"Temps d'entraînement du modèle: {train_time:.4f} secondes")
 
     # Prédictions et métriques pour la validation
     start_time_val_pred = time.time()
-    val_pred_proba = current_model.predict_proba(X_val_cv)[:, 1]
-    val_pred_proba_log_odds = np.log(val_pred_proba / (1 - val_pred_proba + 1e-10))
-    threshold = model_weight_optuna.get('threshold', 0.5)
-    val_pred = (val_pred_proba >= threshold).astype(int)
+
+    # Selon l'option de probabilité, récupérer les prédictions différemment
+    if svc_probability:
+        val_pred_proba = current_model.predict_proba(X_val_cv)[:, 1]
+        threshold = model_weight_optuna.get('threshold', 0.5)
+        val_pred = (val_pred_proba >= threshold).astype(int)
+        val_pred_proba_log_odds = np.log(val_pred_proba / (1 - val_pred_proba + 1e-10))
+    else:
+        val_pred = current_model.predict(X_val_cv)
+        # Utiliser la distance à l'hyperplan (decision_function) comme proxy pour la probabilité
+        decision_values = current_model.decision_function(X_val_cv)
+        # Normaliser les valeurs de décision pour une approximation de probabilité
+        val_pred_proba = 1 / (1 + np.exp(-decision_values))
+        val_pred_proba_log_odds = decision_values
+
     val_pred_time = time.time() - start_time_val_pred
     #print(f"Temps de prédiction sur validation: {val_pred_time:.4f} secondes")
 
@@ -59,9 +80,21 @@ def train_and_evaluate_randomforest_model(
 
     # Mesure du temps pour les prédictions sur l'ensemble d'entraînement
     start_time_train_pred = time.time()
-    y_train_predProba = current_model.predict_proba(X_train_cv)[:, 1]
-    train_pred_proba_log_odds = np.log(y_train_predProba / (1 - y_train_predProba + 1e-10))
-    train_pred = (y_train_predProba >= threshold).astype(int)
+
+    # Selon l'option de probabilité, récupérer les prédictions différemment
+    if svc_probability:
+        y_train_predProba = current_model.predict_proba(X_train_cv)[:, 1]
+        threshold = model_weight_optuna.get('threshold', 0.5)
+        train_pred = (y_train_predProba >= threshold).astype(int)
+        train_pred_proba_log_odds = np.log(y_train_predProba / (1 - y_train_predProba + 1e-10))
+    else:
+        train_pred = current_model.predict(X_train_cv)
+        # Utiliser la distance à l'hyperplan (decision_function) comme proxy pour la probabilité
+        decision_values = current_model.decision_function(X_train_cv)
+        # Normaliser les valeurs de décision pour une approximation de probabilité
+        y_train_predProba = 1 / (1 + np.exp(-decision_values))
+        train_pred_proba_log_odds = decision_values
+
     train_pred_time = time.time() - start_time_train_pred
     #print(f"Temps de prédiction sur entraînement: {train_pred_time:.4f} secondes")
 
@@ -148,9 +181,9 @@ def train_and_evaluate_randomforest_model(
                 f"Attention: {len(negative_tp_pnls_train)} vrais positifs dans les données d'entraînement ont un PNL ≤ 0, ce qui semble incohérent")
             print(f"Valeurs PNL incohérentes pour les TP: {negative_tp_pnls_train}")
     train_pnl_time = time.time() - start_time_train_pnl
-    print(f"Temps de calcul du PNL d'entraînement: {train_pnl_time:.4f} secondes")
+    #print(f"Temps de calcul du PNL d'entraînement: {train_pnl_time:.4f} secondes")
 
-    # Best iteration n'a pas de sens pour RandomForest, mais on le garde pour la cohérence
+    # Best iteration n'a pas de sens pour SVC, mais on le garde pour la cohérence
     best_iteration = None
     best_idx = None
 
@@ -201,17 +234,27 @@ def train_and_evaluate_randomforest_model(
     if fold_stats_current is not None:
         fold_stats.update(fold_stats_current)
     metrics_build_time = time.time() - start_time_metrics_build
-    print(f"Temps de construction des métriques: {metrics_build_time:.4f} secondes")
+    #print(f"Temps de construction des métriques: {metrics_build_time:.4f} secondes")
 
     # Mesure du temps total
     total_time = time.time() - start_time_total
-    print(f"Temps total d'exécution de la fonction: {total_time:.4f} secondes")
+    #print(f"Temps total d'exécution de la fonction: {total_time:.4f} secondes")
+
+    # Extraire les vecteurs de support (spécifique à SVC)
+    n_support = current_model.n_support_
+    support_vectors_info = {
+        'n_support_per_class': n_support,
+        'total_support_vectors': sum(n_support),
+        'support_vector_ratio': sum(n_support) / len(X_train_cv)
+    }
 
     # Informations de debug avec les temps d'exécution
     debug_info = {
         'model_params': params,
-        'threshold': threshold,
-        'feature_importances': dict(zip(range(X_train_cv.shape[1]), current_model.feature_importances_)),
+        'kernel': svc_kernel,
+        'threshold': model_weight_optuna.get('threshold', 0.5) if svc_probability else None,
+        'using_probabilities': svc_probability,
+        'support_vectors_info': support_vectors_info,
         'execution_times': {
             'total': total_time,
             'weights_calculation': weights_time,
@@ -233,7 +276,7 @@ def train_and_evaluate_randomforest_model(
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,
         'fold_stats': fold_stats,
-        'evals_result': None,  # RandomForest n'a pas d'evals_result comme LightGBM
+        'evals_result': None,
         'best_iteration': best_iteration,
         'val_score_bestIdx': best_idx,
         'debug_info': debug_info,
