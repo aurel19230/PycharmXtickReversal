@@ -7,7 +7,7 @@ import scipy.stats as stats
 from statsmodels.stats.power import TTestIndPower
 from sklearn.feature_selection import f_classif  # Test F (ANOVA)
 
-
+from func_standard import ( calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio)
 from definition import *
 def plot_distributions_short_long_grid(df, features, class_col='class'):
     """
@@ -809,122 +809,6 @@ def run_single_simulation_auto(group0, group1, sample_fraction, alpha):
 from scipy.stats import ttest_ind, mannwhitneyu, normaltest, levene
 from statsmodels.stats.power import TTestIndPower
 
-def calculate_statistical_power_job(X, y, feature_list=None,
-                                    alpha=0.05, target_power=0.8, n_simulations_monte=20000,
-                                    sample_fraction=0.8, verbose=True,
-                                    method_powerAnaly='both', n_jobs=-1):
-    """
-    Calcule la puissance statistique analytique et/ou par simulation Monte Carlo.
-    """
-
-    valid_methods = ['both', 'analytical', 'montecarlo']
-    if method_powerAnaly not in valid_methods:
-        raise ValueError(f"La méthode '{method_powerAnaly}' n'est pas valide. Options: {', '.join(valid_methods)}")
-
-    if feature_list is None:
-        feature_list = X.columns.tolist()
-    else:
-        feature_list = [f for f in feature_list if f in X.columns]
-
-    constant_features = [col for col in feature_list if X[col].nunique() <= 1]
-    if constant_features and verbose:
-        print(f"⚠️ {len(constant_features)} features constantes retirées: {constant_features}")
-
-    feature_list = [f for f in feature_list if f not in constant_features]
-
-    results = []
-    power_analysis = TTestIndPower()
-    total_features = len(feature_list)
-
-    for i, feature in enumerate(feature_list):
-        if verbose and i % max(1, total_features // 10) == 0:
-            print(f"Traitement: {i + 1}/{total_features} features ({((i + 1) / total_features) * 100:.1f}%)")
-
-        X_feature = X[feature].copy()
-        mask = X_feature.notna() & y.notna()
-        X_filtered = X_feature[mask].values
-        y_filtered = y[mask].values
-
-        group0 = X_filtered[y_filtered == 0]
-        group1 = X_filtered[y_filtered == 1]
-
-        if len(group0) <= 1 or len(group1) <= 1:
-            continue
-
-        mean_diff = np.mean(group1) - np.mean(group0)
-        pooled_std = np.sqrt(((len(group0) - 1) * np.std(group0, ddof=1) ** 2 +
-                              (len(group1) - 1) * np.std(group1, ddof=1) ** 2) /
-                             (len(group0) + len(group1) - 2))
-
-        if pooled_std == 0:
-            continue
-
-        effect_size = mean_diff / pooled_std
-
-        # **🚀 Nouvelle logique : Vérification de la normalité et des variances**
-        if len(group0) > 20 and len(group1) > 20:
-            norm_test_0 = normaltest(group0).pvalue
-            norm_test_1 = normaltest(group1).pvalue
-            var_test_p = levene(group0, group1).pvalue  # Vérification de la variance
-
-            if norm_test_0 > 0.05 and norm_test_1 > 0.05:
-                print("# **Les deux distributions sont normales**");
-                t_stat, p_value = ttest_ind(group0, group1, equal_var=(var_test_p > 0.05))
-                power_analytical = power_analysis.power(
-                    effect_size=abs(effect_size),
-                    nobs1=len(group0),
-                    alpha=alpha,
-                    ratio=len(group1) / len(group0)
-                )
-            else:
-                # **Au moins une distribution est non normale → Mann-Whitney U**
-                print("# **Au moins une distribution est non normale → Mann-Whitney U****");
-
-                t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
-                power_analytical = None  # ⚠️ Pas de formule analytique pour Mann-Whitney
-        else:
-            # **Petit échantillon → Mann-Whitney par défaut**
-            print(" # **Petit échantillon → Mann-Whitney par défaut**");
-            t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
-            power_analytical = None  # ⚠️ Pas de formule analytique pour Mann-Whitney
-
-        required_n = None
-        if power_analytical is not None:
-            try:
-                required_n = power_analysis.solve_power(
-                    effect_size=abs(effect_size),
-                    power=target_power,
-                    alpha=alpha,
-                    ratio=len(group1) / len(group0)
-                )
-            except (ValueError, RuntimeError):
-                required_n = np.nan
-
-        # **🚀 Monte Carlo Simulation**
-        power_monte_carlo = None
-        if method_powerAnaly in ['both', 'montecarlo']:
-            results_parallel = Parallel(n_jobs=n_jobs)(
-                delayed(run_single_simulation_auto)(group0, group1, sample_fraction, alpha)
-                for _ in range(n_simulations_monte)
-            )
-            power_monte_carlo = np.mean(results_parallel)
-
-        # **🚀 Stockage des résultats**
-        result_row = {
-            'Feature': feature,
-            'Sample_Size': len(X_filtered),
-            'Group0_Size': len(group0),
-            'Group1_Size': len(group1),
-            'Effect_Size': effect_size,
-            'P_Value': p_value,
-            'Required_N': np.ceil(required_n) if required_n is not None else np.nan,
-            'Power_Analytical': power_analytical,
-            'Power_MonteCarlo': power_monte_carlo,
-        }
-
-        results.append(result_row)
-
-    return pd.DataFrame(results)
 
 
 
@@ -1699,3 +1583,1400 @@ def compute_mfi(
     df['mfi'] = np.clip(df['mfi'], 0, 100)
 
     return df['mfi'].to_numpy()
+
+
+import pandas as pd
+import numpy as np
+
+
+def analyze_indicator_winrates(df, indicator_list, class_column='class_binaire', no_trade_value=99):
+    """
+    Analyse le taux de réussite (winrate) pour chaque indicateur de la liste lorsqu'il est actif.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame contenant les indicateurs et la colonne de classification
+    indicator_list : list
+        Liste des noms des indicateurs à analyser
+    class_column : str, default='class_binaire'
+        Nom de la colonne contenant la classification (0=échec, 1=réussite, no_trade_value=pas de trade)
+    no_trade_value : int, default=99
+        Valeur indiquant l'absence de trade dans la colonne de classification
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame contenant les résultats d'analyse pour chaque indicateur
+    """
+    # Filtrer le dataframe pour ne conserver que les lignes où un trade a été effectué
+    df_trades = df[df[class_column] != no_trade_value]
+
+    # Calculer le winrate global (sans activation des indicateurs)
+    total_trades = len(df_trades)
+    successful_trades = len(df_trades[df_trades[class_column] == 1])
+    global_winrate = successful_trades / total_trades * 100 if total_trades > 0 else 0
+
+    print(f"Winrate global (tous trades confondus): {global_winrate:.2f}% ({successful_trades}/{total_trades})")
+    print("\nWinrate par indicateur activé (valeur = 1):")
+    print("-" * 95)
+    print(
+        f"{'Indicateur':<30} {'Winrate':<10} {'Trades réussis':<15} {'Trades totaux':<15} {'Diff/Global':<15} {'% des trades':<15}")
+    print("-" * 95)
+
+    # Calculer le winrate pour chaque indicateur lorsqu'il est activé
+    results = []
+    for indicator in indicator_list:
+        # Filtrer pour les cas où l'indicateur est activé (= 1)
+        df_indicator_active = df_trades[df_trades[indicator] == 1]
+
+        # Compter les trades et les succès
+        indicator_trades = len(df_indicator_active)
+        indicator_success = len(df_indicator_active[df_indicator_active[class_column] == 1])
+
+        # Calculer le winrate de l'indicateur
+        indicator_winrate = indicator_success / indicator_trades * 100 if indicator_trades > 0 else 0
+
+        # Calculer la différence avec le winrate global
+        winrate_diff = indicator_winrate - global_winrate
+
+        # Calculer le pourcentage de trades pris par rapport au total
+        trades_percentage = indicator_trades / total_trades * 100 if total_trades > 0 else 0
+
+        # Stocker les résultats
+        results.append({
+            'Indicateur': indicator,
+            'Winrate': indicator_winrate,
+            'Trades_réussis': indicator_success,
+            'Trades_totaux': indicator_trades,
+            'Diff_Global': winrate_diff,
+            'Pourcentage_Trades': trades_percentage
+        })
+
+        # Afficher les résultats
+        print(
+            f"{indicator:<30} {indicator_winrate:.2f}% {indicator_success:<15} {indicator_trades:<15} {winrate_diff:+.2f}% {trades_percentage:.2f}%")
+
+    # Convertir les résultats en dataframe et trier par winrate décroissant
+    results_df = pd.DataFrame(results)
+    results_df = results_df.sort_values('Winrate', ascending=False)
+
+    print("\nIndicateurs classés par winrate décroissant:")
+    print("-" * 95)
+    for _, row in results_df.iterrows():
+        print(
+            f"{row['Indicateur']:<30} {row['Winrate']:.2f}% {row['Trades_réussis']:<15} {row['Trades_totaux']:<15} {row['Diff_Global']:+.2f}% {row['Pourcentage_Trades']:.2f}%")
+
+    return results_df
+
+#
+# def print_evaluation_results(results, indicator_type, params):
+#     """
+#     Affiche les résultats de l'évaluation de manière formatée.
+#
+#     Parameters:
+#     -----------
+#     results : dict
+#         Dictionnaire contenant les métriques d'évaluation
+#     indicator_type : str
+#         Type d'indicateur évalué
+#     params : dict
+#         Paramètres utilisés pour l'évaluation
+#     """
+#     # Afficher les paramètres
+#     print("\n📊 PARAMÈTRES UTILISÉS:")
+#     for key, value in params.items():
+#         print(f"  {key}: {value}")
+#
+#     # Afficher les métriques générales
+#     print("\n📈 RÉSULTATS DE L'ÉVALUATION:")
+#     print(f"  Nombre total d'échantillons: {results.get('total_samples', 0)}")
+#
+#     # Adapter le nom des bins selon l'indicateur
+#     bin0_name = "Survente"
+#     bin1_name = "Surachat"
+#
+#     if indicator_type.lower() == "mfi_divergence":
+#         bin0_name = "Divergence Haussière"
+#         bin1_name = "Divergence Baissière"
+#     elif indicator_type.lower() == "regression_r2":
+#         bin0_name = "Volatilité Basse"
+#         bin1_name = "Volatilité Haute"
+#     elif indicator_type.lower() == "regression_std":
+#         bin0_name = "Écart-type Faible"
+#         bin1_name = "Écart-type Élevé"
+#     elif indicator_type.lower() == "regression_slope":
+#         bin0_name = "Volatilité dans les Extrêmes"
+#         bin1_name = "Volatilité Modérée"
+#     elif indicator_type.lower() == "atr":
+#         bin0_name = "ATR Faible"
+#         bin1_name = "ATR Modéré"
+#     elif indicator_type.lower() == "vwap":
+#         bin0_name = "Distance VWAP Extrême"
+#         bin1_name = "Distance VWAP Modérée"
+#     elif indicator_type.lower() == "percent_bb_simu":
+#         bin0_name = "%B Extrême"
+#         bin1_name = "%B Modéré"
+#     elif indicator_type.lower() == "zscore":
+#         bin0_name = "Z-Score Extrême"
+#         bin1_name = "Z-Score Modéré"
+#
+#
+#     # Afficher les métriques de bin 0 si disponibles
+#     if results.get('bin_0_samples', 0) > 0:
+#         print(f"\n  Statistiques du bin 0 ({bin0_name}):")
+#         print(f"    • Win Rate: {results.get('bin_0_win_rate', 0):.4f}")
+#         print(f"    • Nombre d'échantillons: {results.get('bin_0_samples', 0)}")
+#         print(f"    • Nombre de trades gagnants: {results.get('oversold_success_count', 0)}")
+#         print(f"    • Pourcentage des données: {results.get('bin_0_pct', 0):.2%}")
+#
+#     # Afficher les métriques de bin 1 si disponibles
+#     if results.get('bin_1_samples', 0) > 0:
+#         print(f"\n  Statistiques du bin 1 ({bin1_name}):")
+#         print(f"    • Win Rate: {results.get('bin_1_win_rate', 0):.4f}")
+#         print(f"    • Nombre d'échantillons: {results.get('bin_1_samples', 0)}")
+#         print(f"    • Nombre de trades gagnants: {results.get('overbought_success_count', 0)}")
+#         print(f"    • Pourcentage des données: {results.get('bin_1_pct', 0):.2%}")
+#
+#     # Afficher le spread si les deux bins sont disponibles
+#     if results.get('bin_0_samples', 0) > 0 and results.get('bin_1_samples', 0) > 0:
+#         print(f"\n  Spread (différence de win rate): {results.get('bin_spread', 0):.4f}")
+#
+#     # Comparaison avec les attentes
+#     print("\n🔍 ANALYSE DES RÉSULTATS:")
+#
+#     # Vérifier si chaque métrique correspond aux attentes
+#     if results.get('bin_0_samples', 0) > 0:
+#         bin_0_wr = results.get('bin_0_win_rate', 0)
+#         expected_bin_0_wr = MAX_bin_0_win_rate if 'MAX_bin_0_win_rate' in globals() else 0.47
+#
+#         if bin_0_wr <= expected_bin_0_wr:
+#             print(f"  ✅ Bin 0: Win rate ({bin_0_wr:.4f}) conforme aux attentes (≤ {expected_bin_0_wr:.4f})")
+#         else:
+#             print(f"  ❌ Bin 0: Win rate ({bin_0_wr:.4f}) supérieur aux attentes (> {expected_bin_0_wr:.4f})")
+#
+#     if results.get('bin_1_samples', 0) > 0:
+#         bin_1_wr = results.get('bin_1_win_rate', 0)
+#         expected_bin_1_wr = MIN_bin_1_win_rate if 'MIN_bin_1_win_rate' in globals() else 0.53
+#
+#         if bin_1_wr >= expected_bin_1_wr:
+#             print(f"  ✅ Bin 1: Win rate ({bin_1_wr:.4f}) conforme aux attentes (≥ {expected_bin_1_wr:.4f})")
+#         else:
+#             print(f"  ❌ Bin 1: Win rate ({bin_1_wr:.4f}) inférieur aux attentes (< {expected_bin_1_wr:.4f})")
+#
+#     # Conclusion
+#     print("\n📝 CONCLUSION:")
+#     indicator_name = indicator_type.capitalize().replace("_", " ")
+#
+#     if (results.get('bin_0_samples', 0) > 0 and results.get('bin_0_win_rate', 0) <= expected_bin_0_wr) or \
+#             (results.get('bin_1_samples', 0) > 0 and results.get('bin_1_win_rate', 0) >= expected_bin_1_wr):
+#         print(f"  L'indicateur {indicator_name} montre une bonne généralisation sur le jeu de données de test.")
+#         if results.get('bin_spread', 0) > 0.08:
+#             print(f"  Le spread ({results.get('bin_spread', 0):.4f}) est significatif, ce qui est très positif.")
+#         else:
+#             print(f"  Le spread ({results.get('bin_spread', 0):.4f}) pourrait être amélioré pour plus de robustesse.")
+#     else:
+#         print(f"  L'indicateur {indicator_name} montre des difficultés à généraliser sur le jeu de données de test.")
+#         print("  Considérez de réoptimiser avec plus de données ou d'ajuster les contraintes.")
+#
+def evaluate_williams_r(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur Williams %R avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    try:
+        # Extraire les paramètres
+        period = params.get('period')
+        OS_limit = params.get('OS_limit', -80)
+        OB_limit = params.get('OB_limit', -20)
+
+        # Calculer le Williams %R
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        will_r_values = compute_wr(high, low, close, session_starts, period=period)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['wr_overbought'] = np.where(will_r_values > OB_limit, 1, 0)
+
+        if optimize_oversold:
+            df['wr_oversold'] = np.where(will_r_values < OS_limit, 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Calculs pour le bin 0 (oversold) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['wr_oversold'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (overbought) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['wr_overbought'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['wr_oversold'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['wr_overbought'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de Williams %R: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_mfi(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur Money Flow Index (MFI) avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    try:
+        # Extraire les paramètres
+        period = params.get('period')
+        OS_limit = params.get('OS_limit', 20)
+        OB_limit = params.get('OB_limit', 80)
+
+        # Calculer le MFI
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        volume = pd.to_numeric(df['volume'], errors='coerce')
+
+        session_starts = (df['SessionStartEnd'] == 10).values
+        mfi_values = compute_mfi(high, low, close, volume, session_starts, period=period)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['mfi_overbought'] = np.where(mfi_values > OB_limit, 1, 0)
+
+        if optimize_oversold:
+            df['mfi_oversold'] = np.where(mfi_values < OS_limit, 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Calculs pour le bin 0 (oversold) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['mfi_oversold'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (overbought) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['mfi_overbought'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['mfi_oversold'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['mfi_overbought'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de MFI: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_mfi_divergence(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue les divergences MFI avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des anti-divergences est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des divergences baissières est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    try:
+        # Extraire les paramètres
+        mfi_period = params.get('mfi_period')
+        div_lookback = params.get('div_lookback')
+        min_price_increase = params.get('min_price_increase')
+        min_mfi_decrease = params.get('min_mfi_decrease')
+
+        # Paramètres pour la partie oversold (si présents)
+        min_price_decrease = params.get('min_price_decrease')
+        min_mfi_increase = params.get('min_mfi_increase')
+
+        # Calculer le MFI
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        volume = pd.to_numeric(df['volume'], errors='coerce')
+
+        session_starts = (df['SessionStartEnd'] == 10).values
+        mfi_values = compute_mfi(high, low, close, volume, session_starts, period=mfi_period)
+        mfi_series = pd.Series(mfi_values, index=df.index)
+
+        # Initialiser les colonnes de divergence conditionnellement
+        if optimize_overbought:
+            df['bearish_divergence'] = 0
+
+        if optimize_oversold:
+            df['anti_divergence'] = 0
+
+        # Filtrer pour les trades shorts
+        df_mode_filtered = df[df['class_binaire'] != 99].copy()
+        all_shorts = df_mode_filtered['tradeDir'].eq(-1).all() if not df_mode_filtered.empty else False
+
+        if all_shorts:
+            # Pour la partie overbought (divergence baissière) uniquement si optimize_overbought est activé
+            if optimize_overbought:
+                price_pct_change = close.pct_change(div_lookback).fillna(0)
+                mfi_pct_change = mfi_series.pct_change(div_lookback).fillna(0)
+
+                # Conditions pour une divergence baissière
+                price_increase = price_pct_change > min_price_increase
+                mfi_decrease = mfi_pct_change < -min_mfi_decrease
+
+                # Prix fait un nouveau haut relatif
+                price_rolling_max = close.rolling(window=div_lookback).max().shift(1)
+                price_new_high = (close > price_rolling_max).fillna(False)
+
+                # Définir la divergence baissière
+                df.loc[df_mode_filtered.index, 'bearish_divergence'] = (
+                        (price_new_high | price_increase) &  # Prix fait un nouveau haut ou augmente significativement
+                        (mfi_decrease)  # MFI diminue
+                ).astype(int)
+
+            # Pour la partie oversold (anti-divergence) si les paramètres sont présents et optimize_oversold est activé
+            if optimize_oversold and min_price_decrease is not None and min_mfi_increase is not None:
+                price_pct_change = close.pct_change(div_lookback).fillna(
+                    0) if 'price_pct_change' not in locals() else price_pct_change
+                mfi_pct_change = mfi_series.pct_change(div_lookback).fillna(
+                    0) if 'mfi_pct_change' not in locals() else mfi_pct_change
+
+                # Conditions pour une anti-divergence
+                price_decrease = price_pct_change < -min_price_decrease  # Prix diminue
+                mfi_increase = mfi_pct_change > min_mfi_increase  # MFI augmente
+
+                # Prix fait un nouveau bas relatif
+                price_rolling_min = close.rolling(window=div_lookback).min().shift(1)
+                price_new_low = (close < price_rolling_min).fillna(False)
+
+                # Définir l'anti-divergence
+                df.loc[df_mode_filtered.index, 'anti_divergence'] = (
+                        (price_new_low | price_decrease) &  # Prix fait un nouveau bas ou diminue significativement
+                        (mfi_increase)  # MFI augmente
+                ).astype(int)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Calculs pour le bin 0 (anti-divergence/oversold) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['anti_divergence'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (divergence baissière/overbought) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['bearish_divergence'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['anti_divergence'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['bearish_divergence'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation des divergences MFI: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_regression_r2(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur de régression R² avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de volatilité extrême est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de volatilité modérée est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    try:
+        # Extraire les paramètres
+        period_var = params.get('period_var_r2', params.get('period_var', None))
+        r2_low_threshold = params.get('r2_low_threshold')
+        r2_high_threshold = params.get('r2_high_threshold')
+
+        # Calculer les pentes et R²
+        close = pd.to_numeric(df['close'], errors='coerce').values
+        session_starts = (df['SessionStartEnd'] == 10).values
+        _, r2s, _ = calculate_slopes_and_r2_numba(close, session_starts, period_var)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['range_volatility'] = np.where((r2s > r2_low_threshold) & (r2s < r2_high_threshold), 1, 0)
+
+        if optimize_oversold:
+            df['extrem_volatility'] = np.where((r2s < r2_low_threshold) | (r2s > r2_high_threshold), 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Calculs pour le bin 0 (volatilité extrême) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['extrem_volatility'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (volatilité modérée) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['range_volatility'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['extrem_volatility'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['range_volatility'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de R²: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_regression_std(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur de régression par écart-type avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de volatilité extrême est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de volatilité modérée est activée
+
+    Returns:
+    --------
+    tuple
+        - dict des résultats
+        - DataFrame filtré avec class_binaire ∈ [0,1]
+        - Série target des valeurs de class_binaire
+    """
+    try:
+        # Extraire les paramètres
+        period_var = params.get('period_var_std', params.get('period_var', None))
+        std_low_threshold = params.get('std_low_threshold')
+        std_high_threshold = params.get('std_high_threshold')
+
+        # Calculer les écarts-types
+        close = pd.to_numeric(df['close'], errors='coerce').values
+        session_starts = (df['SessionStartEnd'] == 10).values
+        # Correction de la syntaxe pour extraire uniquement le 3ème élément (stds)
+        _, _, stds = calculate_slopes_and_r2_numba(close, session_starts, period_var)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['range_volatility'] = np.where((stds > std_low_threshold) & (stds < std_high_threshold), 1, 0)
+
+        if optimize_oversold:
+            df['extrem_volatility'] = np.where((stds < std_low_threshold) | (stds > std_high_threshold), 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Mise à jour du nombre total d'échantillons
+        results['total_samples'] = len(df_test_filtered)
+
+        # Calculs pour le bin 0 (volatilité extrême) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['extrem_volatility'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (volatilité modérée) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['range_volatility'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['extrem_volatility'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['range_volatility'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de regression std: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_stochastic(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur Stochastique avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés (k_period, d_period, OS_limit, OB_limit)
+    df : pandas.DataFrame
+        DataFrame complet contenant toutes les données
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        - dict des résultats
+        - DataFrame filtré avec class_binaire ∈ [0,1]
+        - Série target des valeurs de class_binaire
+    """
+    try:
+        # Extraire les paramètres
+        k_period = params.get('k_period')
+        d_period = params.get('d_period')
+        OS_limit = params.get('OS_limit', 20)  # Valeur par défaut 20 si non spécifié
+        OB_limit = params.get('OB_limit', 80)  # Valeur par défaut 80 si non spécifié
+
+        # Calculer le Stochastique
+        high = pd.to_numeric(df['high'], errors='coerce')
+        low = pd.to_numeric(df['low'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        k_values, d_values = compute_stoch(high, low, close, session_starts, k_period=k_period, d_period=d_period)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['stoch_overbought'] = np.where(k_values > OB_limit, 1, 0)
+
+        if optimize_oversold:
+            df['stoch_oversold'] = np.where(k_values < OS_limit, 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Zone survente (bin 0) si optimize_oversold activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['stoch_oversold'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Zone surachat (bin 1) si optimize_overbought activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['stoch_overbought'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calcul du spread si les deux zones sont activées
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['stoch_oversold'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['stoch_overbought'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation du Stochastique: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }, df_test_filtered, target_y_test
+
+
+def evaluate_regression_slope(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur de régression par pente avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    df_filtered : pandas.DataFrame
+        DataFrame filtré ne contenant que les entrées avec class_binaire en [0, 1]
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    dict
+        Dictionnaire contenant les métriques d'évaluation
+    """
+    # Extraire les paramètres
+    period_var = params.get('period_var_slope', params.get('period_var', None))
+    slope_range_threshold = params.get('slope_range_threshold')
+    slope_extrem_threshold = params.get('slope_extrem_threshold')
+
+    # Calculer les pentes
+    close = pd.to_numeric(df['close'], errors='coerce').values
+    session_starts = (df['SessionStartEnd'] == 10).values
+    slopes, _, _ = calculate_slopes_and_r2_numba(close, session_starts, period_var)
+
+    # Créer les indicateurs binaires uniquement pour les modes activés
+    if optimize_overbought:
+        df['is_low_slope'] = np.where((slopes > slope_range_threshold) & (slopes < slope_extrem_threshold), 1, 0)
+
+    if optimize_oversold:
+        df['is_high_slope'] = np.where((slopes < slope_range_threshold) | (slopes > slope_extrem_threshold), 1, 0)
+
+    # Initialiser les résultats
+    results = {
+        'bin_0_win_rate': 0,
+        'bin_1_win_rate': 0,
+        'bin_0_pct': 0,
+        'bin_1_pct': 0,
+        'bin_spread': 0,
+        'oversold_success_count': 0,
+        'overbought_success_count': 0,
+        'bin_0_samples': 0,
+        'bin_1_samples': 0
+    }
+
+    # Filtrer pour ne garder que les entrées avec trade (0 ou 1)
+    df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+    target_y_test = df['class_binaire']
+
+    # Calculs pour le bin 0 (pente élevée) uniquement si optimize_oversold est activé
+    if optimize_oversold:
+        oversold_df = df_test_filtered[df_test_filtered['is_high_slope'] == 1]
+        if len(oversold_df) > 0:
+            results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+            results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+            results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+            results['bin_0_samples'] = len(oversold_df)
+
+    # Calculs pour le bin 1 (pente modérée) uniquement si optimize_overbought est activé
+    if optimize_overbought:
+        overbought_df = df_test_filtered[df_test_filtered['is_low_slope'] == 1]
+        if len(overbought_df) > 0:
+            results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+            results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+            results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+            results['bin_1_samples'] = len(overbought_df)
+
+    # Calculer le spread uniquement si les deux modes sont activés
+    if optimize_oversold and optimize_overbought:
+        oversold_df = df_test_filtered[df_test_filtered['is_high_slope'] == 1] if 'oversold_df' not in locals() else oversold_df
+        overbought_df = df_test_filtered[
+            df_test_filtered['is_low_slope'] == 1] if 'overbought_df' not in locals() else overbought_df
+
+        if len(oversold_df) > 0 and len(overbought_df) > 0:
+            results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+    return results,df_test_filtered,target_y_test
+
+
+def evaluate_atr(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur ATR avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    # Extraire les paramètres
+    period_var = params.get('period_var_atr', params.get('period_var', None))
+    atr_low_threshold = params.get('atr_low_threshold')
+    atr_high_threshold = params.get('atr_high_threshold')
+
+    # Calculer l'ATR
+    atr = calculate_atr(df, period_var)
+
+    # Créer les indicateurs binaires uniquement pour les modes activés
+    if optimize_overbought:
+        df['atr_range'] = np.where((atr > atr_low_threshold) & (atr < atr_high_threshold), 1, 0)
+
+    if optimize_oversold:
+        df['atr_extrem'] = np.where((atr < atr_low_threshold), 1, 0)
+
+    # Initialiser les résultats
+    results = {
+        'bin_0_win_rate': 0,
+        'bin_1_win_rate': 0,
+        'bin_0_pct': 0,
+        'bin_1_pct': 0,
+        'bin_spread': 0,
+        'oversold_success_count': 0,
+        'overbought_success_count': 0,
+        'bin_0_samples': 0,
+        'bin_1_samples': 0
+    }
+
+    # Filtrer pour ne garder que les entrées avec trade (0 ou 1)
+    df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+    target_y_test = df['class_binaire']
+
+    # Calculs pour le bin 0 (ATR extrême) uniquement si optimize_oversold est activé
+    if optimize_oversold:
+        oversold_df = df_test_filtered[df_test_filtered['atr_extrem'] == 1]
+        if len(oversold_df) > 0:
+            results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+            results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+            results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+            results['bin_0_samples'] = len(oversold_df)
+
+    # Calculs pour le bin 1 (ATR modéré) uniquement si optimize_overbought est activé
+    if optimize_overbought:
+        overbought_df = df_test_filtered[df_test_filtered['atr_range'] == 1]
+        if len(overbought_df) > 0:
+            results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+            results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+            results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+            results['bin_1_samples'] = len(overbought_df)
+
+    # Calculer le spread uniquement si les deux modes sont activés
+    if optimize_oversold and optimize_overbought:
+        oversold_df = df_test_filtered[
+            df_test_filtered['atr_extrem'] == 1] if 'oversold_df' not in locals() else oversold_df
+        overbought_df = df_test_filtered[
+            df_test_filtered['atr_range'] == 1] if 'overbought_df' not in locals() else overbought_df
+
+        if len(oversold_df) > 0 and len(overbought_df) > 0:
+            results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+    return results, df_test_filtered, target_y_test
+
+
+def evaluate_vwap(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur VWAP avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    # Extraire les paramètres
+    vwap_low_threshold = params.get('vwap_low_threshold')
+    vwap_high_threshold = params.get('vwap_high_threshold')
+
+    # Utiliser la colonne diffPriceCloseVWAP directement
+    df['diffPriceCloseVWAP'] = df['close'] - df['VWAP']
+    diff_vwap = pd.to_numeric(df['diffPriceCloseVWAP'], errors='coerce')
+
+    # Créer les indicateurs binaires uniquement pour les modes activés
+    if optimize_overbought:
+        df['is_vwap_range'] = np.where((diff_vwap > vwap_low_threshold) & (diff_vwap < vwap_high_threshold), 1, 0)
+
+    if optimize_oversold:
+        df['is_vwap_extrem'] = np.where((diff_vwap < vwap_low_threshold) | (diff_vwap > vwap_high_threshold), 1, 0)
+
+    # Initialiser les résultats
+    results = {
+        'bin_0_win_rate': 0,
+        'bin_1_win_rate': 0,
+        'bin_0_pct': 0,
+        'bin_1_pct': 0,
+        'bin_spread': 0,
+        'oversold_success_count': 0,
+        'overbought_success_count': 0,
+        'bin_0_samples': 0,
+        'bin_1_samples': 0
+    }
+
+    # Filtrer pour ne garder que les entrées avec trade (0 ou 1)
+    df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+    target_y_test = df['class_binaire']
+
+    # Calculs pour le bin 0 (distance VWAP extrême) uniquement si optimize_oversold est activé
+    if optimize_oversold:
+        oversold_df = df_test_filtered[df_test_filtered['is_vwap_extrem'] == 1]
+        if len(oversold_df) > 0:
+            results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+            results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+            results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+            results['bin_0_samples'] = len(oversold_df)
+
+    # Calculs pour le bin 1 (distance VWAP modérée) uniquement si optimize_overbought est activé
+    if optimize_overbought:
+        overbought_df = df_test_filtered[df_test_filtered['is_vwap_range'] == 1]
+        if len(overbought_df) > 0:
+            results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+            results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+            results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+            results['bin_1_samples'] = len(overbought_df)
+
+    # Calculer le spread uniquement si les deux modes sont activés
+    if optimize_oversold and optimize_overbought:
+        oversold_df = df_test_filtered[
+            df_test_filtered['is_vwap_extrem'] == 1] if 'oversold_df' not in locals() else oversold_df
+        overbought_df = df_test_filtered[
+            df_test_filtered['is_vwap_range'] == 1] if 'overbought_df' not in locals() else overbought_df
+
+        if len(oversold_df) > 0 and len(overbought_df) > 0:
+            results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+    return results, df_test_filtered, target_y_test
+
+
+def evaluate_percent_bb(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur %B des bandes de Bollinger avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        (dict, pandas.DataFrame, pandas.Series)
+        - Dictionnaire contenant les métriques d'évaluation
+        - DataFrame filtré pour les tests
+        - Série des valeurs cibles
+    """
+    try:
+        # Extraire les paramètres
+        period = params.get('period_var_bb', params.get('period', None))
+        std_dev = params.get('std_dev')
+        bb_low_threshold = params.get('bb_low_threshold')
+        bb_high_threshold = params.get('bb_high_threshold')
+
+        # Calculer le %B
+        percent_b_values = calculate_percent_bb(df=df, period=period, std_dev=std_dev, fill_value=0, return_array=True)
+
+        # Créer les indicateurs binaires uniquement pour les modes activés
+        if optimize_overbought:
+            df['is_bb_range'] = np.where((percent_b_values >= bb_high_threshold), 1, 0)
+
+        if optimize_oversold:
+            df['is_bb_extrem'] = np.where((percent_b_values <= bb_low_threshold), 1, 0)
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': 0
+        }
+
+        # Filtrer pour ne garder que les entrées avec trade (0 ou 1)
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Mettre à jour le nombre total d'échantillons
+        results['total_samples'] = len(df_test_filtered)
+
+        # Calculs pour le bin 0 (%B extrême) uniquement si optimize_oversold est activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['is_bb_extrem'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Calculs pour le bin 1 (%B modéré) uniquement si optimize_overbought est activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['is_bb_range'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calculer le spread uniquement si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            oversold_df = df_test_filtered[
+                df_test_filtered['is_bb_extrem'] == 1] if 'oversold_df' not in locals() else oversold_df
+            overbought_df = df_test_filtered[
+                df_test_filtered['is_bb_range'] == 1] if 'overbought_df' not in locals() else overbought_df
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de Percent BB: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, retourner des valeurs par défaut cohérentes
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
+        }, df_test_filtered, target_y_test
+
+def evaluate_zscore(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur Z-Score avec les paramètres optimaux.
+
+    Parameters:
+    -----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés
+    df : pandas.DataFrame
+        DataFrame complet avec colonnes 'close' et 'class_binaire'
+    optimize_oversold : bool, default=False
+        Indique si l'optimisation des zones de survente est activée
+    optimize_overbought : bool, default=False
+        Indique si l'optimisation des zones de surachat est activée
+
+    Returns:
+    --------
+    tuple
+        - dict des résultats
+        - DataFrame filtré avec class_binaire ∈ [0,1]
+        - Série target des valeurs de class_binaire
+    """
+    try:
+        # Extraire les paramètres
+        period_var_zscore = params.get('period_var_zscore')
+        zscore_low_threshold = params.get('zscore_low_threshold')
+        zscore_high_threshold = params.get('zscore_high_threshold')
+
+        # Calculer le Z-Score
+        _, zscores = enhanced_close_to_sma_ratio(df, period_var_zscore)
+
+        # Créer les indicateurs binaires conditionnels
+        if optimize_overbought:
+            df['is_zscore_range'] = np.where(
+                (zscores > zscore_low_threshold) & (zscores < zscore_high_threshold), 1, 0
+            )
+        if optimize_oversold:
+            df['is_zscore_extrem'] = np.where(
+                (zscores < zscore_low_threshold) | (zscores > zscore_high_threshold), 1, 0
+            )
+
+        # Initialiser les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0
+        }
+
+        # Filtrage
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df['class_binaire']
+
+        # Zone extrême (bin 0) si oversold activé
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['is_zscore_extrem'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Zone modérée (bin 1) si overbought activé
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['is_zscore_range'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calcul du spread si les deux zones sont activées
+        if optimize_oversold and optimize_overbought:
+            if 'oversold_df' not in locals():
+                oversold_df = df_test_filtered[df_test_filtered['is_zscore_extrem'] == 1]
+            if 'overbought_df' not in locals():
+                overbought_df = df_test_filtered[df_test_filtered['is_zscore_range'] == 1]
+
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de Z-Score: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}, None, None

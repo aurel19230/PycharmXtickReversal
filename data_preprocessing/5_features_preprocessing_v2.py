@@ -1,17 +1,14 @@
 import pandas as pd
 import numpy as np
 from func_standard import print_notification, load_data, calculate_naked_poc_distances, CUSTOM_SESSIONS, \
-    save_features_with_sessions,remplace_0_nan_reg_slope_p_2d,process_reg_slope_replacement, calculate_slopes_and_r2_numba,calculate_atr
+    save_features_with_sessions,remplace_0_nan_reg_slope_p_2d,process_reg_slope_replacement, calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio
 from definition import *
 import math
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
 import os
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from numba import jit
+
 
 diffDivBy0 = np.nan
 addDivBy0 = np.nan
@@ -26,11 +23,12 @@ import warnings
 from pandas.errors import PerformanceWarning
 # Nom du fichier
 
-file_name = "Step4_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
 #file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
+#file_name = "Step4_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
 # Chemin du répertoire
-directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version1"
 directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -612,59 +610,12 @@ for window in windows:
     features_df = pd.concat([features_df, slope_r2_df], axis=1)
 
 
-def enhanced_close_to_sma_ratio(
-         data: pd.DataFrame,
-         window: int,
- ) -> pd.DataFrame:
-     """
-     Calcule pour chaque point :
-       - le ratio (close - sma) / sma
-       - le z-score de ce ratio par rapport à son écart-type (rolling)
-
-     Gère les cas où std = 0 en utilisant :
-         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-
-     :param data: DataFrame avec au moins la colonne 'close'
-     :param window: nombre de périodes pour le calcul rolling (moyenne + écart-type)
-     :param diffDivBy0: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
-     :param DEFAULT_DIV_BY0: booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
-     :param valueX: valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
-     :return: DataFrame avec close_sma_ratio_{window} et close_sma_zscore_{window}
-     """
-#
-#     # Calcul de la SMA
-     sma = data['close'].rolling(window=window, min_periods=1).mean()
-#
-#     # Ratio (close - sma) / sma
-     ratio = (data['close'] - sma)# / sma
-#
-#     # Écart-type (rolling) du ratio
-     std = ratio.rolling(window=window).std()
-#
-#     # Calcul du z-score en évitant la division par zéro.
-#     # Si std != 0, on fait ratio / std
-#     # Sinon, on applique la logique diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-     z_score_array = np.where(
-         std != 0,
-         ratio / std,
-         diffDivBy0 if DEFAULT_DIV_BY0 else valueX
-     )
-#
-#     # Convertit le tableau en Series pour garder le même index
-     z_score = pd.Series(z_score_array, index=ratio.index)
-#
-#     # On renvoie un DataFrame avec deux colonnes
-     return pd.DataFrame({
-         f'close_sma_ratio_{window}': ratio,
-         f'close_sma_zscore_{window}': z_score
-     })
-
 
 windows_sma = [6, 14, 21, 30]
 for window in windows_sma:
-     results = enhanced_close_to_sma_ratio(df, window)
-     features_df[f'close_sma_ratio_{window}'] = results[f'close_sma_ratio_{window}']
-     features_df[f'close_sma_zscore_{window}'] = results[f'close_sma_zscore_{window}']
+    ratio, zscore = enhanced_close_to_sma_ratio(df, window)
+    features_df[f'close_sma_ratio_{window}'] = ratio
+    features_df[f'close_sma_zscore_{window}'] = zscore
 
 import numpy as np
 from numba import jit
@@ -905,6 +856,7 @@ features_df['diffLowPrice_0_3'] = df['low'] - df['low'].shift(3)
 features_df['diffLowPrice_0_4'] = df['low'] - df['low'].shift(4)
 features_df['diffLowPrice_0_5'] = df['low'] - df['low'].shift(5)
 # features_df['diffLowPrice_0_6'] = df['low'] - df['low'].shift(6)
+# features_df['diffLowPrice_0_6'] = df['low'] - df['low'].shift(6)
 
 
 features_df['diffPriceCloseVWAP'] = df['close'] - df['VWAP']
@@ -932,9 +884,6 @@ features_df['diffPriceCloseVWAPbyIndex'] = np.select(conditions, values, default
 features_df['atr'] = df['atr']
 features_df['bandWidthBB'] = df['bandWidthBB']
 features_df['perctBB'] = df['perctBB']
-
-import numpy as np
-
 
 def detect_market_regimeADX(data, period=14, adx_threshold=25):
     # Calcul de l'ADX
@@ -1256,8 +1205,6 @@ features_df['bull_imbalance_low_3'] = np.where(
         df['askVolLow_3'] / df['bidVolLow_2']
     )
 )
-
-
 
 
 features_df['bull_imbalance_high_0'] = np.where(
@@ -1667,12 +1614,11 @@ def add_stochastic_force_indicators(df, features_df,
                       stoch_k_oversold[i] < stoch_d_oversold[i]):
                     stoch_cross_oversold[i] = -1
 
-        features_df['stoch_crossover_overbought'] = stoch_cross_overbought
-        features_df['stoch_crossover_oversold'] = stoch_cross_oversold
+
 
         # Zones de surachat/survente avec leurs stochastiques respectifs
-        features_df['stoch_overbought'] = np.where(stoch_k_overbought > overbought_threshold, 1, 0)
-        features_df['stoch_oversold'] = np.where(stoch_k_oversold < oversold_threshold, 1, 0)
+        features_df['is_stoch_overbought'] = np.where(stoch_k_overbought > overbought_threshold, 1, 0)
+        features_df['is_stoch_oversold'] = np.where(stoch_k_oversold < oversold_threshold, 1, 0)
 
         # Features dérivées du Force Index
         avg_volume_20 = volume.rolling(window=4).mean().fillna(volume)
@@ -1690,24 +1636,7 @@ def add_stochastic_force_indicators(df, features_df,
         # Momentum basé sur le Force Index
         features_df['fi_momentum'] = np.sign(force_short) * np.abs(fi_short_norm)
 
-        # Force Index combiné avec la direction de la bougie
-        features_df['fi_candle_aligned'] = np.where(
-            (candle_dir == 1) & (force_short > 0) |
-            (candle_dir == -1) & (force_short < 0),
-            1,  # Force Index aligné avec la direction de la bougie
-            0  # Force Index non aligné
-        )
 
-        # # Combinaisons spéciales de stochastiques et force index
-        # features_df['stoch_overbought_with_neg_fi'] = np.where(
-        #     (features_df['stoch_overbought'] == 1) & (force_short < 0),
-        #     1, 0
-        # )
-        #
-        # features_df['stoch_oversold_with_pos_fi'] = np.where(
-        #     (features_df['stoch_oversold'] == 1) & (force_short > 0),
-        #     1, 0
-        # )
 
         return features_df
 
@@ -1784,7 +1713,7 @@ def add_atr(df, features_df, atr_period_range=14, atr_period_extrem=14,
 
 
 def add_regression_slope(df, features_df,
-                         period_low=14, period_high=14,
+                         period_range=14, period_extrem=14,
                          slope_range_threshold_low=0.1, slope_range_threshold_high=0.5,
                          slope_extrem_threshold_low=0.1, slope_extrem_threshold_high=0.5):
     """
@@ -1809,17 +1738,17 @@ def add_regression_slope(df, features_df,
         session_starts = (df['SessionStartEnd'] == 10).values
 
         # Calcul des pentes pour l'indicateur is_rangeSlope
-        slopes_low, r2_low, std_low = calculate_slopes_and_r2_numba(close, session_starts, period_low)
+        slopes_low, r2_low, std_low = calculate_slopes_and_r2_numba(close, session_starts, period_range)
 
         # Calcul des pentes pour l'indicateur is_extremSlope (uniquement si période différente)
-        if period_low == period_high:
+        if period_range == period_extrem:
             slopes_high = slopes_low
         else:
-            slopes_high, r2_high, std_high = calculate_slopes_and_r2_numba(close, session_starts, period_high)
+            slopes_high, r2_high, std_high = calculate_slopes_and_r2_numba(close, session_starts, period_extrem)
 
         # Ajouter les valeurs brutes au DataFrame de features
         features_df['slope_range'] = slopes_low
-        if period_low != period_high:
+        if period_range != period_extrem:
             features_df['slope_extrem'] = slopes_high
         else:
             features_df['slope_extrem'] = slopes_low
@@ -1858,6 +1787,242 @@ def add_regression_slope(df, features_df,
             features_df['is_extremSlope'] = 0
 
     return features_df
+
+
+def add_zscore(df, features_df,
+               period_range=14, period_extrem=14,
+               zscore_range_threshold_low=-2.0, zscore_range_threshold_high=0.5,
+               zscore_extrem_threshold_low=-2.0, zscore_extrem_threshold_high=0.5):
+    """
+    Ajoute les indicateurs de Z-Score au DataFrame de features.
+    Utilise des seuils spécifiques à chaque période.
+
+    Paramètres:
+    - df: DataFrame contenant les données de prix
+    - features_df: DataFrame où ajouter les indicateurs
+    - period_range: Période pour le calcul du Z-Score de l'indicateur is_zscore_range
+    - period_extrem: Période pour le calcul du Z-Score de l'indicateur is_zscore_extrem
+                    (Si 0, seul l'indicateur is_zscore_range sera calculé)
+    - zscore_range_threshold_low: Seuil bas pour la zone modérée du Z-Score
+    - zscore_range_threshold_high: Seuil haut pour la zone modérée du Z-Score
+    - zscore_extrem_threshold_low: Seuil bas pour la zone extrême du Z-Score
+    - zscore_extrem_threshold_high: Seuil haut pour la zone extrême du Z-Score
+
+    Retourne:
+    - features_df enrichi des indicateurs de Z-Score
+    """
+    try:
+        # Vérifier que period_range est valide (> 0)
+        if period_range <= 0:
+            print(f"Erreur: period_range doit être > 0 (valeur actuelle: {period_range})")
+            return features_df
+
+        # Calcul du Z-Score pour l'indicateur is_zscore_range
+        _, zscores_range = enhanced_close_to_sma_ratio(df, period_range)
+
+        # Ajouter les valeurs brutes au DataFrame de features
+        features_df['zscore_range'] = zscores_range
+
+        # Créer l'indicateur is_zscore_range (Z-Scores modérés optimisés pour maximiser le win rate)
+        features_df['is_zscore_range'] = np.where(
+            (zscores_range > zscore_range_threshold_low) & (zscores_range < zscore_range_threshold_high),
+            1, 0
+        )
+
+        # Calculer et ajouter is_zscore_extrem seulement si period_extrem > 0
+        if period_extrem > 0:
+            # Calcul du Z-Score pour l'indicateur is_zscore_extrem
+            if period_range == period_extrem:
+                zscores_extrem = zscores_range
+            else:
+                _, zscores_extrem = enhanced_close_to_sma_ratio(df, period_extrem)
+
+            # Ajouter les valeurs brutes
+            features_df['zscore_extrem'] = zscores_extrem
+
+            # Créer l'indicateur is_zscore_extrem
+            features_df['is_zscore_extrem'] = np.where(
+                (zscores_extrem < zscore_extrem_threshold_low) | (zscores_extrem > zscore_extrem_threshold_high),
+                1, 0
+            )
+        else:
+            # Si period_extrem est 0, ne pas calculer is_zscore_extrem
+            features_df['zscore_extrem'] = 0
+            features_df['is_zscore_extrem'] = 0
+            print("Avertissement: period_extrem = 0, is_zscore_extrem est fixé à 0")
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['zscore_range', 'zscore_extrem', 'is_zscore_range', 'is_zscore_extrem']:
+            if col in features_df.columns:
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        import traceback
+        print(f"Erreur dans add_zscore: {str(e)}")
+        traceback.print_exc()
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes existantes
+        if 'zscore_range' not in features_df.columns:
+            features_df['zscore_range'] = 0
+        if 'zscore_extrem' not in features_df.columns:
+            features_df['zscore_extrem'] = 0
+        if 'is_zscore_range' not in features_df.columns:
+            features_df['is_zscore_range'] = 0
+        if 'is_zscore_extrem' not in features_df.columns:
+            features_df['is_zscore_extrem'] = 0
+
+    return features_df
+
+def add_perctBB_simu(df, features_df,
+                     period_high=105, period_low=5,
+                     std_dev_high=1.9481898795476222, std_dev_low=0.23237747131209152,
+                     bb_high_threshold=0.6550726973429961, bb_low_threshold=0.2891135240579008):
+    """
+    Ajoute l'indicateur Percent B (%B) des bandes de Bollinger sur des périodes potentiellement
+    différentes pour les zones hautes et basses, ainsi que des indicateurs dérivés.
+    Version optimisée utilisant directement les fonctions Numba.
+
+    Paramètres:
+    - df: DataFrame contenant les données de prix
+    - features_df: DataFrame où ajouter les colonnes liées au %B
+    - period_high: Période de calcul pour la zone haute (ex: 105)
+    - period_low: Période de calcul pour la zone basse (ex: 5)
+    - std_dev_high: Nombre d'écarts-types pour la zone haute (ex: 1.95)
+    - std_dev_low: Nombre d'écarts-types pour la zone basse (ex: 0.23)
+    - bb_high_threshold: Seuil haut pour la zone haute (ex: 0.65)
+    - bb_low_threshold: Seuil bas pour la zone basse (ex: 0.29)
+
+    Retourne:
+    - features_df enrichi des colonnes %B et dérivées
+    """
+    try:
+        # Calcul du %B pour la zone haute (obtenir directement le tableau NumPy)
+        percent_b_high_values = calculate_percent_bb(
+            df=df, period=period_high, std_dev=std_dev_high, fill_value=0, return_array=True
+        )
+
+        # Créer un DataFrame temporaire pour l'affichage si nécessaire
+        percent_b_high_df = pd.DataFrame({'percent_b': percent_b_high_values}, index=df.index)
+        print(percent_b_high_df.head(200))
+
+        # Calcul du %B pour la zone basse (uniquement si différente)
+        if period_high == period_low and std_dev_high == std_dev_low:
+            percent_b_low_values = percent_b_high_values
+        else:
+            percent_b_low_values = calculate_percent_bb(
+                df=df, period=period_low, std_dev=std_dev_low, fill_value=0, return_array=True
+            )
+
+        # Ajouter les indicateurs %B bruts
+        features_df['percent_b_high'] = percent_b_high_values
+        if period_high != period_low or std_dev_high != std_dev_low:
+            features_df['percent_b_low'] = percent_b_low_values
+        else:
+            features_df['percent_b_high'] = percent_b_high_values
+
+        # Créer l'indicateur is_bb_high (zone haute optimisée pour maximiser le win rate)
+        features_df['is_bb_high'] = np.where(
+            (percent_b_high_values >= bb_high_threshold),
+            1, 0
+        )
+
+        # Créer l'indicateur is_bb_low (zone basse optimisée pour minimiser le win rate)
+        features_df['is_bb_low'] = np.where(
+            (percent_b_low_values <= bb_low_threshold),
+            1, 0
+        )
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in features_df.columns:
+            if col.startswith('percent_b') or col.startswith('is_bb'):
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_perctBB_simu: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes essentielles
+        columns_to_check = [
+            'percent_b_high', 'percent_b_low',
+            'is_bb_high', 'is_bb_low'
+        ]
+
+        for col in columns_to_check:
+            if col not in features_df.columns:
+                features_df[col] = 0
+
+    return features_df
+
+def add_vwap(df, features_df,
+             vwap_range_threshold_low=-2.6705237017186305, vwap_range_threshold_high=1.47028136092062,
+             vwap_extrem_threshold_low=-30.3195, vwap_extrem_threshold_high=49.1878):
+    """
+    Ajoute les indicateurs basés sur la différence entre le prix et le VWAP
+    pour identifier les zones favorables et défavorables pour les positions short.
+    Utilise la colonne 'diffPriceCloseVWAP' déjà présente dans le DataFrame.
+
+    Paramètres:
+    - df: DataFrame contenant la colonne 'diffPriceCloseVWAP'
+    - features_df: DataFrame où ajouter les indicateurs dérivés
+    - vwap_range_threshold_low: Seuil bas pour la zone favorable (différence avec VWAP)
+    - vwap_range_threshold_high: Seuil haut pour la zone favorable (différence avec VWAP)
+    - vwap_extrem_threshold_low: Seuil bas pour la zone non favorable (différence avec VWAP)
+    - vwap_extrem_threshold_high: Seuil haut pour la zone non favorable (différence avec VWAP)
+
+    Retourne:
+    - features_df enrichi des colonnes d'indicateurs VWAP
+    """
+    try:
+        # Récupérer la différence prix-VWAP déjà calculée
+        diff_vwap = pd.to_numeric(features_df['diffPriceCloseVWAP'], errors='coerce')
+        close = pd.to_numeric(df['close'], errors='coerce')
+
+
+        # Normaliser la différence par rapport au prix de clôture (pourcentage)
+        # Si le prix est 0, utiliser 1 pour éviter la division par zéro
+        norm_diff_vwap = np.where(close > 0, diff_vwap / close, diff_vwap)
+        features_df['norm_diff_vwap'] = norm_diff_vwap
+
+        # Créer l'indicateur is_vwap_shortArea (zone favorable pour les shorts)
+        # Typiquement, quand le prix est modérément au-dessus du VWAP
+        features_df['is_vwap_shortArea'] = np.where(
+            (diff_vwap > vwap_range_threshold_low) & (diff_vwap < vwap_range_threshold_high),
+            1, 0
+        )
+
+        # Créer l'indicateur is_vwap_notShortArea (zone non favorable pour les shorts)
+        # Typiquement, quand le prix est trop au-dessus ou en-dessous du VWAP
+        features_df['is_vwap_notShortArea'] = np.where(
+            (diff_vwap < vwap_extrem_threshold_low) | (diff_vwap > vwap_extrem_threshold_high),
+            1, 0
+        )
+
+        # Croisements du VWAP
+        vwap_cross = np.zeros_like(diff_vwap)
+        for i in range(1, len(diff_vwap)):
+            if diff_vwap[i - 1] < 0 and diff_vwap[i] > 0:
+                vwap_cross[i] = 1  # Prix croise au-dessus du VWAP
+            elif diff_vwap[i - 1] > 0 and diff_vwap[i] < 0:
+                vwap_cross[i] = -1  # Prix croise en-dessous du VWAP
+
+
+
+        # S'assurer que toutes les colonnes sont numériques
+        vwap_columns = ['norm_diff_vwap', 'is_vwap_shortArea',
+                        'is_vwap_notShortArea']
+        for col in vwap_columns:
+            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_vwap: {str(e)}")
+        # En cas d'erreur, initialiser les colonnes principales à 0
+        required_columns = [
+            'norm_diff_vwap', 'is_vwap_shortArea', 'is_vwap_notShortArea',
+        ]
+        for col in required_columns:
+            if col not in features_df.columns:
+                features_df[col] = 0
+
+    return features_df
+
+
 
 
 def add_std_regression(df, features_df,
@@ -1903,7 +2068,7 @@ def add_std_regression(df, features_df,
 
         # Créer l'indicateur is_range_volatility (volatilité modérée optimisée pour maximiser le win rate)
         # is_range_volatility = 1 quand l'écart-type est entre std_low_threshold_range et std_high_threshold_range
-        features_df['is_range_volatility'] = np.where(
+        features_df['is_range_volatility_std'] = np.where(
             (stds_range > std_low_threshold_range) & (stds_range < std_high_threshold_range),
             1, 0
         )
@@ -1911,7 +2076,7 @@ def add_std_regression(df, features_df,
         # Créer l'indicateur is_extrem_volatility (volatilité extrême optimisée pour minimiser le win rate)
         # is_extrem_volatility = 1 quand l'écart-type est soit inférieur à std_low_threshold_extrem
         # soit supérieur à std_high_threshold_extrem
-        features_df['is_extrem_volatility'] = np.where(
+        features_df['is_extrem_volatility_std'] = np.where(
             (stds_extrem < std_low_threshold_extrem) | (stds_extrem > std_high_threshold_extrem),
             1, 0
         )
@@ -1920,6 +2085,8 @@ def add_std_regression(df, features_df,
         for col in ['std_range', 'std_extrem', 'is_range_volatility', 'is_extrem_volatility']:
             if col in features_df.columns:
                 features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+
 
 
 
@@ -1936,15 +2103,94 @@ def add_std_regression(df, features_df,
             features_df['is_extrem_volatility'] = 0
 
     return features_df
-
-def add_williams_r(df, features_df, period=14, overbought_threshold=-20, oversold_threshold=-80):
+def add_r2_regression(df, features_df,
+                    period_range=14, period_extrem=14,
+                    r2_low_threshold_range=0.3, r2_high_threshold_range=0.7,
+                    r2_low_threshold_extrem=0.3, r2_high_threshold_extrem=0.7):
     """
-    Ajoute l'indicateur Williams %R sur la période spécifiée ainsi que des indicateurs de surachat/survente.
+    Ajoute les indicateurs de volatilité basés sur le R² de régression au DataFrame de features.
+    Utilise des seuils spécifiques à chaque période.
+
+    Paramètres:
+    - df: DataFrame contenant les données de prix
+    - features_df: DataFrame où ajouter les indicateurs
+    - period_range: Période pour le calcul du R² de l'indicateur range_volatility
+    - period_extrem: Période pour le calcul du R² de l'indicateur extrem_volatility
+    - r2_low_threshold_range: Seuil bas pour la détection de volatilité modérée
+    - r2_high_threshold_range: Seuil haut pour la détection de volatilité modérée
+    - r2_low_threshold_extrem: Seuil bas pour la détection de volatilité extrême
+    - r2_high_threshold_extrem: Seuil haut pour la détection de volatilité extrême
+
+    Retourne:
+    - features_df enrichi des indicateurs de volatilité basés sur R²
+    """
+    try:
+        close = pd.to_numeric(df['close'], errors='coerce').values
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calcul des R² pour l'indicateur range_volatility
+        slopes_range, r2s_range, stds_range = calculate_slopes_and_r2_numba(close, session_starts, period_range)
+
+        # Calcul des R² pour l'indicateur extrem_volatility (uniquement si période différente)
+        if period_range == period_extrem:
+            r2s_extrem = r2s_range
+        else:
+            _, r2s_extrem, _ = calculate_slopes_and_r2_numba(close, session_starts, period_extrem)
+
+        # Ajouter les valeurs brutes au DataFrame de features
+        features_df['r2_range'] = r2s_range
+        if period_range != period_extrem:
+            features_df['r2_extrem'] = r2s_extrem
+        else:
+            features_df['r2_extrem'] = r2s_range
+
+        # Créer l'indicateur is_range_volatility (volatilité modérée optimisée pour maximiser le win rate)
+        # is_range_volatility = 1 quand le R² est entre r2_low_threshold_range et r2_high_threshold_range
+        features_df['is_range_volatility_r2'] = np.where(
+            (r2s_range > r2_low_threshold_range) & (r2s_range < r2_high_threshold_range),
+            1, 0
+        )
+
+        # Créer l'indicateur is_extrem_volatility (volatilité extrême optimisée pour minimiser le win rate)
+        # is_extrem_volatility = 1 quand le R² est soit inférieur à r2_low_threshold_extrem
+        # soit supérieur à r2_high_threshold_extrem
+        features_df['is_extrem_volatility_r2'] = np.where(
+            (r2s_extrem < r2_low_threshold_extrem) | (r2s_extrem > r2_high_threshold_extrem),
+            1, 0
+        )
+
+        # S'assurer que toutes les colonnes sont numériques
+        for col in ['r2_range', 'r2_extrem', 'is_range_volatility_r2', 'is_extrem_volatility_r2']:
+            if col in features_df.columns:
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+
+    except Exception as e:
+        print(f"Erreur dans add_r2_regression: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes existantes
+        if 'r2_range' not in features_df.columns:
+            features_df['r2_range'] = 0
+        if 'r2_extrem' not in features_df.columns:
+            features_df['r2_extrem'] = 0
+        if 'is_range_volatility_r2' not in features_df.columns:
+            features_df['is_range_volatility_r2'] = 0
+        if 'is_extrem_volatility_r2' not in features_df.columns:
+            features_df['is_extrem_volatility_r2'] = 0
+
+    return features_df
+
+
+def add_williams_r(df, features_df,
+                   period_overbought=14, period_oversold=14,
+                   overbought_threshold=-20, oversold_threshold=-80):
+    """
+    Ajoute l'indicateur Williams %R sur des périodes potentiellement différentes pour
+    surachat et survente, ainsi que des indicateurs dérivés.
 
     Paramètres:
     - df: DataFrame contenant les colonnes 'high', 'low', 'close'
     - features_df: DataFrame où ajouter les colonnes liées au Williams %R
-    - period: Période de calcul (ex: 14)
+    - period_overbought: Période de calcul pour le surachat (ex: 14)
+    - period_oversold: Période de calcul pour la survente (ex: 14)
     - overbought_threshold: Seuil de surachat (défaut: -20)
     - oversold_threshold: Seuil de survente (défaut: -80)
 
@@ -1957,46 +2203,60 @@ def add_williams_r(df, features_df, period=14, overbought_threshold=-20, oversol
         close = pd.to_numeric(df['close'], errors='coerce')
         session_starts = (df['SessionStartEnd'] == 10).values
 
-        will_r=compute_wr(high, low, close, session_starts=session_starts,period=period, fill_value=-50)
+        # Calcul du Williams %R pour la période de surachat
+        will_r_overbought = compute_wr(high, low, close, session_starts=session_starts,
+                                       period=period_overbought, fill_value=-50)
 
-        features_df['williams_r']=will_r
+        # Calcul du Williams %R pour la période de survente (uniquement si différente)
+        if period_overbought == period_oversold:
+            will_r_oversold = will_r_overbought
+        else:
+            will_r_oversold = compute_wr(high, low, close, session_starts=session_starts,
+                                         period=period_oversold, fill_value=-50)
+
+        # Ajouter les indicateurs Williams %R bruts
+        features_df['williams_r_overbought'] = will_r_overbought
+        if period_overbought != period_oversold:
+            features_df['williams_r_oversold'] = will_r_oversold
+        else:
+            features_df['williams_r_standard'] = will_r_overbought
+
         # Ajouter les indicateurs de surachat/survente
-        features_df['williams_r_overbought'] = np.where(will_r >= overbought_threshold, 1, 0)
-        features_df['williams_r_oversold'] = np.where(will_r <= oversold_threshold, 1, 0)
+        features_df['is_williams_r_overbought'] = np.where(will_r_overbought >= overbought_threshold, 1, 0)
+        features_df['is_williams_r_oversold'] = np.where(will_r_oversold <= oversold_threshold, 1, 0)
 
-        # Ajouter l'indicateur de changement de zone
-        features_df['williams_r_zone_change'] = np.zeros(len(will_r))
 
         # Calculer les changements de zone (sortie de surachat/survente)
-        will_r_series = pd.Series(will_r)
+        will_r_overbought_series = pd.Series(will_r_overbought)
+        will_r_oversold_series = pd.Series(will_r_oversold)
 
         # Sortie de la zone de surachat (signal baissier)
-        exit_overbought = (will_r_series.shift(1) >= overbought_threshold) & (will_r_series < overbought_threshold)
+        exit_overbought = (will_r_overbought_series.shift(1) >= overbought_threshold) & \
+                          (will_r_overbought_series < overbought_threshold)
 
         # Sortie de la zone de survente (signal haussier)
-        exit_oversold = (will_r_series.shift(1) <= oversold_threshold) & (will_r_series > oversold_threshold)
+        exit_oversold = (will_r_oversold_series.shift(1) <= oversold_threshold) & \
+                        (will_r_oversold_series > oversold_threshold)
 
-        # Combinaison des signaux (-1 pour baissier, 1 pour haussier)
-        features_df['williams_r_zone_change'] = np.where(
-            exit_overbought, -1,
-            np.where(exit_oversold, 1, 0)
-        )
 
-        # Tendance de l'indicateur
-        features_df['williams_r_trend'] = np.sign(will_r_series.diff(3).fillna(0))
-
-        # Normalisation entre 0 et 1 (pour faciliter l'utilisation dans les modèles ML)
-        # 0 = survente extrême, 1 = surachat extrême
-        features_df['williams_r_normalized'] = (will_r + 100) / 100
 
         # S'assurer que toutes les colonnes sont numériques
-        for col in ['williams_r', 'williams_r_overbought',
-                    'williams_r_oversold', 'williams_r_zone_change',
-                    'williams_r_trend', 'williams_r_normalized']:
-            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+        for col in features_df.columns:
+            if col.startswith('williams_r') or col.startswith('is_williams_r'):
+                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
 
     except Exception as e:
         print(f"Erreur dans add_williams_r: {str(e)}")
+        # En cas d'erreur, tenter de renvoyer au moins les colonnes essentielles
+        columns_to_check = [
+           'williams_r_oversold', 'will_r_overbought',
+            'is_williams_r_overbought','is_williams_r_oversold',
+
+        ]
+
+        for col in columns_to_check:
+            if col not in features_df.columns:
+                features_df[col] = 0
 
     return features_df
 
@@ -2075,20 +2335,20 @@ def add_mfi(df, features_df,
         volume = pd.to_numeric(df['volume'], errors='coerce')
 
         # Calcul des MFI avec périodes spécifiques pour surachat/survente
-        mfi_overbought = compute_mfi(high, low, close,volume,session_starts, period=overbought_period, fill_value=50)
-        mfi_oversold = compute_mfi(high, low, close,volume,session_starts,period=oversold_period, fill_value=50)
+        is_mfi_overbought = compute_mfi(high, low, close,volume,session_starts, period=overbought_period, fill_value=50)
+        is_mfi_oversold = compute_mfi(high, low, close,volume,session_starts,period=oversold_period, fill_value=50)
 
         # Indicateurs principaux avec périodes distinctes
-        features_df['mfi_overbought_period'] = mfi_overbought
-        features_df['mfi_oversold_period'] = mfi_oversold
+        features_df['mfi_overbought_period'] = is_mfi_overbought
+        features_df['mfi_oversold_period'] = is_mfi_oversold
 
         # Indicateurs de surachat/survente avec périodes spécifiques
-        features_df['mfi_overbought'] = np.where(mfi_overbought > overbought_threshold, 1, 0)
-        features_df['mfi_oversold'] = np.where(mfi_oversold < oversold_threshold, 1, 0)
+        features_df['is_mfi_overbought'] = np.where(is_mfi_overbought > overbought_threshold, 1, 0)
+        features_df['is_mfi_oversold'] = np.where(is_mfi_oversold < oversold_threshold, 1, 0)
 
         # Indicateur de changement de zone (basé sur les MFI spécifiques)
-        mfi_overbought_series = pd.Series(mfi_overbought)
-        mfi_oversold_series = pd.Series(mfi_oversold)
+        mfi_overbought_series = pd.Series(is_mfi_overbought)
+        mfi_oversold_series = pd.Series(is_mfi_oversold)
 
         # Sortie de la zone de surachat (signal baissier)
         exit_overbought = (mfi_overbought_series.shift(1) > overbought_threshold) & (
@@ -2098,25 +2358,15 @@ def add_mfi(df, features_df,
         exit_oversold = (mfi_oversold_series.shift(1) < oversold_threshold) & (
                     mfi_oversold_series >= oversold_threshold)
 
-        # Combinaison des signaux
-        features_df['mfi_zone_change'] = np.where(
-            exit_overbought, -1,
-            np.where(exit_oversold, 1, 0)
-        )
 
-        # Tendances des indicateurs
-        features_df['mfi_overbought_trend'] = np.sign(mfi_overbought_series.diff(3).fillna(0))
-        features_df['mfi_oversold_trend'] = np.sign(mfi_oversold_series.diff(3).fillna(0))
 
         # Normalisation entre 0 et 1
-        features_df['mfi_overbought_normalized'] = mfi_overbought / 100
-        features_df['mfi_oversold_normalized'] = mfi_oversold / 100
+
 
         # S'assurer que toutes les colonnes sont numériques
         columns = ['mfi_overbought_period', 'mfi_oversold_period',
-                   'mfi_overbought', 'mfi_oversold', 'mfi_zone_change',
-                   'mfi_overbought_trend', 'mfi_oversold_trend',
-                   'mfi_overbought_normalized', 'mfi_oversold_normalized']
+                   'is_mfi_overbought', 'is_mfi_oversold']
+
 
         for col in columns:
             features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
@@ -2128,15 +2378,28 @@ def add_mfi(df, features_df,
     return features_df
 
 
-def add_mfi_divergence(df, features_df, mfi_period=14, div_lookback=10):
+def add_mfi_divergence(df, features_df,
+                       mfi_period_bearish=14, mfi_period_antiBear=14,
+                       div_lookback_bearish=10, div_lookback_antiBear=10,
+                       min_price_increase=0.005, min_mfi_decrease=0.005,
+                       min_price_decrease=0.005, min_mfi_increase=0.005):
     """
-    Ajoute les indicateurs de divergence MFI/prix.
+    Ajoute les indicateurs de divergence MFI/prix pour les stratégies short.
+    Utilise les mêmes conditions que la fonction objective pour détecter
+    les signaux de divergence baissière et anti-divergence, avec la possibilité
+    d'utiliser des périodes différentes pour chaque type de divergence.
 
     Paramètres:
     - df: DataFrame contenant 'high', 'low', 'close', 'volume'
     - features_df: DataFrame où ajouter les colonnes de divergence
-    - mfi_period: Période pour le calcul du MFI (ex: 14)
-    - div_lookback: Période pour détecter les divergences (ex: 10)
+    - mfi_period_bearish: Période MFI pour la divergence baissière (ex: 14)
+    - mfi_period_antiBear: Période MFI pour l'anti-divergence (ex: 14)
+    - div_lookback_bearish: Période lookback pour la divergence baissière (ex: 10)
+    - div_lookback_antiBear: Période lookback pour l'anti-divergence (ex: 10)
+    - min_price_increase: Seuil minimal d'augmentation de prix en % pour divergence baissière
+    - min_mfi_decrease: Seuil minimal de diminution de MFI en % pour divergence baissière
+    - min_price_decrease: Seuil minimal de diminution de prix en % pour anti-divergence
+    - min_mfi_increase: Seuil minimal d'augmentation de MFI en % pour anti-divergence
 
     Retourne:
     - features_df enrichi des colonnes de divergence MFI
@@ -2146,45 +2409,97 @@ def add_mfi_divergence(df, features_df, mfi_period=14, div_lookback=10):
         low = pd.to_numeric(df['low'], errors='coerce')
         close = pd.to_numeric(df['close'], errors='coerce')
         volume = pd.to_numeric(df['volume'], errors='coerce')
-
         session_starts = (df['SessionStartEnd'] == 10).values
 
-        # Calcul du MFI s'il n'existe pas déjà
-        mfi = compute_mfi(high, low, close, volume, session_starts,period=mfi_period, fill_value=50)
-        #features_df['mfi'] = mfi
+        # Calcul du MFI pour divergence baissière
+        mfi_values_bearish = compute_mfi(high, low, close, volume, session_starts, period=mfi_period_bearish,
+                                         fill_value=50)
+        mfi_series_bearish = pd.Series(mfi_values_bearish)
 
+        # Calcul du MFI pour anti-divergence (uniquement si période différente)
+        if mfi_period_bearish == mfi_period_antiBear:
+            mfi_values_antiBear = mfi_values_bearish
+            mfi_series_antiBear = mfi_series_bearish
+        else:
+            mfi_values_antiBear = compute_mfi(high, low, close, volume, session_starts, period=mfi_period_antiBear,
+                                              fill_value=50)
+            mfi_series_antiBear = pd.Series(mfi_values_antiBear)
 
-        # Conversion en Series pour faciliter les calculs
-        close_series = pd.Series(close)
-        mfi_series = pd.Series(mfi)
+        # Ajouter les valeurs brutes du MFI au DataFrame
+        if mfi_period_bearish == mfi_period_antiBear:
+            features_df['mfi'] = mfi_values_bearish
+        else:
+            features_df['mfi_bearish'] = mfi_values_bearish
+            features_df['mfi_antiBear'] = mfi_values_antiBear
 
-        # Calcul des extrema locaux sur la période de lookback
-        price_highs = close_series.rolling(window=div_lookback).max()
-        price_lows = close_series.rolling(window=div_lookback).min()
-        mfi_highs = mfi_series.rolling(window=div_lookback).max()
-        mfi_lows = mfi_series.rolling(window=div_lookback).min()
+        # --------- Divergence baissière (signal d'entrée short) ---------
+        # Détection des divergences baissières
+        price_pct_change_bearish = close.pct_change(div_lookback_bearish).fillna(0)
+        mfi_pct_change_bearish = mfi_series_bearish.pct_change(div_lookback_bearish).fillna(0)
+
+        # Conditions pour une divergence baissière efficace
+        price_increase = price_pct_change_bearish > min_price_increase
+        mfi_decrease = mfi_pct_change_bearish < -min_mfi_decrease
+
+        # Prix fait un nouveau haut relatif
+        price_rolling_max = pd.Series(close).rolling(window=div_lookback_bearish).max().shift(1)
+        price_new_high = (close > price_rolling_max).fillna(False)
+
+        # Définir la divergence baissière avec les mêmes critères que dans l'objective
+        features_df['is_mfi_shortDiv'] = np.where(
+            (price_new_high | price_increase) &  # Prix fait un nouveau haut ou augmente significativement
+            (mfi_decrease),  # MFI diminue
+            1, 0
+        )
+
+        # --------- Anti-divergence (signal d'évitement de short) ---------
+        # Calculs spécifiques pour l'anti-divergence avec ses propres périodes
+        price_pct_change_antiBear = close.pct_change(div_lookback_antiBear).fillna(0)
+        mfi_pct_change_antiBear = mfi_series_antiBear.pct_change(div_lookback_antiBear).fillna(0)
+
+        # Conditions pour une anti-divergence (mauvais win rate)
+        price_decrease = price_pct_change_antiBear < -min_price_decrease  # Prix diminue
+        mfi_increase = mfi_pct_change_antiBear > min_mfi_increase  # MFI augmente
+
+        # Prix fait un nouveau bas relatif
+        price_rolling_min = pd.Series(close).rolling(window=div_lookback_antiBear).min().shift(1)
+        price_new_low = (close < price_rolling_min).fillna(False)
+
+        # Définir l'anti-divergence avec les critères exacts de l'objective
+        features_df['is_mfi_antiShortDiv'] = np.where(
+            (price_new_low | price_decrease) &  # Prix fait un nouveau bas ou diminue significativement
+            (mfi_increase),  # MFI augmente
+            1, 0
+        )
+
+        # --------- Versions traditionnelles des divergences (pour référence) ---------
+        # Utiliser les périodes bearish pour les divergences traditionnelles
+        price_highs = pd.Series(close).rolling(window=div_lookback_bearish).max()
+        price_lows = pd.Series(close).rolling(window=div_lookback_bearish).min()
+        mfi_highs = mfi_series_bearish.rolling(window=div_lookback_bearish).max()
+        mfi_lows = mfi_series_bearish.rolling(window=div_lookback_bearish).min()
 
         # Nouveaux sommets/creux (comparaison avec la période précédente)
-        price_new_high = close > price_highs.shift(1)
-        price_new_low = close < price_lows.shift(1)
-        mfi_new_high = mfi > mfi_highs.shift(1)
-        mfi_new_low = mfi < mfi_lows.shift(1)
+        price_new_high_simple = close > price_highs.shift(1)
+        price_new_low_simple = close < price_lows.shift(1)
+        mfi_new_high = mfi_series_bearish > mfi_highs.shift(1)
+        mfi_new_low = mfi_series_bearish < mfi_lows.shift(1)
 
-        # Divergences
-        # Divergence baissière: prix fait un nouveau haut mais pas le MFI
-        # Divergence haussière: prix fait un nouveau bas mais pas le MFI
-        features_df['mfi_short_divergence'] = np.where(price_new_high & ~mfi_new_high, 1, 0)
-        features_df['mfi_long_divergence'] = np.where(price_new_low & ~mfi_new_low, 1, 0)
-
-        # S'assurer que toutes les colonnes sont numériques
-        columns = ['mfi', 'mfi_short_divergence', 'mfi_long_divergence']
-
-        for col in columns:
-            if col in features_df.columns:
-                features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
+           # S'assurer que toutes les colonnes MFI sont numériques
+        mfi_columns = [col for col in features_df.columns if 'mfi' in col]
+        for col in mfi_columns:
+            features_df[col] = pd.to_numeric(features_df[col], errors='coerce').fillna(0)
 
     except Exception as e:
         print(f"Erreur dans add_mfi_divergence: {str(e)}")
+        # En cas d'erreur, initialiser les colonnes principales à 0
+        required_columns = [
+            'mfi_bearish', 'mfi_antiBear', 'is_mfi_shortDiv', 'is_mfi_antiShortDiv',
+
+        ]
+        for col in required_columns:
+            if col not in features_df.columns:
+                features_df[col] = 0
 
     return features_df
 
@@ -2294,29 +2609,55 @@ features_df = add_rsi(df, features_df, period=5)
 features_df = add_macd(df, features_df, short_period=4, long_period=8, signal_period=5)
 
 
-features_df = add_atr(df, features_df, atr_period_range=20, atr_period_extrem=25,
-            atr_low_threshold_range= 2.124, atr_high_threshold_range= 3.7641,
-            atr_low_threshold_extrem=1.5297)
+features_df = add_regression_slope(df, features_df, period_range=28, period_extrem=30,
+                     slope_range_threshold_low=0.2715994135835932 , slope_range_threshold_high=0.3842233665393566 ,
+                     slope_extrem_threshold_low=-0.299867692475089, slope_extrem_threshold_high=0.5280173704178184 )
 
-add_regression_slope(df, features_df, period_low=16, period_high=19,
-                     slope_range_threshold_low=-0.3598, slope_range_threshold_high=-0.214,
-                     slope_extrem_threshold_low=-0.358, slope_extrem_threshold_high=0.999)
+features_df = add_atr(df, features_df, atr_period_range=12, atr_period_extrem=25,
+            atr_low_threshold_range= 2.2906256448366022, atr_high_threshold_range= 2.6612737528788495,
+            atr_low_threshold_extrem=1.5360453527266502)
+
+features_df = add_vwap(df, features_df,
+         vwap_range_threshold_low=-2.6705237017186305, vwap_range_threshold_high=1.47028136092062,
+         vwap_extrem_threshold_low=-29.9292, vwap_extrem_threshold_high=45.8839)
 
 
-add_std_regression(df, features_df,
-                  period_range=29, period_extrem=45,
-                  std_low_threshold_range=1.77111553336117, std_high_threshold_range=1.9662301588456284,
-                  std_low_threshold_extrem=1.3693042751948086 ,std_high_threshold_extrem=4.8800554539004475)
 
-add_stochastic_force_indicators(df, features_df,
-                                    k_period_overbought=51, d_period_overbought=52,
-                                    k_period_oversold=105, d_period_oversold=106,
-                                    overbought_threshold=94, oversold_threshold=21,
+features_df = add_zscore(df, features_df,
+              period_range=48, period_extrem=0,
+              zscore_range_threshold_low=-0.3435, zscore_range_threshold_high=0.2173,
+              zscore_extrem_threshold_low=-0, zscore_extrem_threshold_high=0)
+
+# features_df = add_perctBB_simu(df, features_df,
+#                  period_high=105, period_low=5,
+#                  std_dev_high=1.7885122738322288, std_dev_low=1.2465031028992493,
+#                  bb_high_threshold=1.0446251463502378, bb_low_threshold=0.5936224871229059)
+
+features_df = add_std_regression(df, features_df,
+                  period_range=13, period_extrem=46,
+                  std_low_threshold_range=0.8468560606715232, std_high_threshold_range=0.9342162977682715,
+                  std_low_threshold_extrem=1.3744010118158592 ,std_high_threshold_extrem=5.0650563837214735)
+
+features_df = add_r2_regression(df, features_df,
+                    period_range=21, period_extrem=53,
+                    r2_low_threshold_range=0.10281944161014597, r2_high_threshold_range= 0.18548155526479806,
+                    r2_low_threshold_extrem= 0.020222174899276364, r2_high_threshold_extrem=0.8665041310372354)
+
+features_df = add_stochastic_force_indicators(df, features_df,
+                                    k_period_overbought=42, d_period_overbought=41,
+                                    k_period_oversold=105, d_period_oversold=169,
+                                    overbought_threshold=93, oversold_threshold=21,
                                     fi_short=4, fi_long=4)
 
-features_df = add_williams_r(df, features_df, period=3, overbought_threshold=-11, oversold_threshold=-86)
-features_df = add_mfi(df, features_df, overbought_period=33,oversold_period=50,overbought_threshold=67, oversold_threshold=39)
-features_df = add_mfi_divergence(df, features_df, mfi_period=3, div_lookback=30)
+features_df = add_williams_r(df, features_df, period_overbought=42, period_oversold=106, overbought_threshold=-7, oversold_threshold=-79)
+
+features_df = add_mfi(df, features_df, overbought_period=27,oversold_period=50,overbought_threshold=71, oversold_threshold=39)
+
+features_df = add_mfi_divergence(df, features_df,
+                       mfi_period_bearish=11, mfi_period_antiBear=14,
+                       div_lookback_bearish=7, div_lookback_antiBear=18,
+                       min_price_increase=0.0007855280106081092, min_mfi_decrease=0.00018,
+                       min_price_decrease=0.000892667864022656, min_mfi_increase=0.00093)
 
 column_settings = {
     # Time-based features
@@ -2345,11 +2686,7 @@ column_settings = {
     'stoch_k_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'stoch_d_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'stoch_d_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'stoch_crossover_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'stoch_crossover_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-    'stoch_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'stoch_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # Force index indicators
     'force_index_4': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
@@ -2358,7 +2695,9 @@ column_settings = {
     'force_index_4_norm': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'force_index_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'fi_momentum': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'fi_candle_aligned': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_stoch_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_stoch_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
 
     # Other technical indicators
     'rsi_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
@@ -2370,30 +2709,24 @@ column_settings = {
     #'minus_di_': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # Williams R indicators
+    'is_williams_r_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_williams_r_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'williams_r_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'williams_r_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'williams_r_zone_change': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'williams_r_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'williams_r_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'williams_r': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # MFI indicators
     #'mfi': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-
+    'is_mfi_overbought': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_mfi_oversold': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'mfi_overbought_period': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'mfi_oversold_period': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-    'mfi_zone_change': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_overbought_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_oversold_trend': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_bearish': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'mfi_antiBear': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_mfi_shortDiv': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'is_mfi_antiShortDiv': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-    'mfi_overbought_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_oversold_normalized': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-    'mfi_short_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
-    'mfi_long_divergence': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
     'VolAbvState': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
@@ -2632,10 +2965,29 @@ column_settings = {
     'is_rangeSlope': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'is_extremSlope': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
-'std_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'norm_diff_vwap': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_vwap_shortArea': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_vwap_notShortArea': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'std_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
     'std_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'is_range_volatility': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'is_extrem_volatility': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_range_volatility_std': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_extrem_volatility_std': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'zscore_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'zscore_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_zscore_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_zscore_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    # 'percent_b_high': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # 'percent_b_low': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # 'is_bb_high': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    # 'is_bb_low': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+
+    'r2_range': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'r2_extrem': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_range_volatility_r2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    'is_extrem_volatility_r2': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Zone volume ratios
     'ratio_vol_VolCont_ZoneA_xTicksContZone': (

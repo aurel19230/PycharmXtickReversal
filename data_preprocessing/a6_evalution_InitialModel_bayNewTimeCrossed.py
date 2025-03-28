@@ -8,7 +8,8 @@ from datetime import datetime
 import optuna
 from colorama import Fore, Style, init
 from func_standard import detect_environment,apply_data_feature_scaling
-from definition import *
+
+from stats_sc.standard_stat_sc import *
 import time
 
 STOP_OPTIMIZATION = False
@@ -891,6 +892,24 @@ if __name__ == "__main__":
 
     df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
 
+    indicators_to_test = [
+        'is_stoch_overbought', 'is_stoch_oversold',
+        'is_williams_r_overbought', 'is_williams_r_oversold',
+        'is_mfi_overbought', 'is_mfi_oversold',
+        'is_mfi_shortDiv', 'is_mfi_antiShortDiv',
+        'is_atr_range', 'is_atr_extremLow',
+        'is_rangeSlope',
+        'is_extremSlope',
+        'is_vwap_shortArea', 'is_vwap_notShortArea',
+        'is_range_volatility_std', 'is_extrem_volatility_std',
+        'is_zscore_range', 'is_zscore_extrem',
+        # 'is_bb_high', 'is_bb_low',
+        'is_range_volatility_r2', 'is_extrem_volatility_r2'
+    ]
+
+    # Supposons que vous avez déjà un dataframe df_init_features
+    results = analyze_indicator_winrates(df_init_features, indicators_to_test)
+    exit(19)
     # Liste des colonnes à vérifier et transformer
     columns_to_check = ['deltaTimestampOpeningSession5index', 'deltaTimestampOpeningSession15min']
 
@@ -968,6 +987,7 @@ if __name__ == "__main__":
         #'ratio_delta_vol_VA21P', #tres corrélé avec  ratio_delta_vol_VA16P ratio_delta_vol_VA6P mais moi avec la cible
         'naked_poc_dist_above',  # peux impact et nan
         'naked_poc_dist_below',# peux impact et nan
+        'force_index_divergence' #empty or null
         #'atr',
         # 'ratio_volRevMove_volImpulsMove',
         # 'ratio_deltaImpulsMove_volImpulsMove',
@@ -1019,6 +1039,7 @@ if __name__ == "__main__":
         'bullish_asc_dynamics',
         'bullish_dsc_dynamics',
         'bullish_asc_ask_bid_imbalance',
+
         'bullish_dsc_ask_bid_imbalance',
         'bullish_imbalance_evolution',
         'bullish_asc_ask_bid_delta_imbalance',

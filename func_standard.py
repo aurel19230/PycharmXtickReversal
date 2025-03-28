@@ -6,7 +6,6 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
     average_precision_score, matthews_corrcoef, precision_recall_curve, precision_score
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, MaxAbsScaler
-from stats_sc.standard_stat_sc import calculate_statistical_power,calculate_statistical_power_job
 
 
 import time
@@ -327,7 +326,7 @@ def split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
     print(f"Nombre total de lignes incluses : {total_included_rows}")
     print(f"Différence avec le total : {len(df) - total_included_rows}")
     print("\n")
-    return train_df, len(train_sessions), test_df, {len(test_sessions)}
+    return train_df, len(train_sessions), test_df, len(test_sessions)
 
 
 
@@ -1993,11 +1992,13 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             result['X_train'] = X_train
             result['y_train_label'] = y_train_label
             result['df_pnl_data_train'] = df_pnl_data_train
-        else:
+        else: #df_pnl_data_train is None:
             X_train, y_train_label, _, mask_train = remove_nan_inf(
                 X=X_train, y=y_train_label, df_pnl_data=None, dataset_name="train")
             result['X_train'] = X_train
             result['y_train_label'] = y_train_label
+            print("df_pnl_data_train is None")
+            exit(56)
 
         if X_test is not None and y_test_label is not None:
             if df_pnl_data_test is not None:
@@ -2011,10 +2012,11 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
                     X=X_test, y=y_test_label, df_pnl_data=None, dataset_name="test")
                 result['X_test'] = X_test
                 result['y_test_label'] = y_test_label
+                print("df_pnl_data_test is None")
+                exit(56)
 
     # Application éventuelle du scaling (normalisation/standardisation) des features
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
-    scaler = None
 
     if chosen_scaler != scalerChoice.SCALER_DISABLE:
         print(f"\n-- Scaler {chosen_scaler} actif ---\n")
@@ -2059,110 +2061,180 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             print(
                 f"\n!!!!!!!!!!!!!!!!!!!!!! POur la mutuelle information et MRMR il est préférable de normaliser les données  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
 
-        selected_columns_afterVifCorrMiFiltering = compute_display_statistic(
+        stats_result = compute_display_statistic(
             X=X_train_for_filtering, Y=y_train_label_for_filtering,
             name="X_train", config=config,
             compute_feature_stat=True,
             is_compute_vif=is_compute_vif)
 
-        explanation = """
-        🔍 **Explication des variables du tableau de résultats :**
+        print(stats_result['df_feature_vifAndStat_ok'])
+        print(f"Nombre de feature slectionnées avec VIF et Stat: {len(stats_result['df_feature_vifAndStat_ok'])}")
+        exit(44)
+        if stats_result is not None:
+            # Extraire les informations du résultat
+            selected_columns_afterVifCorrMiFiltering = stats_result['retained_columns']
+            X_train_modified = stats_result['X_modified']
+            pca_info = stats_result.get('pca_info', {})
 
-        - **Feature** : Nom de la feature analysée.
-        - **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
-        - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
-          - **> 0.8** : Effet fort ✅
-          - **0.5 - 0.8** : Effet moyen ⚠️
-          - **< 0.5** : Effet faible ❌
+            # Mettre à jour X_train
+            result['X_train'] = X_train_modified
 
-        - **P-Value** : Probabilité d'observer la relation par hasard.
-          - **< 0.01** : Très significatif ✅✅
-          - **0.01 - 0.05** : Significatif ✅
-          - **0.05 - 0.10** : Marginalement significatif ⚠️
-          - **> 0.10** : Non significatif ❌
+            # Pour X_test, appliquer seulement la PCA si l'objet PCA est disponible
+            if X_test is not None and pca_info.get('applied', False):
+                pca_object = pca_info.get('pca_object')
 
-        - **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
-          - **> 20** : Exceptionnellement puissant ✅✅
-          - **10 - 20** : Très intéressant ✅
-          - **5 - 10** : Modérément intéressant ⚠️
-          - **1 - 5** : Faiblement intéressant ❌
+                if pca_object is not None:
+                    # Extraire les informations nécessaires
+                    high_corr_columns_4pca = pca_info.get('high_corr_columns_4pca', [])
+                    pca_columns_created = pca_info.get('pca_columns_created', [])
 
-        - **MI (Information Mutuelle)** : Quantifie la dépendance entre la feature et la cible.
-          - **> 0.1** : Dépendance forte ✅✅
-          - **0.05 - 0.1** : Dépendance significative ✅
-          - **0.01 - 0.05** : Dépendance modérée ⚠️
-          - **< 0.01** : Dépendance faible ❌
+                    # Cas 1 : liste des colonnes source vide
+                    if not high_corr_columns_4pca:
+                        raise ValueError(
+                            "Impossible d'appliquer la PCA à X_test : la liste des colonnes sources pour la PCA est vide.")
 
-        - **mRMR_Score** : Information Mutuelle avec la cible moins redondance moyenne avec autres features.
-          - **> 0.05** : Signal fort et unique ✅✅
-          - **0.02 - 0.05** : Signal modéré peu redondant ✅
-          - **0.01 - 0.02** : Signal faible ou partiellement redondant ⚠️
-          - **< 0.01** : Signal très faible ou hautement redondant ❌
+                    # Cas 2 : certaines colonnes sources sont manquantes dans X_test
+                    missing_input_columns = [col for col in high_corr_columns_4pca if col not in X_test.columns]
+                    if missing_input_columns:
+                        raise ValueError(
+                            f"Impossible d'appliquer la PCA à X_test : colonnes manquantes dans X_test : {missing_input_columns}")
 
-        - **VIF (Variance Inflation Factor)** : Mesure la multicolinéarité avec les autres features.
-          - **< 2.5** : Excellente indépendance ✅✅
-          - **2.5 - 5** : Bonne indépendance ✅
-          - **5 - 7.5** : Redondance modérée, à évaluer ⚠️
-          - **> 7.5** : Forte redondance, potentiellement problématique ❌
-          - Crucial en trading pour éviter le surapprentissage et garantir la stabilité du modèle.
+                    # ✅ Tout est bon, on peut appliquer la PCA
+                    print(f"✅ Application de la PCA à X_test pour créer : {pca_columns_created}")
+                    exit(42)
+                    # Copier X_test pour le modifier
+                    X_test_copy = X_test.copy()
 
-        - **lr_target (Corrélation de Pearson)** : Mesure la relation linéaire avec la cible.
-          - **|r| > 0.3** : Corrélation linéaire forte en trading ✅✅
-          - **0.2 < |r| < 0.3** : Corrélation linéaire modérée ✅
-          - **0.1 < |r| < 0.2** : Corrélation linéaire faible ⚠️
-          - **|r| < 0.1** : Corrélation linéaire négligeable ❌
-          - Note: En trading, même des corrélations de 0.02-0.05 peuvent être significatives si elles sont persistantes et exploitables à haute fréquence.
+                    # Appliquer transform() avec le même objet PCA
+                    X_test_pca = pca_object.transform(X_test_copy[high_corr_columns_4pca])
 
-        - **nlr_target (Corrélation de Spearman)** : Mesure la relation monotone (non-linéaire) avec la cible.
-          - **|ρ| > 0.25** : Corrélation de rang forte en trading ✅✅
-          - **0.15 < |ρ| < 0.25** : Corrélation de rang modérée ✅
-          - **0.08 < |ρ| < 0.15** : Corrélation de rang faible ⚠️
-          - **|ρ| < 0.08** : Corrélation de rang négligeable ❌
-          - Particulièrement utile pour détecter des patterns de marché non-linéaires.
+                    # Ajouter les colonnes PCA générées
+                    for i, col_name in enumerate(pca_columns_created):
+                        if i < X_test_pca.shape[1]:
+                            X_test_copy[col_name] = X_test_pca[:, i]
+                        else:
+                            raise ValueError(f"La composante PCA {col_name} est manquante dans la transformation.")
 
-        - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
-        - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
-        - **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
-        - **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
+                    # Extraire les colonnes finales de X_train (après filtrage et PCA)
+                    x_train_columns = list(X_train_modified.columns)
 
-        🎯 **Interprétation des seuils de puissance statistique** :
-        - ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
-        - ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
-        - ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
+                    # Vérifier que toutes les colonnes de X_train sont bien dans X_test
+                    missing_in_test = [col for col in x_train_columns if col not in X_test_copy.columns]
+                    if missing_in_test:
+                        raise ValueError(
+                            f"Colonnes manquantes dans X_test après transformation PCA : {missing_in_test}")
 
-        📈 **Considérations spécifiques pour le trading** :
-        - Une feature avec un score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
-        - La différence entre les corrélations de Pearson (lr_target) et Spearman (nlr_target) peut révéler la nature de la relation avec le marché:
-          - Si Spearman > Pearson: Présence probable d'une relation non-linéaire (ex: effets de seuil, comportements asymétriques).
-          - Si Pearson > Spearman: Relation principalement linéaire, mais potentiellement influencée par des valeurs extrêmes.
-        - En trading algorithmique, des corrélations faibles (même 0.02-0.05) peuvent générer un avantage significatif si elles sont exploitées systématiquement et à grande échelle.
-        - Le VIF est crucial pour construire des modèles robustes: des features avec un fort pouvoir prédictif mais un VIF élevé peuvent déstabiliser le modèle en conditions réelles.
-        - Pour les stratégies haute fréquence, privilégiez des VIF plus stricts (<3-4) et des signaux faiblement corrélés entre eux.
-        - Pour les stratégies à plus long terme, des VIF jusqu'à 7-8 peuvent être acceptables si la feature apporte une information précieuse.
-        - Les scores mRMR élevés sont particulièrement précieux car ils identifient des signaux à la fois informatifs et non redondants.
-        - Testez toujours la stabilité temporelle de ces métriques sur différentes périodes de marché pour vérifier la persistance du signal.
-        """
+                    # Réordonner et filtrer X_test selon les colonnes de X_train
+                    X_test_copy = X_test_copy[x_train_columns]
+                    result['X_test'] = X_test_copy
+                    print("✅ PCA appliquée à X_test avec succès.")
 
-        print(explanation)
-        print("=" * 60)
-        print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
-        print(
-            f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
-        print("=" * 60)
+                else:
+                    raise ValueError(
+                        "Objet PCA non disponible : aucune transformation PCA ne peut être appliquée à X_test.")
 
-        # Nous ne faisons pas exit(77) ici pour permettre à la fonction de continuer
-    else:
-        # Pas de filtrage automatique, on garde les features sélectionnées manuellement
-        selected_columns_afterVifCorrMiFiltering = selected_columns_manual
-        print("\nRésumé:")
-        print(f"Nombre total de features filtrées manuellement: {len(selected_columns_manual)}")
-        print(
-            f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
+            else:
+                raise ValueError("X_test est None ou pca_info['applied'] est False : impossible d'appliquer la PCA.")
 
-    # Ajouter les colonnes sélectionnées au résultat
-    result['selected_columns'] = selected_columns_afterVifCorrMiFiltering
+        else:
+            print("Aucune colonne retournée par compute_display_statistic")
+            selected_columns_afterVifCorrMiFiltering = list(X_train.columns)
+            exit(81)
 
     return result
+#  explanation = """
+#     🔍 **Explication des variables du tableau de résultats :**
+#
+#     - **Feature** : Nom de la feature analysée.
+#     - **Sample_Size** : Nombre d'observations utilisées après filtrage des NaN.
+#     - **Effect_Size (Cohen's d)** : Mesure de la séparation entre les deux classes.
+#       - **> 0.8** : Effet fort ✅
+#       - **0.5 - 0.8** : Effet moyen ⚠️
+#       - **< 0.5** : Effet faible ❌
+#
+#     - **P-Value** : Probabilité d'observer la relation par hasard.
+#       - **< 0.01** : Très significatif ✅✅
+#       - **0.01 - 0.05** : Significatif ✅
+#       - **0.05 - 0.10** : Marginalement significatif ⚠️
+#       - **> 0.10** : Non significatif ❌
+#
+#     - **Fisher_Score (ANOVA F-test)** : Mesure la force discriminante de la feature.
+#       - **> 20** : Exceptionnellement puissant ✅✅
+#       - **10 - 20** : Très intéressant ✅
+#       - **5 - 10** : Modérément intéressant ⚠️
+#       - **1 - 5** : Faiblement intéressant ❌
+#
+#     - **MI (Information Mutuelle)** : Quantifie la dépendance entre la feature et la cible.
+#       - **> 0.1** : Dépendance forte ✅✅
+#       - **0.05 - 0.1** : Dépendance significative ✅
+#       - **0.01 - 0.05** : Dépendance modérée ⚠️
+#       - **< 0.01** : Dépendance faible ❌
+#
+#     - **mRMR_Score** : Information Mutuelle avec la cible moins redondance moyenne avec autres features.
+#       - **> 0.05** : Signal fort et unique ✅✅
+#       - **0.02 - 0.05** : Signal modéré peu redondant ✅
+#       - **0.01 - 0.02** : Signal faible ou partiellement redondant ⚠️
+#       - **< 0.01** : Signal très faible ou hautement redondant ❌
+#
+#     - **VIF (Variance Inflation Factor)** : Mesure la multicolinéarité avec les autres features.
+#       - **< 2.5** : Excellente indépendance ✅✅
+#       - **2.5 - 5** : Bonne indépendance ✅
+#       - **5 - 7.5** : Redondance modérée, à évaluer ⚠️
+#       - **> 7.5** : Forte redondance, potentiellement problématique ❌
+#       - Crucial en trading pour éviter le surapprentissage et garantir la stabilité du modèle.
+#
+#     - **lr_target (Corrélation de Pearson)** : Mesure la relation linéaire avec la cible.
+#       - **|r| > 0.3** : Corrélation linéaire forte en trading ✅✅
+#       - **0.2 < |r| < 0.3** : Corrélation linéaire modérée ✅
+#       - **0.1 < |r| < 0.2** : Corrélation linéaire faible ⚠️
+#       - **|r| < 0.1** : Corrélation linéaire négligeable ❌
+#       - Note: En trading, même des corrélations de 0.02-0.05 peuvent être significatives si elles sont persistantes et exploitables à haute fréquence.
+#
+#     - **nlr_target (Corrélation de Spearman)** : Mesure la relation monotone (non-linéaire) avec la cible.
+#       - **|ρ| > 0.25** : Corrélation de rang forte en trading ✅✅
+#       - **0.15 < |ρ| < 0.25** : Corrélation de rang modérée ✅
+#       - **0.08 < |ρ| < 0.15** : Corrélation de rang faible ⚠️
+#       - **|ρ| < 0.08** : Corrélation de rang négligeable ❌
+#       - Particulièrement utile pour détecter des patterns de marché non-linéaires.
+#
+#     - **Power_Analytical** : Puissance statistique basée sur une formule analytique.
+#     - **Power_MonteCarlo** : Puissance statistique estimée via simulations.
+#     - **Required_N** : Nombre d'observations nécessaires pour atteindre **Puissance = 0.8**.
+#     - **Power_Sufficient** : L'échantillon actuel est-il suffisant pour garantir la fiabilité de l'effet observé ?
+#
+#     🎯 **Interprétation des seuils de puissance statistique** :
+#     - ✅ **Puissance ≥ 0.8** : La feature a une distinction nette entre classes. Résultat très fiable.
+#     - ⚠️ **0.6 ≤ Puissance < 0.8** : Impact potentiel, mais fiabilité modérée. À considérer dans un ensemble de signaux.
+#     - ❌ **Puissance < 0.6** : Fiabilité insuffisante. Risque élevé que la relation observée soit due au hasard.
+#
+#     📈 **Considérations spécifiques pour le trading** :
+#     - Une feature avec un score modeste mais stable sur différentes périodes peut être plus précieuse qu'une feature avec un score élevé mais instable.
+#     - La différence entre les corrélations de Pearson (lr_target) et Spearman (nlr_target) peut révéler la nature de la relation avec le marché:
+#       - Si Spearman > Pearson: Présence probable d'une relation non-linéaire (ex: effets de seuil, comportements asymétriques).
+#       - Si Pearson > Spearman: Relation principalement linéaire, mais potentiellement influencée par des valeurs extrêmes.
+#     - En trading algorithmique, des corrélations faibles (même 0.02-0.05) peuvent générer un avantage significatif si elles sont exploitées systématiquement et à grande échelle.
+#     - Le VIF est crucial pour construire des modèles robustes: des features avec un fort pouvoir prédictif mais un VIF élevé peuvent déstabiliser le modèle en conditions réelles.
+#     - Pour les stratégies haute fréquence, privilégiez des VIF plus stricts (<3-4) et des signaux faiblement corrélés entre eux.
+#     - Pour les stratégies à plus long terme, des VIF jusqu'à 7-8 peuvent être acceptables si la feature apporte une information précieuse.
+#     - Les scores mRMR élevés sont particulièrement précieux car ils identifient des signaux à la fois informatifs et non redondants.
+#     - Testez toujours la stabilité temporelle de ces métriques sur différentes périodes de marché pour vérifier la persistance du signal.
+#     """
+#
+#     print(explanation)
+#     print("=" * 60)
+#     print(f"Nombre total de features après filtrage manuel: {len(selected_columns_manual)}")
+#     print(
+#         f"Nombre total de features après filtrage VIF, CORR et MI: {len(selected_columns_afterVifCorrMiFiltering)}")
+#     print("=" * 60)
+#
+#     # Nous ne faisons pas exit(77) ici pour permettre à la fonction de continuer
+# else:
+#     # Pas de filtrage automatique, on garde les features sélectionnées manuellement
+#     selected_columns_afterVifCorrMiFiltering = selected_columns_manual
+#     print("\nRésumé:")
+#     print(f"Nombre total de features filtrées manuellement: {len(selected_columns_manual)}")
+#     print(
+#         f"Nombre total de features (filtrage VIF, CORR et MI désactivé): {len(selected_columns_afterVifCorrMiFiltering)}")
 
 def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CUSTOM_SESSIONS_=None,
                  results_directory=None):
@@ -2401,18 +2473,48 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     )
 
     # Récupération des données nettoyées et des colonnes sélectionnées
-    X_train_clean = result['X_train']
-    y_train_label_clean = result['y_train_label']
+    X_train_clean = result['X_train'] #after remonving nan and inf data
+    y_train_label_clean = result['y_train_label'] #after remonving nan and inf data
     X_test_clean = result['X_test']
     y_test_label_clean = result['y_test_label']
     df_pnl_data_train_clean = result['df_pnl_data_train']  # Ajouté
     df_pnl_data_test_clean = result['df_pnl_data_test']  # Ajouté
-    selected_columns = result['selected_columns']
+    # selected_columns = result['selected_columns']
+    #
+    # # Utilisation des colonnes sélectionnées
+    # X_train_filtered = X_train_clean[selected_columns]
+    # X_test_filtered = X_test_clean[selected_columns]
 
-    # Utilisation des colonnes sélectionnées
-    X_train_filtered = X_train_clean[selected_columns]
-    X_test_filtered = X_test_clean[selected_columns]
+    # Affichage lisible
+    print("Colonnes de X_train_clean :")
+    print(list(X_train_clean.columns))
 
+    print("\nColonnes de X_test_clean :")
+    print(list(X_test_clean.columns))
+
+    # Comparaison stricte : mêmes noms, même ordre
+    if list(X_train_clean.columns) == list(X_test_clean.columns):
+        print("\n✅ Les colonnes de X_train_clean et X_test_clean sont identiques (ordre et noms).")
+    else:
+        print("\n❌ Les colonnes sont différentes entre X_train_clean et X_test_clean.")
+
+    def check_columns_not_empty_or_zero(df, df_name):
+        empty_or_zero_cols = []
+        for col in df.columns:
+            values = df[col]
+            # Vérifie si tout est NaN ou tout est 0
+            if values.isna().all() or (values == 0).all():
+                empty_or_zero_cols.append(col)
+
+        if empty_or_zero_cols:
+            raise ValueError(
+                f"❌ Les colonnes suivantes de {df_name} sont vides ou constantes à 0 : {empty_or_zero_cols}")
+        else:
+            print(f"✅ Toutes les colonnes de {df_name} contiennent des valeurs valides (≠ 0 et ≠ NaN)")
+
+    # Vérifications
+    check_columns_not_empty_or_zero(X_train_clean, "X_train_clean")
+    check_columns_not_empty_or_zero(X_test_clean, "X_test_clean")
 
     # Retour des ensembles de données préparés
     return (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
@@ -7386,7 +7488,7 @@ def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_compo
 
     # 1️⃣ Calculer la matrice de corrélation
     corr_matrix = X[feature_list].corr(
-    #    method='spearman'
+        #    method='spearman'
     )
 
     # Affichage de la heatmap de corrélation si demandé
@@ -7408,27 +7510,27 @@ def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_compo
         plt.show()
 
     # 2️⃣ Identifier les colonnes fortement corrélées
-    high_corr_columns = set()
+    high_corr_columns_4pca = set()
 
     for i in range(len(feature_list)):
         for j in range(i + 1, len(feature_list)):  # On évite les doublons et la diagonale
             if abs(corr_matrix.iloc[i, j]) >= corr_threshold:
-                high_corr_columns.add(feature_list[i])
-                high_corr_columns.add(feature_list[j])
+                high_corr_columns_4pca.add(feature_list[i])
+                high_corr_columns_4pca.add(feature_list[j])
 
-    high_corr_columns = sorted(high_corr_columns)  # Trier pour l'affichage
+    high_corr_columns_4pca = sorted(high_corr_columns_4pca)  # Trier pour l'affichage
 
-    if not high_corr_columns:
+    if not high_corr_columns_4pca:
         print(f"✅ Aucune variable fortement corrélée (> {corr_threshold}), la PCA n'est pas appliquée.")
         return X
 
-    print(f"✅ Variables retenues pour la PCA (corrélation ≥ {corr_threshold}) : {high_corr_columns}")
+    print(f"✅ Variables retenues pour la PCA (corrélation ≥ {corr_threshold}) : {high_corr_columns_4pca}")
 
     # 3️⃣ Appliquer la PCA sur ces variables
     # Appliquer la PCA avec le bon nombre de composantes
     pca = PCA(n_components=n_components)
     # Correction ici : utiliser les données de X pour les colonnes à forte corrélation
-    X_pca_transformed = pca.fit_transform(X[high_corr_columns])
+    X_pca_transformed = pca.fit_transform(X[high_corr_columns_4pca])
 
     # Ajouter les nouvelles features PCA à X avec le préfixe personnalisé
     for i in range(pca.n_components_):
@@ -7436,12 +7538,305 @@ def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_compo
         print(f'{pca_prefix}{i + 1} generated')
 
     essential_columns = {'deltaTimestampOpeningSession1min'}  # Liste des colonnes à ne PAS supprimer
-    high_corr_columns = [col for col in high_corr_columns if col not in essential_columns]
+    high_corr_columns_4pca = [col for col in high_corr_columns_4pca if col not in essential_columns]
 
     # Optionnel : Supprimer les anciennes colonnes après la PCA
-    X.drop(columns=high_corr_columns, inplace=True)
+    X.drop(columns=high_corr_columns_4pca, inplace=True)
 
-    return X  # Retourne X modifié
+    return X, high_corr_columns_4pca,pca  # Retourne X modifié
+
+
+def calculate_statistical_power_job(X, y, feature_list=None,
+                                    alpha=0.05, target_power=0.8, n_simulations_monte=20000,
+                                    sample_fraction=0.8, verbose=True,
+                                    method_powerAnaly='both', n_jobs=-1):
+    """
+    Calcule la puissance statistique analytique et/ou par simulation Monte Carlo.
+
+    Comportement selon la méthode choisie :
+    - 'analytical' : Calcule la puissance analytique uniquement pour les distributions normales (t-test).
+                     Pour les distributions non normales ou petits échantillons (Mann-Whitney U),
+                     aucune puissance analytique n'est calculée.
+    - 'montecarlo' : Calcule la puissance par simulation Monte Carlo en réalisant plusieurs sous-échantillonnages
+                     des données originales. Pour chaque sous-échantillon, la fonction détermine s'il faut utiliser
+                     un test t (pour les distributions normales avec grands échantillons) ou un test de Mann-Whitney U
+                     (pour les distributions non normales ou petits échantillons). Cette décision est prise
+                     indépendamment pour chaque simulation et n'est pas influencée par les tests effectués
+                     sur les données complètes.
+    - 'both' : Combine les deux approches ci-dessus.
+
+    Parameters:
+    -----------
+    X : pandas.DataFrame
+        DataFrame contenant les variables indépendantes
+    y : pandas.Series
+        Variable cible binaire (0/1)
+    feature_list : list, optional
+        Liste des caractéristiques à analyser. Si None, toutes les colonnes de X sont utilisées.
+    alpha : float, default=0.05
+        Seuil de significativité
+    target_power : float, default=0.8
+        Puissance statistique cible pour le calcul de la taille d'échantillon requise
+    n_simulations_monte : int, default=20000
+        Nombre de simulations Monte Carlo à exécuter
+    sample_fraction : float, default=0.8
+        Fraction de l'échantillon à utiliser dans chaque simulation Monte Carlo
+    verbose : bool, default=True
+        Si True, affiche des informations sur la progression et les tests
+    method_powerAnaly : str, default='both'
+        Méthode de calcul de la puissance : 'analytical', 'montecarlo', ou 'both'
+    n_jobs : int, default=-1
+        Nombre de jobs parallèles pour la simulation Monte Carlo. -1 utilise tous les processeurs disponibles.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame contenant les résultats pour chaque caractéristique
+    """
+    import numpy as np
+    import pandas as pd
+    from scipy.stats import normaltest, mannwhitneyu, ttest_ind, levene
+    from statsmodels.stats.power import TTestIndPower
+    from joblib import Parallel, delayed
+
+    def run_single_simulation_auto(group0, group1, sample_fraction, alpha):
+        """
+        Exécute une seule simulation Monte Carlo avec le test approprié.
+        Retourne 1 si le test est significatif, 0 sinon.
+        """
+        # Sous-échantillonnage des groupes
+        n0 = max(1, int(len(group0) * sample_fraction))
+        n1 = max(1, int(len(group1) * sample_fraction))
+
+        sample0 = np.random.choice(group0, size=n0, replace=True)
+        sample1 = np.random.choice(group1, size=n1, replace=True)
+
+        # Choix automatique du test approprié
+        if n0 > 20 and n1 > 20:
+            # Pour les grands échantillons, vérifier la normalité
+            try:
+                norm_test_0 = normaltest(sample0).pvalue
+                norm_test_1 = normaltest(sample1).pvalue
+                var_test_p = levene(sample0, sample1).pvalue
+
+                if norm_test_0 > 0.05 and norm_test_1 > 0.05:
+                    # Distributions normales → t-test
+                    _, p_value = ttest_ind(sample0, sample1, equal_var=(var_test_p > 0.05))
+                else:
+                    # Distributions non normales → Mann-Whitney U
+                    _, p_value = mannwhitneyu(sample0, sample1, alternative='two-sided')
+            except:
+                # En cas d'erreur, utiliser Mann-Whitney par défaut
+                _, p_value = mannwhitneyu(sample0, sample1, alternative='two-sided')
+        else:
+            # Petits échantillons → Mann-Whitney par défaut
+            _, p_value = mannwhitneyu(sample0, sample1, alternative='two-sided')
+
+        # Retourne 1 si test significatif, 0 sinon
+        return 1 if p_value < alpha else 0
+
+    # Validation de la méthode d'analyse
+    valid_methods = ['both', 'analytical', 'montecarlo']
+    if method_powerAnaly not in valid_methods:
+        raise ValueError(f"La méthode '{method_powerAnaly}' n'est pas valide. Options: {', '.join(valid_methods)}")
+
+    # Initialisation de la liste des caractéristiques
+    if feature_list is None:
+        feature_list = X.columns.tolist()
+    else:
+        feature_list = [f for f in feature_list if f in X.columns]
+
+    # Suppression des caractéristiques constantes
+    constant_features = [col for col in feature_list if X[col].nunique() <= 1]
+    if constant_features and verbose:
+        print(f"⚠️ {len(constant_features)} features constantes retirées: {constant_features}")
+
+    feature_list = [f for f in feature_list if f not in constant_features]
+
+    # Initialisation des résultats
+    results = []
+    power_analysis = TTestIndPower()
+    total_features = len(feature_list)
+
+    # Analyser chaque caractéristique
+    for i, feature in enumerate(feature_list):
+        if verbose and i % max(1, total_features // 10) == 0:
+            print(f"Traitement: {i + 1}/{total_features} features ({((i + 1) / total_features) * 100:.1f}%)")
+
+        # Préparation des données
+        X_feature = X[feature].copy()
+        mask = X_feature.notna() & y.notna()
+        X_filtered = X_feature[mask].values
+        y_filtered = y[mask].values
+
+        group0 = X_filtered[y_filtered == 0]
+        group1 = X_filtered[y_filtered == 1]
+
+        # Vérifier si les groupes sont assez grands
+        if len(group0) <= 1 or len(group1) <= 1:
+            if verbose:
+                print(
+                    f"⚠️ Feature '{feature}' ignorée : groupes trop petits (group0={len(group0)}, group1={len(group1)})")
+            continue
+
+        # Calcul de la taille d'effet
+        mean_diff = np.mean(group1) - np.mean(group0)
+        pooled_std = np.sqrt(((len(group0) - 1) * np.std(group0, ddof=1) ** 2 +
+                              (len(group1) - 1) * np.std(group1, ddof=1) ** 2) /
+                             (len(group0) + len(group1) - 2))
+
+        if pooled_std == 0:
+            if verbose:
+                print(f"⚠️ Feature '{feature}' ignorée : écart-type commun nul")
+            continue
+
+        effect_size = mean_diff / pooled_std
+
+        # Initialisation des variables pour les résultats
+        power_analytical = None
+        required_n = None
+        p_value = None
+        test_type = None
+        normality_status = None
+
+        # Analyse statistique et calcul de la puissance analytique
+        if method_powerAnaly in ['both', 'analytical']:
+            if len(group0) > 20 and len(group1) > 20:
+                # Test de normalité pour les grands échantillons
+                norm_test_0 = normaltest(group0).pvalue
+                norm_test_1 = normaltest(group1).pvalue
+                var_test_p = levene(group0, group1).pvalue
+
+                if norm_test_0 > 0.05 and norm_test_1 > 0.05:
+                    # Les deux distributions sont normales → test t
+                    test_type = "t-test"
+                    normality_status = "normales"
+                    analytical_possible = True
+
+                    t_stat, p_value = ttest_ind(group0, group1, equal_var=(var_test_p > 0.05))
+                    equal_var_status = "homogènes" if var_test_p > 0.05 else "hétérogènes"
+
+                    # Calcul de la puissance analytique
+                    power_analytical = power_analysis.power(
+                        effect_size=abs(effect_size),
+                        nobs1=len(group0),
+                        alpha=alpha,
+                        ratio=len(group1) / len(group0)
+                    )
+
+                    # Calcul de la taille d'échantillon requise
+                    try:
+                        required_n = power_analysis.solve_power(
+                            effect_size=abs(effect_size),
+                            power=target_power,
+                            alpha=alpha,
+                            ratio=len(group1) / len(group0)
+                        )
+                    except (ValueError, RuntimeError):
+                        required_n = np.nan
+                else:
+                    # Au moins une distribution non normale → Mann-Whitney U
+                    test_type = "Mann-Whitney U"
+                    normality_status = "non normales"
+                    analytical_possible = False
+
+                    t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+                    power_analytical = None  # Pas de formule analytique pour Mann-Whitney
+            else:
+                # Petit échantillon → Mann-Whitney par défaut
+                test_type = "Mann-Whitney U"
+                normality_status = "échantillons trop petits pour test de normalité"
+                analytical_possible = False
+
+                t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+                power_analytical = None  # Pas de formule analytique pour Mann-Whitney
+
+            if verbose:
+                if analytical_possible:
+                    print(f"# {normality_status.capitalize()} → {test_type} (utilisé pour le calcul analytique)")
+                else:
+                    print(f"# {normality_status.capitalize()} → {test_type} (pas de calcul analytique possible)")
+        else:
+            # Si uniquement Monte Carlo, tester quand même pour information
+            if len(group0) > 20 and len(group1) > 20:
+                norm_test_0 = normaltest(group0).pvalue
+                norm_test_1 = normaltest(group1).pvalue
+                var_test_p = levene(group0, group1).pvalue
+
+                if norm_test_0 > 0.05 and norm_test_1 > 0.05:
+                    test_type = "t-test"
+                    normality_status = "normales"
+                    t_stat, p_value = ttest_ind(group0, group1, equal_var=(var_test_p > 0.05))
+                else:
+                    test_type = "Mann-Whitney U"
+                    normality_status = "non normales"
+                    t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+            else:
+                test_type = "Mann-Whitney U"
+                normality_status = "échantillons trop petits pour test de normalité"
+                t_stat, p_value = mannwhitneyu(group0, group1, alternative='two-sided')
+
+            if verbose:
+                test_info = f"# {normality_status.capitalize()} → {test_type} (non utilisé pour Monte Carlo)"
+
+        # Simulation Monte Carlo
+        power_monte_carlo = None
+        if method_powerAnaly in ['both', 'montecarlo']:
+            if verbose:
+                if 'test_info' in locals():
+                    print(f"{test_info} | Exécution de {n_simulations_monte} simulations Monte Carlo...")
+                else:
+                    print(f"# Exécution de {n_simulations_monte} simulations Monte Carlo...")
+
+            results_parallel = Parallel(n_jobs=n_jobs)(
+                delayed(run_single_simulation_auto)(group0, group1, sample_fraction, alpha)
+                for _ in range(n_simulations_monte)
+            )
+            power_monte_carlo = np.mean(results_parallel)
+
+            if verbose:
+                print(f"# Puissance Monte Carlo calculée : {power_monte_carlo:.4f}")
+
+        # Stockage des résultats
+        result_row = {
+            'Feature': feature,
+            'Sample_Size': len(X_filtered),
+            'Group0_Size': len(group0),
+            'Group1_Size': len(group1),
+            'Effect_Size': effect_size,
+            'P_Value': p_value,
+            'Test_Type': test_type,
+            'Normality_Status': normality_status,
+            'Required_N': np.ceil(required_n) if required_n is not None else np.nan,
+            'Power_Analytical': power_analytical,
+            'Power_MonteCarlo': power_monte_carlo,
+        }
+
+        results.append(result_row)
+
+    # Résumé final
+    if verbose:
+        non_normal_count = sum(1 for r in results if r['Normality_Status'] == 'non normales')
+        normal_count = sum(1 for r in results if r['Normality_Status'] == 'normales')
+        small_sample_count = sum(
+            1 for r in results if r['Normality_Status'] == 'échantillons trop petits pour test de normalité')
+
+        print(f"\nRésumé des analyses :")
+        print(f"- Nombre total de caractéristiques analysées : {len(results)}")
+        print(f"- Distributions normales : {normal_count}")
+        print(f"- Distributions non normales : {non_normal_count}")
+        print(f"- Échantillons trop petits pour test de normalité : {small_sample_count}")
+
+        if method_powerAnaly in ['both', 'analytical']:
+            analytical_computed = sum(1 for r in results if r['Power_Analytical'] is not None)
+            print(f"- Puissance analytique calculée pour {analytical_computed} caractéristiques")
+
+        if method_powerAnaly in ['both', 'montecarlo']:
+            print(f"- Puissance Monte Carlo calculée pour {len(results)} caractéristiques")
+
+    return pd.DataFrame(results)
+
+
 ###############################################################################
 # Fonction Gestion de la selection des features
 ###############################################################################
@@ -7492,8 +7887,8 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         # Pour les mettre dans pca_columns
         if pca_columns:
             pca_columns = pca_columns
-            apply_pca_on_high_corr_features(X, pca_columns, corr_threshold=0.3, n_components=5,
-                                            plot_correlation=True, pca_prefix="pca_")
+            X, high_corr_columns_4pca,pca_object = apply_pca_on_high_corr_features(X, pca_columns, corr_threshold=0.3, n_components=5,
+                                                            plot_correlation=True, pca_prefix="pca_")
 
     # Chargement des paramètres
     vif_threshold = config.get('vif_threshold', 0)
@@ -7961,12 +8356,27 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
     analysis_df_columns = [c for c in analysis_df_columns if c in analysis_df.columns]
     analysis_df = analysis_df[analysis_df_columns]
 
-
+    features_data = []
 
     for i in range(len(analysis_df)):
         row = analysis_df.iloc[i]
         output_values = []
         output_colors = []
+        if is_compute_vif:
+
+            if row['is_vif'] and row['is_stat']:
+                features_data.append({
+                    'Feature': row['Feature'],
+                    'is_vif': row['is_vif'],
+                    'is_stat': row['is_stat'],
+                    'powStat': row['powStat'],
+                    'lr_target': row['lr_target'],
+                    'nlr_target': row['nlr_target'],
+                    'mi': row['mi'],
+                    'mrmr_score': row['mrmr_score'],
+                    'Fisher_Score': row['Fisher_Score'],
+                    'p-value': row['p-value']
+                })
 
         # (1) Feature
         output_values.append(row['Feature'])
@@ -8035,7 +8445,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
                 output_values.append('n.a')
                 output_colors.append('')
-        
+
         # 4) Corrélation (lr_target et nlr_target), s'ils existent
         if 'lr_target' in analysis_df.columns and 'nlr_target' in analysis_df.columns:
             lr_val = row.get('lr_target', 'n.a')
@@ -8212,8 +8622,31 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         header_line += fmt.format(header) + ' '
     print("-" * len(header_line))
     print(header_line.strip())
-    if compute_feature_stat ==True:
-        return retained_columns
+    # if compute_feature_stat ==True:
+    #     return retained_columns
+
+    # À la fin de la fonction compute_display_statistic, remplacez le bloc de retour par ceci:
+    if compute_feature_stat == True:
+        # Récupérer les colonnes PCA qui ont été générées
+        pca_columns_created = [col for col in X.columns if col.startswith('pca_')]
+
+        # Créer une structure pca_info
+        pca_info = {
+            'applied': len(pca_columns_created) > 0,
+            'pca_columns_created': pca_columns_created,
+            'high_corr_columns_4pca': high_corr_columns_4pca if 'high_corr_columns_4pca' in locals() else [],
+            'pca_object': pca_object if 'pca_object' in locals() else None  # Stocker l'objet PCA
+        }
+
+        df_feature_vifAndStat_ok = pd.DataFrame(features_data)
+        df_feature_vifAndStat_ok = df_feature_vifAndStat_ok.drop_duplicates(subset='Feature', keep='first')
+
+        # Retourner un dictionnaire contenant les colonnes retenues et les informations sur la PCA
+        return {
+            'df_feature_vifAndStat_ok': df_feature_vifAndStat_ok,
+            'X_modified': X,  # Renvoyer X qui contient maintenant les colonnes PCA
+            'pca_info': pca_info
+        }
 
     return None
 
@@ -9649,94 +10082,660 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
                          f"X_test ({len(X_test_result)}) et y_test_label ({len(y_test_label_result)})")
 
     return X_train_result, X_test_result, y_train_label_result, y_test_label_result, scaler, scaler_params
-def calculate_atr(df, period=6, avg_type='sma', fill_value=0):
+
+@njit
+def _calculate_atr_numba(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    session_starts: np.ndarray,
+    period: int,
+    avg_type_code: int,
+    fill_value: float
+) -> np.ndarray:
     """
-    Calcule l'ATR (Average True Range) par session, en réinitialisant à chaque
-    début de session sans chevaucher la session précédente. Les premières barres
-    (< period) de chaque session sont forcées à fill_value.
+    Version compilée Numba pour calculer l'ATR par session, sans chevauchement.
 
     Paramètres
     ----------
-    df : DataFrame
-        Doit contenir au moins les colonnes :
-          - 'high'
-          - 'low'
-          - 'close'
-          - 'session_starts' (booléen) : True pour la 1ère bougie d'une session
+    high, low, close : np.ndarray (1D, float)
+        Tableaux des prix high, low, close.
+    session_starts : np.ndarray (1D, bool ou int)
+        Indique True/1 si c'est la première barre d'une session, False/0 sinon.
     period : int
-        Fenêtre de calcul de l’ATR (défaut 6).
-    avg_type : str
-        Type de moyenne pour lisser l'ATR :
-          - 'sma' (Simple Moving Average)
-          - 'ema' (Exponential Moving Average)
-          - 'wma' (Weighted Moving Average)
+        Période de calcul de l’ATR.
+    avg_type_code : int
+        0 = 'sma'
+        1 = 'ema'
+        2 = 'wma'
     fill_value : float
-        Valeur utilisée lorsque l'ATR n'est pas calculable (début de session).
+        Valeur pour les barres < period dans une session.
 
-    Retourne
-    -------
-    pandas.Series
-        Série ATR alignée sur l'index de df, sans chevauchement entre sessions.
-        Les premières barres de chaque session (moins de `period`) sont à fill_value.
+    Retour
+    ------
+    atr_array : np.ndarray (1D, float)
+        Tableau ATR, même taille que high/low/close.
     """
-    df = df.copy()  # Pour éviter de modifier l'original
+    n = len(high)
 
-    # Détection des débuts de session
-    session_starts = (df['SessionStartEnd'] == 10).values
+    # Préparer un array résultat, initialisé à fill_value
+    atr_array = np.full(n, fill_value, dtype=np.float64)
 
-    # Ajout dans le DataFrame si nécessaire
-    df['session_starts'] = session_starts
+    # Calcul du TR vectorisé
+    # On a besoin de close décalé (close[-1]) => on peut le faire "à la main"
+    close_shifted = np.empty(n, dtype=np.float64)
+    close_shifted[0] = close[0]
+    for i in range(1, n):
+        close_shifted[i] = close[i - 1]
 
-    # Création d’un identifiant unique pour chaque session
-    df['session_id'] = df['session_starts'].cumsum()
+    tr_values = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        # high-low
+        hl = high[i] - low[i]
+        # |high - close(-1)|
+        hc = abs(high[i] - close_shifted[i])
+        # |low - close(-1)|
+        lc = abs(low[i] - close_shifted[i])
+        tr_values[i] = max(hl, hc, lc)
 
-    # Calculer le True Range (TR) pour chaque barre
-    high_low = df['high'] - df['low']
-    high_close_prev = (df['high'] - df['close'].shift(1)).abs()
-    low_close_prev  = (df['low']  - df['close'].shift(1)).abs()
+    # Variables pour SMA
+    window_sum = 0.0
+    # On stocke la dernière "period" TR dans un buffer (pour SMA/WMA)
+    # Cela évite l'overhead d'une deque ou list en Python
+    buffer_tr = np.zeros(period, dtype=np.float64)
+    buf_idx = 0   # Position courante dans le buffer
+    count_in_window = 0
 
-    # TR est le max des trois
-    df['tr'] = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+    # Variables pour EMA
+    ema_prev = 0.0
+    alpha = 2.0 / (period + 1.0)
 
-    # Préparer une colonne ATR que l'on remplira session par session
-    df['atr'] = np.nan
+    # Variables pour WMA (on stocke TR dans le même buffer,
+    # mais le calcul diffère car on a besoin de weights = 1..period)
+    weights = np.zeros(period, dtype=np.float64)
+    for w in range(period):
+        weights[w] = w + 1
 
-    # Parcourir chaque session pour calculer un ATR local sans chevauchement
-    for sid, grp in df.groupby('session_id', sort=False):
-        # Indices locaux de cette session
-        indices = grp.index
+    # Indice où commence la session en cours
+    session_start = 0
 
-        # Calcul du lissage selon avg_type
-        if avg_type.lower() == 'sma':
-            # Moyenne mobile simple
-            atr_values = grp['tr'].rolling(window=period, min_periods=1).mean()
+    for i in range(n):
+        # Si on démarre la toute première barre OU on est sur un début de session
+        if i == 0 or session_starts[i]:
+            # Réinitialisation
+            window_sum = 0.0
+            buf_idx = 0
+            count_in_window = 0
+            ema_prev = 0.0
+            session_start = i
 
-        elif avg_type.lower() == 'wma':
-            # Moyenne mobile pondérée
-            weights = np.arange(1, period + 1)
-            atr_values = grp['tr'].rolling(window=period, min_periods=1).apply(
-                lambda x: np.sum(weights * x) / weights.sum(), raw=True
-            )
+            # La première barre d'une session => on force fill_value
+            atr_array[i] = fill_value
+            continue
 
-        elif avg_type.lower() == 'ema':
-            # Moyenne mobile exponentielle
-            # ewm n'a pas de paramètre "min_periods=1", mais la première barre aura quand même
-            # une valeur identique à TR lui-même. On va ensuite forcer manuellement
-            # les (period-1) premières barres à fill_value.
-            atr_values = grp['tr'].ewm(span=period, adjust=False).mean()
+        # Valeur TR courante
+        tr_val = tr_values[i]
+        # Nombre de barres déjà vues dans la session
+        bars_in_session = i - session_start + 1
+
+        if avg_type_code == 0:
+            # --- SMA ---
+            # Retirer l'ancienne valeur si on a déjà "period" dans le buffer
+            if count_in_window == period:
+                old_val = buffer_tr[buf_idx]
+                window_sum -= old_val
+
+            # Ajouter la nouvelle
+            buffer_tr[buf_idx] = tr_val
+            window_sum += tr_val
+
+            # Avancer buf_idx
+            buf_idx = (buf_idx + 1) % period
+
+            if count_in_window < period:
+                count_in_window += 1
+
+            # On ne calcule vraiment la SMA que si on a "period" barres
+            if count_in_window < period:
+                atr_array[i] = fill_value
+            else:
+                atr_array[i] = window_sum / period
+
+        elif avg_type_code == 1:
+            # --- EMA ---
+            if bars_in_session == 2:
+                # Sur la 2ème barre de la session, on initialise
+                ema_prev = tr_val
+
+            # Si on n'a pas encore "period" barres, on sort fill_value
+            if bars_in_session < period:
+                atr_array[i] = fill_value
+            else:
+                ema_prev = alpha * tr_val + (1 - alpha) * ema_prev
+                atr_array[i] = ema_prev
 
         else:
-            raise ValueError("Type de moyenne non reconnu. Options: 'sma', 'ema', 'wma'.")
+            # --- WMA ---
+            # Retirer l'ancienne valeur si on a déjà "period" dans le buffer
+            if count_in_window == period:
+                # On ne maintient pas un "sum" car c'est plus complexe
+                # pour WMA. On recalcule à chaque fois.
+                pass
 
-        # Barres de la session (de 0 à n-1)
-        bar_idx_in_session = np.arange(len(grp))
-        # Forcer les premières barres (< period) à fill_value
-        atr_values.iloc[bar_idx_in_session < (period - 1)] = fill_value
+            # Ajouter la nouvelle
+            buffer_tr[buf_idx] = tr_val
+            buf_idx = (buf_idx + 1) % period
 
-        # Insérer dans la DataFrame finale
-        df.loc[indices, 'atr'] = atr_values
+            if count_in_window < period:
+                count_in_window += 1
 
-    # Éventuellement forcer tout NaN résiduel à fill_value
-    df['atr'] = df['atr'].fillna(fill_value)
+            if count_in_window < period:
+                atr_array[i] = fill_value
+            else:
+                # Calcul de la WMA : sum(weights * data_window) / sum(weights)
+                wma_sum = 0.0
+                # On va parcourir la fenêtre "buffer_tr" en ordre chronologique
+                # Le plus récent est en buf_idx - 1
+                # Mais la WMA n'a pas besoin d'une orientation temps -> on associe
+                # weights[i] = i+1 (ou i=0 => w=1)
+                # On doit reconstituer la fenêtre dans l'ordre.
+                b_index = buf_idx
+                for w in range(period):
+                    # Avancer en boucle circulaire
+                    b_index = (b_index - 1) % period
+                    wma_sum += weights[period - 1 - w] * buffer_tr[b_index]
 
-    return df['atr']
+                wma_val = wma_sum / weights.sum()
+                atr_array[i] = wma_val
+
+    return atr_array
+
+def calculate_atr(df, period=6, avg_type='sma', fill_value=0.0):
+    """
+    Calcule l'ATR (Average True Range) par session en utilisant Numba
+    pour plus de rapidité. Réinitialise à chaque début de session.
+    Les premières barres (< period) d'une session sont à fill_value.
+
+    Paramètres
+    ----------
+    df : pd.DataFrame
+        - Colonnes attendues :
+            'high', 'low', 'close', 'SessionStartEnd'
+    period : int
+        Fenêtre de calcul de l’ATR (défaut 6).
+    avg_type : {'sma', 'ema', 'wma'}
+        Type de moyenne pour lisser l'ATR.
+    fill_value : float
+        Valeur à utiliser quand on n'a pas assez de barres
+        (typ. début de session).
+
+    Retour
+    ------
+    pd.Series
+        Série ATR, alignée sur l'index de df.
+    """
+
+    # Copie locale pour éviter d'écraser l'index original
+    df_local = df.reset_index(drop=True)
+
+    # Repérage des débuts de session (True/False)
+    # Ici, on suppose: SessionStartEnd == 10 => début de session
+    session_starts = (df_local['SessionStartEnd'].values == 10)
+
+    # Convertir avg_type en code
+    if avg_type == 'sma':
+        avg_type_code = 0
+    elif avg_type == 'ema':
+        avg_type_code = 1
+    elif avg_type == 'wma':
+        avg_type_code = 2
+    else:
+        raise ValueError("avg_type doit être 'sma', 'ema' ou 'wma'.")
+
+    # Appel de la fonction Numba
+    atr_array = _calculate_atr_numba(
+        df_local['high'].values.astype(np.float64),
+        df_local['low'].values.astype(np.float64),
+        df_local['close'].values.astype(np.float64),
+        session_starts.astype(np.bool_),
+        period,
+        avg_type_code,
+        float(fill_value)
+    )
+
+    # Reconstruire une série sur l'index original
+    atr_series = pd.Series(atr_array, index=df.index, name='atr')
+    return atr_series
+
+
+
+
+@njit
+def std_ddof1(x):
+    """
+    Implémentation manuelle de l'écart-type avec ddof=1 pour contourner la limitation de Numba.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Tableau de données
+
+    Returns
+    -------
+    float
+        Écart-type avec ddof=1
+    """
+    n = len(x)
+    if n <= 1:
+        return 0.0
+
+    mean = np.mean(x)
+    var = 0.0
+    for i in range(n):
+        var += (x[i] - mean) ** 2
+
+    # Division par (n-1) pour ddof=1
+    return np.sqrt(var / (n - 1))
+
+
+@njit
+def rolling_mean(x, window):
+    """
+    Calcule une moyenne mobile simple sur un tableau.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Tableau de données
+    window : int
+        Taille de la fenêtre
+
+    Returns
+    -------
+    numpy.ndarray
+        Moyenne mobile
+    """
+    n = len(x)
+    result = np.full(n, np.nan)
+
+    for i in range(n):
+        start_idx = max(0, i - window + 1)
+        window_values = x[start_idx:i + 1]
+        result[i] = np.mean(window_values)
+
+    return result
+
+
+@njit
+def calculate_percent_bb_numba(high, low, close, session_starts, period, std_dev, fill_value):
+    """
+    Implémentation optimisée de calculate_percent_bb en Numba avec gestion améliorée des cas extrêmes.
+
+    Parameters
+    ----------
+    high, low, close : numpy.ndarray
+        Tableaux des valeurs high, low, close
+    session_starts : numpy.ndarray
+        Tableau booléen indiquant les débuts de session
+    period : int
+        Période pour le calcul des bandes de Bollinger
+    std_dev : float
+        Nombre d'écarts-types pour les bandes
+    fill_value : float
+        Valeur à utiliser pour les premières barres
+
+    Returns
+    -------
+    numpy.ndarray
+        Tableau %B calculé avec valeurs limitées entre -1 et 2
+    """
+    n = len(high)
+    hlc_avg = (high + low + close) / 3.0
+
+    # Créer un tableau d'IDs de session
+    session_ids = np.zeros(n, dtype=np.int32)
+    current_id = 0
+
+    for i in range(n):
+        if session_starts[i]:
+            current_id += 1
+        session_ids[i] = current_id
+
+    # Initialiser le tableau de résultats
+    percent_b = np.full(n, fill_value, dtype=np.float64)
+
+    # Traiter chaque session séparément
+    max_session_id = session_ids.max()
+
+    for sid in range(1, max_session_id + 1):
+        # Estimer d'abord la taille de la session pour pré-allouer
+        n_session_estimate = 0
+        for i in range(n):
+            if session_ids[i] == sid:
+                n_session_estimate += 1
+
+        # Obtenir les indices de cette session avec pré-allocation optimisée
+        session_indices = np.zeros(n_session_estimate, dtype=np.int32)
+        n_session = 0
+
+        for i in range(n):
+            if session_ids[i] == sid:
+                session_indices[n_session] = i
+                n_session += 1
+
+        if n_session == 0:
+            continue
+
+        # Extraire les données de la session
+        session_hlc = np.zeros(n_session)
+        for i in range(n_session):
+            idx = session_indices[i]
+            session_hlc[i] = hlc_avg[idx]
+
+        # Calculer les moyennes mobiles et écarts-types
+        means = np.full(n_session, np.nan)
+        stds = np.full(n_session, np.nan)
+
+        for i in range(n_session):
+            if i < period - 1:
+                continue
+
+            start_idx = max(0, i - period + 1)
+            window_values = session_hlc[start_idx:i + 1]
+            means[i] = np.mean(window_values)
+
+            # Utiliser notre fonction std_ddof1 au lieu de np.std avec ddof=1
+            if len(window_values) > 1:
+                stds[i] = std_ddof1(window_values)
+            else:
+                stds[i] = 0.0
+
+        # Calculer les bandes
+        upper_bands = means + (std_dev * stds)
+        lower_bands = means - (std_dev * stds)
+
+        # Calculer %B
+        for i in range(n_session):
+            idx = session_indices[i]
+
+            if i < period - 1:
+                percent_b[idx] = fill_value
+                continue
+
+            price = session_hlc[i]
+            upper = upper_bands[i]
+            lower = lower_bands[i]
+
+            band_diff = upper - lower
+
+            # Gestion améliorée des cas spéciaux
+            if not np.isnan(band_diff) and band_diff > 1e-8:
+                # Calculer %B et limiter à [-1, 2] pour éviter les valeurs extrêmes
+                percent_b[idx] = (price - lower) / band_diff
+
+            else:
+                # Si les bandes sont trop proches ou invalides, utiliser une valeur neutre
+                percent_b[idx] = 0.5
+
+    return percent_b
+
+
+def calculate_percent_bb(df, period=14, std_dev=2, fill_value=0, return_array=False):
+    """
+    Version optimisée de calculate_percent_bb utilisant Numba.
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame contenant les colonnes 'high', 'low', 'close' et 'SessionStartEnd'
+    period : int
+        Période pour le calcul des bandes de Bollinger (défaut 14)
+    std_dev : float
+        Nombre d'écarts-types pour les bandes supérieure/inférieure (défaut 2)
+    fill_value : float
+        Valeur à utiliser pour les premières barres de chaque session
+    return_array : bool
+        Si True, retourne directement le tableau NumPy au lieu d'un DataFrame
+
+    Returns
+    -------
+    DataFrame ou numpy.ndarray
+        DataFrame contenant la colonne 'percent_b' ou directement le tableau NumPy
+    """
+    # Convertir en tableaux NumPy pour traitement rapide
+    high = pd.to_numeric(df['high'], errors='coerce').values
+    low = pd.to_numeric(df['low'], errors='coerce').values
+    close = pd.to_numeric(df['close'], errors='coerce').values
+    session_starts = (df['SessionStartEnd'] == 10).values
+
+    # Appeler la fonction Numba principale
+    # Calculez %B et inspectez les valeurs brutes
+    raw_percent_b = calculate_percent_bb_numba(high, low, close, session_starts, period, std_dev, fill_value=fill_value )
+    # print("Statistiques des valeurs brutes de %B:")
+    # print(f"Min: {np.min(raw_percent_b)}, Max: {np.max(raw_percent_b)}")
+    # print(f"Moyenne: {np.mean(raw_percent_b)}, Écart-type: {np.std(raw_percent_b)}")
+    # print("Distribution des valeurs:")
+    # print(np.histogram(raw_percent_b[raw_percent_b != 0], bins=10))  # Ignorer les valeurs 0 (fill_value)
+    # Retourner directement le tableau si demandé
+    if return_array:
+        return raw_percent_b
+
+    # Sinon, créer un DataFrame pour le résultat
+    result = pd.DataFrame({'percent_b': raw_percent_b}, index=df.index)
+    return result
+
+@njit
+def calculate_close_to_sma_ratio_numba(close, session_starts, window, diffDivBy0, DEFAULT_DIV_BY0, valueX, fill_value):
+    """
+    Implémentation optimisée avec Numba pour le calcul du ratio close-to-SMA et son z-score.
+
+    Parameters
+    ----------
+    close : numpy.ndarray
+        Tableau des valeurs de clôture
+    session_starts : numpy.ndarray
+        Tableau booléen indiquant les débuts de session
+    window : int
+        Taille de la fenêtre pour les calculs de moyenne et d'écart-type
+    diffDivBy0 : float
+        Valeur à utiliser quand std=0 et DEFAULT_DIV_BY0=True
+    DEFAULT_DIV_BY0 : bool
+        Drapeau indiquant quelle valeur par défaut utiliser
+    valueX : float
+        Valeur à utiliser quand std=0 et DEFAULT_DIV_BY0=False
+    fill_value : float
+        Valeur à utiliser pour les premières barres de chaque session
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        (ratio, z-score)
+    """
+    n = len(close)
+    ratio = np.full(n, fill_value, dtype=np.float64)
+    zscore = np.full(n, fill_value, dtype=np.float64)
+
+    # Créer un tableau d'IDs de session
+    session_ids = np.zeros(n, dtype=np.int32)
+    current_id = 0
+
+    for i in range(n):
+        if session_starts[i]:
+            current_id += 1
+        session_ids[i] = current_id
+
+    # Traiter chaque session séparément
+    max_session_id = session_ids.max()
+
+    for sid in range(1, max_session_id + 1):
+        # Obtenir les indices de cette session
+        session_indices = np.zeros(n, dtype=np.int32)
+        n_session = 0
+
+        for i in range(n):
+            if session_ids[i] == sid:
+                session_indices[n_session] = i
+                n_session += 1
+
+        session_indices = session_indices[:n_session]
+
+        if n_session == 0:
+            continue
+
+        # Extraire les données de la session
+        session_close = np.zeros(n_session)
+        for i in range(n_session):
+            idx = session_indices[i]
+            session_close[i] = close[idx]
+
+        # Calculer SMA
+        sma = np.full(n_session, np.nan)
+        for i in range(n_session):
+            start_idx = max(0, i - window + 1)
+            window_values = session_close[start_idx:i + 1]
+            sma[i] = np.mean(window_values)
+
+        # Calculer le ratio (close - sma)
+        session_ratio = np.zeros(n_session)
+        for i in range(n_session):
+            session_ratio[i] = session_close[i] - sma[i]
+
+        # Calculer l'écart-type rolling du ratio
+        stds = np.full(n_session, np.nan)
+        for i in range(n_session):
+            if i < window - 1:
+                stds[i] = 0.0
+                continue
+
+            start_idx = max(0, i - window + 1)
+            window_values = session_ratio[start_idx:i + 1]
+            if len(window_values) > 1:
+                stds[i] = std_ddof1(window_values)
+            else:
+                stds[i] = 0.0
+
+        # Calculer le z-score
+        session_zscore = np.zeros(n_session)
+        for i in range(n_session):
+            if stds[i] != 0:
+                session_zscore[i] = session_ratio[i] / stds[i]
+            else:
+                session_zscore[i] = diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+
+        # Appliquer fill_value aux premières barres de la session
+        for i in range(min(window - 1, n_session)):
+            session_ratio[i] = fill_value
+            session_zscore[i] = fill_value
+
+        # Copier les résultats de la session dans les tableaux finaux
+        for i in range(n_session):
+            idx = session_indices[i]
+            ratio[idx] = session_ratio[i]
+            zscore[idx] = session_zscore[i]
+
+    return ratio, zscore
+
+
+def enhanced_close_to_sma_ratio(
+        df: pd.DataFrame,
+        window: int,
+        diffDivBy0=0,
+        DEFAULT_DIV_BY0=True,
+        valueX=0,
+        fill_value=0
+) -> tuple:
+    """
+    Version optimisée de enhanced_close_to_sma_ratio utilisant Numba.
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame avec au moins les colonnes 'close' et 'SessionStartEnd'
+    window : int
+        Nombre de périodes pour le calcul rolling (moyenne + écart-type)
+    diffDivBy0 : float
+        Valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
+    DEFAULT_DIV_BY0 : bool
+        Booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
+    valueX : float
+        Valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
+    fill_value : float
+        Valeur utilisée lorsque les calculs ne sont pas possibles (début de session)
+
+    Returns
+    -------
+    tuple(Series, Series)
+        (ratio, z-score)
+    """
+    # Convertir en tableaux NumPy pour traitement rapide
+    close = pd.to_numeric(df['close'], errors='coerce').values
+    session_starts = (df['SessionStartEnd'] == 10).values
+
+    # Appeler la fonction Numba principale
+    ratio_array, zscore_array = calculate_close_to_sma_ratio_numba(
+        close, session_starts, window, diffDivBy0, DEFAULT_DIV_BY0, valueX, fill_value
+    )
+
+    # Convertir les tableaux en Series pandas
+    ratio_series = pd.Series(ratio_array, index=df.index)
+    zscore_series = pd.Series(zscore_array, index=df.index)
+
+    return ratio_series, zscore_series
+
+
+def calculate_imbalance(df, imbalance_type, position, location, max_denominator=1, equal_value=0):
+    """
+    Calcule l'imbalance en fonction du type, de la position et de l'emplacement.
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame contenant les données de volume bid et ask
+    imbalance_type : str
+        Type d'imbalance, soit 'bull' soit 'bear'
+    position : int
+        Position de l'imbalance (0, 1, 2, 3, etc.)
+    location : str
+        Emplacement de l'imbalance, soit 'high' soit 'low'
+    max_denominator : float
+        Valeur maximale du dénominateur pour filtrage (défaut 1)
+        Si 0 <= dénominateur < max_denominator, retourne 0
+    equal_value : float
+        Valeur à retourner si le dénominateur est égal à max_denominator (défaut 0)
+        Utile pour les cas où (dénominateur >= 1) & (dénominateur <= 1)
+
+    Returns
+    -------
+    Series
+        Série contenant les valeurs d'imbalance calculées
+    """
+    # Déterminer les colonnes à utiliser selon le type et l'emplacement
+    if imbalance_type == 'bull':
+        # Bull imbalance: askVol / bidVol (acheteurs/vendeurs)
+        if location == 'high':
+            # Pour bull_imbalance_high_x (exemple: bull_imbalance_high_2 = askVolHigh_2 / bidVolHigh_3)
+            numerator_col = f'askVolHigh_{position}'
+            denominator_col = f'bidVolHigh_{position + 1}'
+        else:  # location == 'low'
+            # Pour bull_imbalance_low_x (exemple: bull_imbalance_low_2 = askVolLow_2 / bidVolLow_1)
+            numerator_col = f'askVolLow_{position}'
+            denominator_col = f'bidVolLow_{position - 1}'
+    else:  # imbalance_type == 'bear'
+        # Bear imbalance: bidVol / askVol (vendeurs/acheteurs)
+        if location == 'high':
+            # Pour bear_imbalance_high_x (exemple: bear_imbalance_high_3 = bidVolHigh_3 / askVolHigh_2)
+            numerator_col = f'bidVolHigh_{position}'
+            denominator_col = f'askVolHigh_{position - 1}'
+        else:  # location == 'low'
+            # Pour bear_imbalance_low_x (exemple: bear_imbalance_low_2 = bidVolLow_2 / askVolLow_3)
+            numerator_col = f'bidVolLow_{position}'
+            denominator_col = f'askVolLow_{position + 1}'
+
+    # Calculer l'imbalance avec gestion du cas où le dénominateur est trop petit
+    result = np.where(
+        (df[denominator_col] >= 0) & (df[denominator_col] < max_denominator),
+        0,  # Si 0 <= dénominateur < max_denominator, retourne 0
+        df[numerator_col] / df[denominator_col]  # Sinon, calcule le ratio
+    )
+
+    return result

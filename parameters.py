@@ -15,13 +15,13 @@ def get_path():
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
     FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
     FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-
+    FILE_NAME_ = "Step5_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
 
     ENV = detect_environment()
     if ENV == 'pycharm':
         if platform.system() != "Darwin":
             base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
-            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
+            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
             #DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version1"
 
         else:
@@ -279,9 +279,10 @@ def get_config():
        # 'compute_feature_stat': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
         'compute_vif':True,
         'retained_only_vif': True,
-        'vif_threshold': 15000000000000000,
-        'method_powerAnaly': "analytical",#['both', 'analytical', 'montecarlo']
-        'n_simulations_monte':5000,
+        'vif_threshold': 5
+        ,
+        'method_powerAnaly': "montecarlo",#['both', 'analytical', 'montecarlo']
+        'n_simulations_monte':50000,
         'powAnaly_threshold':0.5,
         'corr_threshold': 2,
         'mi_threshold': 0.01,
