@@ -5483,9 +5483,7 @@ def apply_scalingAndOrPCA(other_params, config, data, train_pos, val_pos):
     else:
         print("\n⏭️  Aucune colonne spécifiée pour la PCA (high_corr_columns_used4pca est vide)")
 
-    # Juste les noms de colonnes
-    # print(f"Colonnes de X_train_cv : {list(X_train_cv.columns)}")
-    # print(f"Colonnes de X_val_cv   : {list(X_val_cv.columns)}")
+
 
 
     # 4️⃣ Retour des données prêtes pour le modèle
@@ -5514,6 +5512,12 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
         X_train_cv, X_train_cv_pd, Y_train_cv, \
             X_val_cv, X_val_cv_pd, y_val_cv, \
             y_pnl_data_train_cv, y_pnl_data_val_cv = apply_scalingAndOrPCA(other_params,config, data, train_pos, val_pos)
+
+        # Juste les noms de colonnes
+        print("\n===== DÉMARRAGE DE LA FONCTION : train_and_evaluate_lightgbm_model =====")
+        print(f"X_train_cv : {len(X_train_cv.columns)} colonnes -> {list(X_train_cv.columns)}")
+        print(f"X_val_cv   : {len(X_val_cv.columns)} colonnes -> {list(X_val_cv.columns)}")
+        print("========================================================================\n")
 
         # Calculate initial fold statistics
         fold_stats_current = {
