@@ -266,7 +266,7 @@ def train_and_evaluate_xgb_model(
         y_pnl_data_train_cv=None,
         y_pnl_data_val_cv_OrTest=None,
         params=None,
-        model_weight_optuna=None,
+        other_params=None,
         config=None,
         fold_num=0,
         fold_raw_data=None,
@@ -285,7 +285,7 @@ def train_and_evaluate_xgb_model(
     # Configuration des paramètres selon l'objectif
     custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
     if custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED:
-        obj_function = xgb_create_weighted_logistic_obj_cpu(model_weight_optuna['w_p'], model_weight_optuna['w_n'])
+        obj_function = xgb_create_weighted_logistic_obj_cpu(other_params['w_p'], other_params['w_n'])
         params['disable_default_eval_metric'] = 1
     # elif custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_BINARY:
     #     obj_function = None
@@ -302,7 +302,7 @@ def train_and_evaluate_xgb_model(
     # Configuration de la métrique d'évaluation personnalisée
     if config.get('custom_metric_eval', 13) == model_custom_metric.XGB_CUSTOM_METRIC_PNL:
         custom_metric = xgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
-                                              metric_dict=model_weight_optuna, config=config)
+                                              metric_dict=other_params, config=config)
     else:
         custom_metric = None
         params.update({'eval_metric': ['auc', 'logloss']})
@@ -313,7 +313,7 @@ def train_and_evaluate_xgb_model(
     current_model = xgb.train(
         params,
         dtrain,
-        num_boost_round=model_weight_optuna['num_boost_round'],
+        num_boost_round=other_params['num_boost_round'],
         evals=[(dtrain, 'train'), (dval, 'eval')],
         obj=obj_function,
         custom_metric=custom_metric,
@@ -330,12 +330,12 @@ def train_and_evaluate_xgb_model(
     # Prédictions et métriques
     val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
         predict_and_compute_metrics(model=current_model, X_data=dval, y_true=y_val_cv,
-                                    best_iteration=best_iteration, threshold=model_weight_optuna['threshold'],
+                                    best_iteration=best_iteration, threshold=other_params['threshold'],
                                     config=config)
 
     y_train_predProba, train_pred_proba_log_odds, train_pred, (tn_train, fp_train, fn_train, tp_train), Y_train_cv = \
         predict_and_compute_metrics(model=current_model, X_data=dtrain, y_true=Y_train_cv,
-                                    best_iteration=best_iteration, threshold=model_weight_optuna['threshold'],
+                                    best_iteration=best_iteration, threshold=other_params['threshold'],
                                     config=config)
 
     # Construction des métriques
@@ -382,7 +382,7 @@ def train_and_evaluate_xgb_model(
     if fold_stats_current is not None:
         fold_stats.update(fold_stats_current)
 
-    debug_info = compile_debug_info(model_weight_optuna, config, val_pred_proba, y_train_predProba)
+    debug_info = compile_debug_info(other_params, config, val_pred_proba, y_train_predProba)
 
     # Retour de l'ensemble
     return {

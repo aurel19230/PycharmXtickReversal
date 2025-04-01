@@ -15,14 +15,14 @@ def get_path():
     FILE_NAME_ = "Step5_4_0_5TP_1SL_newBB_080919_281124_extractOnly900LastFullSession_OnlyShort_feat_winsorized_MorningasieEurope.csv"
     FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
     FILE_NAME_ = "Step5_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
-    FILE_NAME_ = "Step5_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
+    #FILE_NAME_ = "Step5_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat_winsorized.csv"
 
     ENV = detect_environment()
     if ENV == 'pycharm':
         if platform.system() != "Darwin":
             base_results_path = r"C:/Users/aulac/OneDrive/Documents/Trading/PyCharmProject/MLStrategy/data_preprocessing/results_optim/"
             DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
-            #DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version1"
+            DIRECTORY_PATH = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
 
         else:
             base_results_path = "/Users/aurelienlachaud/Documents/trading_local/data_preprocessing/results_optim/"
@@ -39,45 +39,46 @@ def get_model_param_range(model_type):
     """Retourne la configuration des paramètres selon le type de modèle"""
     if model_type == modelType.XGB:
         return {
-            # Nombre total d'arbres à construire
-            'num_boost_round': {'min': 250, 'max': 1200},
+            # Nombre total d'arbres - correspond au num_boost_round du LGBM (868)
+            'num_boost_round': {'min': 300, 'max': 1500},
 
-            # Profondeur maximale de chaque arbre (contrôle la complexité)
-            'max_depth': {'min': 2, 'max': 15},
+            # Profondeur maximale - approximation pour num_leaves=91
+            # Formule: max_depth ≈ log2(num_leaves)
+            'max_depth': {'min': 3, 'max': 15},
 
-            # Taux d'apprentissage (plus petit = plus robuste mais plus lent)
-            'learning_rate': {'min': 0.001, 'max': 0.15, 'log': True},
+            # Taux d'apprentissage - directement similaire (0.011)
+            'learning_rate': {'min': 0.008, 'max': 0.09, 'log': True},
 
-            # Poids minimum nécessaire pour créer un nouveau nœud enfant
-            'min_child_weight': {'min': 1, 'max': 10},
+            # min_child_weight - analogue à min_child_samples=124
+            'min_child_weight': {'min': 10, 'max': 130},
 
-            # Fraction des observations utilisées pour construire chaque arbre
-            'subsample': {'min': 0.5, 'max': 0.90},
+            # subsample - similaire à bagging_fraction=0.66
+            'subsample': {'min': 0.5, 'max': 0.9},
 
-            # Fraction des features utilisées pour construire chaque arbre
-            'colsample_bytree': {'min': 0.5, 'max': 0.90},
+            # colsample_bytree - similaire à feature_fraction=0.64
+            'colsample_bytree': {'min': 0.6, 'max': 0.9},
 
-            # Fraction des features utilisées à chaque niveau de l'arbre
-            'colsample_bylevel': {'min': 0.5, 'max': 0.9},
+            # colsample_bylevel - intermédiaire
+            'colsample_bylevel': {'min': 0.65, 'max': 0.9},
 
-            # Fraction des features utilisées pour chaque nœud
-            'colsample_bynode': {'min': 0.5, 'max': 0.9},
+            # colsample_bynode - similaire à feature_fraction_bynode=0.86
+            'colsample_bynode': {'min': 0.6, 'max': 0.9},
 
-            # Réduction minimale de perte requise pour faire une séparation
-            'gamma': {'min': 1, 'max': 8},
+            # gamma - similaire à min_split_gain=4.29
+            'min_split_loss': {'min': 2, 'max': 10},
 
-            # Terme de régularisation L1 sur les poids
-            'reg_alpha': {'min': 1, 'max': 20, 'log': True},
+            # reg_alpha - similaire à lambda_l1=0.15
+            'reg_alpha': {'min': 0.1, 'max': 1.3, 'log': True},
 
-            # Terme de régularisation L2 sur les poids
-            'reg_lambda': {'min': 0.1, 'max': 2, 'log': True},
+            # reg_lambda - similaire à lambda_l2=2.8
+            'reg_lambda': {'min': 1, 'max': 5.5, 'log': True},
 
-            # Paramètres supplémentaires
-           # 'max_leaves': {'min': 0, 'max': 8},  # Nombre maximum de feuilles dans l'arbre
-            #'min_split_loss': {'min': 0, 'max': 10},  # Perte minimale pour faire un split
-            #'grow_policy': {'values': ['depthwise', 'lossguide']},  # Stratégie de croissance de l'arbre
-            #'tree_method': {'values': ['auto', 'exact', 'approx', 'hist']}  # Méthode de construction des arbres
-        }
+                # Paramètres supplémentaires
+               # 'max_leaves': {'min': 0, 'max': 8},  # Nombre maximum de feuilles dans l'arbre
+                #'min_split_loss': {'min': 0, 'max': 10},  # Perte minimale pour faire un split
+                #'grow_policy': {'values': ['depthwise', 'lossguide']},  # Stratégie de croissance de l'arbre
+                #'tree_method': {'values': ['auto', 'exact', 'approx', 'hist']}  # Méthode de construction des arbres
+            }
     elif model_type == modelType.LGBM:
         return {
             # Plus de feuilles par arbre -> arbres plus complexes -> log odds plus étendus
@@ -111,32 +112,61 @@ def get_model_param_range(model_type):
             # Bagging moins fréquent (valeurs plus grandes) -> moins de moyennage -> log odds plus dispersés
             'bagging_freq': {'min': 1, 'max': 12}
         }
+    elif model_type == modelType.XGBRF:
+        return {
+            # Nombre total d'arbres pour Random Forest
+            'n_estimators': {'min': 200, 'max': 1200},
 
+            # Profondeur maximale des arbres
+            'max_depth': {'min': 3, 'max': 9},
+
+            # Échantillonnage des lignes (bootstrap)
+            'subsample': {'min': 0.5, 'max': 0.9},
+
+            # Échantillonnage des colonnes par nœud (équivalent à max_features)
+            'colsample_bynode': {'min': 0.6, 'max': 0.9},
+
+            # Poids minimum par feuille
+            'min_child_weight': {'min': 30, 'max': 140},
+
+            # Perte minimale pour un split
+            'gamma': {'min': 2, 'max': 10},
+
+            # Régularisation L1
+            'reg_alpha': {'min': 0.1, 'max': 1.3, 'log': True},
+
+            # Régularisation L2
+            'reg_lambda': {'min': 1, 'max': 5.5, 'log': True},
+
+            # Paramètres fixes qui seront appliqués ailleurs dans le code
+            # learning_rate=1.0 (obligatoire pour RF)
+            # tree_method='gpu_hist' (pour GPU)
+        }
     elif model_type == modelType.RF:
         return {
             # Nombre d'arbres dans la forêt - plus d'arbres = plus robuste mais rendements décroissants
             'n_estimators': {'min': 100, 'max': 1000},
 
             # Profondeur maximale - contrôle la complexité des arbres
-            'max_depth': {'min': 5, 'max': 20},
+            'max_depth': {'min': 3, 'max': 12},
 
             # Nombre minimal d'échantillons pour diviser un nœud - régule la taille des splits
-            'min_samples_split': {'min': 4, 'max': 12},
+            'min_samples_split': {'min': 15, 'max': 130},
 
             # Nombre minimal d'échantillons dans une feuille - impact sur la régularisation
-            'min_samples_leaf': {'min': 1, 'max': 10},
+            'min_samples_leaf': {'min': 1, 'max': 60},
 
             # Nombre de caractéristiques à considérer pour la meilleure division
             'max_features': {'min': 0.5, 'max': 0.9},  # Proportion des features
 
             # Poids maximum des feuilles - contrôle l'influence relative des feuilles
-            'max_leaf_nodes': {'min': 50, 'max': 200},
+            'max_leaf_nodes': {'min': 100, 'max': 400},
 
             # Paramètre de complexité pour l'élagage des arbres
-            'ccp_alpha': {'min': 0.0, 'max': 0.03, 'log': True},
+            'ccp_alpha': {'min': 1e-4, 'max': 1.0, 'log': True},
 
             # Pourcentage minimal d'échantillons requis pour être considéré comme "impureté"
-            'min_impurity_decrease': {'min': 0.0, 'max': 0.01, 'log': True},
+            'min_impurity_decrease': {'min': 1e-4, 'max': 1.0, 'log': True},
 
             # Bootstrap - si True, utilise le bootstrapping pour construire les arbres
             'bootstrap': [True], #[True, False],
@@ -250,13 +280,13 @@ def get_config():
     config = {
         'boosting_type':'gbdt', #dart
         'target_directory': "",
-        'device_': 'cpu',
+        'device_': 'cpu', #gpu_4RF
         'n_trials_optuna': 100000,
         'nb_split_tscv_': 4,
         'test_size_ratio': 0.2,
         'nanvalue_to_newval_': np.nan,
         'random_state_seed': 35,
-        'early_stopping_rounds': 150,
+        'early_stopping_rounds': 70,
         #'profit_per_tp':1.25,
         #'loss_per_fp': -1.25,
         # 'use_shapeImportance_file': r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\data_preprocessing\shap_dependencies_results\shap_values_Training_Set.csv",
@@ -272,17 +302,16 @@ def get_config():
         'use_optuna_constraints_func': True,
         'config_constraint_min_trades_threshold_by_Fold': 25,
         'config_constraint_ratioWinrate_train_val': 25,
-        'config_constraint_winrates_val_by_fold': 56.5,
+        'config_constraint_winrates_val_by_fold': 51,
         'use_imbalance_penalty': False, #pour prendre en compte les différence de trade entre les folds
         'is_log_enabled': False,
         'remove_inf_nan_afterFeaturesSelections': True,
        # 'compute_feature_stat': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
         'compute_vif':True,
         'retained_only_vif': True,
-        'vif_threshold': 5
-        ,
+        'vif_threshold': 5,
         'method_powerAnaly': "montecarlo",#['both', 'analytical', 'montecarlo']
-        'n_simulations_monte':50000,
+        'n_simulations_monte':100,
         'powAnaly_threshold':0.5,
         'corr_threshold': 2,
         'mi_threshold': 0.01,
@@ -290,16 +319,17 @@ def get_config():
         "fisher_pvalue_threshold": 0.05,  # seuil classique p-value (optionnel)
         "mrmr_score_threshold":  0.01, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
         'use_pnl_theoric':True,
-        'scaler_choice': scalerChoice.SCALER_STANDARD,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
+        'nb_pca':2,#0 desactivate pca computing
+        'scaler_choice': scalerChoice.SCALER_ROBUST,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
         'cv_method': cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,# TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN,
         # TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN TIME_SERIE_SPLIT
         # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
         'svc_probability':False, #calibration interne des probabilité avec cv intterne
         'svc_kernel':'poly', #['rbf', 'poly', 'sigmoid'],
-        'model_type': modelType.XGB, #XGB LGBM SVC
-        'custom_objective_lossFct': model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
-        'custom_metric_eval': model_custom_metric.XGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
+        'model_type': modelType.LGBM, #XGB LGBM SVC RF XGBRF
+        'custom_objective_lossFct': model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
+        'custom_metric_eval': model_custom_metric.LGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
          #'custom_objective_lossFct': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED, LGB_CUSTOM_METRIC_PNL
 
     }

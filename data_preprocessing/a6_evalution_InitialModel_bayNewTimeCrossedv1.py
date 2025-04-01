@@ -8,7 +8,8 @@ from datetime import datetime
 import optuna
 from colorama import Fore, Style, init
 from func_standard import detect_environment,apply_data_feature_scaling
-from definition import *
+
+from stats_sc.standard_stat_sc import *
 import time
 
 STOP_OPTIMIZATION = False
@@ -311,7 +312,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     winrate_raw_data_val_by_fold = processed_results['winrate_raw_data_val_by_fold']
     val_pred_proba_log_odds = processed_results['val_pred_proba_log_odds']
     val_trades_samples_perct = processed_results['val_trades_samples_perct']
-    val_bestIdx_custom_metric_pnl = processed_results['val_bestIdx_custom_metric_pnl']
+    val_bestIdx_custom_metric_pnl = processed_results['val_bestVal_custom_metric_pnl']
 
 
     # Training metrics
@@ -325,7 +326,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     winrate_raw_data_train_by_fold = processed_results['winrate_raw_data_train_by_fold']
     train_pred_proba_log_odds = processed_results['train_pred_proba_log_odds']
     train_trades_samples_perct = processed_results['train_trades_samples_perct']
-    train_bestIdx_custom_metric_pnl = processed_results['train_bestIdx_custom_metric_pnl']
+    train_bestIdx_custom_metric_pnl = processed_results['train_bestVal_custom_metric_pnl']
 
 
     perctDiff_winrateRatio_train_val = processed_results['perctDiff_winrateRatio_train_val']
@@ -550,7 +551,7 @@ def train_and_evaluate_model(
     nb_split_tscv = config.get('nb_split_tscv_', 10)
     nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
     random_state_seed = config.get('random_state_seed', 30)
-    # early_stopping_rounds = config.get('early_stopping_rounds', 70)
+    # early_stopping_rounds = config.get('early_stopping_rounds', 180)
     cv_method = config.get('cv_method', cv_config.K_FOLD)
     # optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
@@ -563,8 +564,6 @@ def train_and_evaluate_model(
     ones = (df_init_features['class_binaire'] == 1).sum()
     total = zeros + ones
     print(f"Dimensions de df_init_features: {df_init_features.shape} (lignes, colonnes)")
-    print("df_init_features:")
-    print(df_init_features)
 
     print(f"Shape de df_init_features avant filtrage  (99, mannuel des features): {df_init_features.shape}")
 
@@ -779,7 +778,7 @@ def train_and_evaluate_model(
     def on_press(key):
         global STOP_OPTIMIZATION
         try:
-            if key.char == '&':
+            if key.char == '²':
                 print("Stop signal received: stopping the study.")
                 STOP_OPTIMIZATION = True
         except AttributeError:
@@ -893,6 +892,41 @@ if __name__ == "__main__":
 
     df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
 
+    indicators_to_test = [
+        'is_stoch_overbought', 'is_stoch_oversold',
+        'is_williams_r_overbought', 'is_williams_r_oversold',
+        'is_mfi_overbought', 'is_mfi_oversold',
+        'is_mfi_shortDiv', 'is_mfi_antiShortDiv',
+        'is_atr_range', 'is_atr_extremLow',
+        'is_rangeSlope',
+        'is_extremSlope',
+       # 'is_vwap_shortArea', 'is_vwap_notShortArea',
+        'is_range_volatility_std', 'is_extrem_volatility_std',
+        'is_zscore_range',
+       # 'is_zscore_extrem',
+        # 'is_bb_high', 'is_bb_low',
+        'is_range_volatility_r2', 'is_extrem_volatility_r2',
+        'is_rs_range', 'is_rs_extrem'
+    ]
+
+    # Supposons que vous avez déjà un dataframe df_init_features
+    results = analyze_indicator_winrates(df_init_features, indicators_to_test)
+    # Liste des colonnes à vérifier et transformer
+    columns_to_check = ['deltaTimestampOpeningSession5index', 'deltaTimestampOpeningSession15min']
+
+    for col in columns_to_check:
+        if col in df_init_features.columns:
+            print(
+                f"🔍 Vérification de la colonne '{col}' dans df_init_features (Type actuel : {df_init_features[col].dtype})")
+
+            # Convertir en numérique si la colonne est de type 'object'
+            if df_init_features[col].dtype == 'object':
+                print(f"🔄 Conversion de '{col}' en numérique...")
+                df_init_features[col] = pd.to_numeric(df_init_features[col], errors='coerce')  # Convertir proprement
+
+            # Vérifier après conversion
+            print(f"✅ (pb avec  CUSTOM_SESSIONS dans le fichier) Nouveau type de '{col}' dans df_init_features : {df_init_features[col].dtype}\n")
+
     # Initialiser df_init_candles s'il n'existe pas ou est None
     df_init_candles = pd.DataFrame(index=df_init_features.index)
     df_init_candles[['close', 'high', 'low']] = df_init_features[['close', 'high', 'low']]
@@ -947,44 +981,53 @@ if __name__ == "__main__":
         'total_count_blw',
         'staked00_high',
         'staked00_low',
-        'bear_imbalance_high_3',  ## 4.8 % de NAN
-        'bull_imbalance_high_0',  # 7.8%
-        'bearish_absorption_ratio',  # 2.8nan,
-        'ratio_volRevMove_volImpulsMove',
-        'ratio_deltaImpulsMove_volImpulsMove',
-        'ratio_deltaRevMove_volRevMove',
-        'ratio_volZone1_volExtrem',
-        'ratio_deltaZone1_volZone1',
-        'ratio_deltaExtrem_volExtrem',
-        'ratio_VolRevZone_XticksContZone',
-        'ratioDeltaXticksContZone_VolXticksContZone',
-        'ratio_impulsMoveStrengthVol_XRevZone',
-        'ratio_revMoveStrengthVol_XRevZone',
-        'imbType_contZone',
-        'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone',
-        'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone',
-        'ratio_deltaRevMoveZone1_volRevMoveZone1',
-        'ratio_deltaRevMoveExtrem_volRevMoveExtrem',
-        'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone',
-        'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1',
-        'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone',
-        'cumDOM_AskBid_avgRatio',
-        'cumDOM_AskBid_pullStack_avgDiff_ratio',
-        'delta_impulsMove_XRevZone_bigStand_extrem',
-        'delta_revMove_XRevZone_bigStand_extrem',
-        'ratio_delta_VaVolVa',
-        'borderVa_vs_close',
-        'ratio_volRevZone_VolCandle',
-        'ratio_deltaRevZone_VolCandle',
-        'sc_reg_slope_5P_2',
-        'sc_reg_std_5P_2',
-        'sc_reg_slope_10P_2',
-        'sc_reg_std_10P_2',
-        'sc_reg_slope_15P_2',
-        'sc_reg_std_15P_2',
-        'sc_reg_slope_30P_2',
-        'sc_reg_std_30P_2',
-        'timeElapsed2LastBar'
+        #'bear_imbalance_high_3',  ## 4.8 % de NAN
+        'bull_imbalance_high_0',  # 7.8% et peu impact en corr
+        #'bearish_absorption_ratio',  # 2.8nan,
+        'VolPocVolRevesalXContRatio', #l'autre poc vol est meilleur
+        #'ratio_delta_vol_VA21P', #tres corrélé avec  ratio_delta_vol_VA16P ratio_delta_vol_VA6P mais moi avec la cible
+        'naked_poc_dist_above',  # peux impact et nan
+        'naked_poc_dist_below',# peux impact et nan
+        'force_index_divergence', #empty or null
+        'is_zscore_extrem',
+        'zscore_extrem',
+
+        #'atr',
+        # 'ratio_volRevMove_volImpulsMove',
+        # 'ratio_deltaImpulsMove_volImpulsMove',
+        # 'ratio_deltaRevMove_volRevMove',
+        # 'ratio_volZone1_volExtrem',
+        # 'ratio_deltaZone1_volZone1',
+        # 'ratio_deltaExtrem_volExtrem',
+        # 'ratio_VolRevZone_XticksContZone',
+        # 'ratioDeltaXticksContZone_VolXticksContZone',
+        # 'ratio_impulsMoveStrengthVol_XRevZone',
+        # 'ratio_revMoveStrengthVol_XRevZone',
+        # 'imbType_contZone',
+        # 'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone',
+        # 'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone',
+        # 'ratio_deltaRevMoveZone1_volRevMoveZone1',
+        # 'ratio_deltaRevMoveExtrem_volRevMoveExtrem',
+        # 'ratio_volImpulsMoveExtrem_volImpulsMoveZone1_XRevZone',
+        # 'ratio_deltaImpulsMoveZone1_volImpulsMoveZone1',
+        # 'ratio_deltaImpulsMoveExtrem_volImpulsMoveExtrem_XRevZone',
+        # 'cumDOM_AskBid_avgRatio',
+        # 'cumDOM_AskBid_pullStack_avgDiff_ratio',
+        # 'delta_impulsMove_XRevZone_bigStand_extrem',
+        # 'delta_revMove_XRevZone_bigStand_extrem',
+        # 'ratio_delta_VaVolVa',
+        # 'borderVa_vs_close',
+        # 'ratio_volRevZone_VolCandle',
+        # 'ratio_deltaRevZone_VolCandle',
+        # 'sc_reg_slope_5P_2',
+        # 'sc_reg_std_5P_2',
+        # 'sc_reg_slope_10P_2',
+        # 'sc_reg_std_10P_2',
+        # 'sc_reg_slope_15P_2',
+        # 'sc_reg_std_15P_2',
+        # 'sc_reg_slope_30P_2',
+        # 'sc_reg_std_30P_2',
+        # 'timeElapsed2LastBar'
     ]
     excluded_columns_tradeDirection = [
         'bullish_ask_bid_ratio',
@@ -1000,6 +1043,7 @@ if __name__ == "__main__":
         'bullish_asc_dynamics',
         'bullish_dsc_dynamics',
         'bullish_asc_ask_bid_imbalance',
+
         'bullish_dsc_ask_bid_imbalance',
         'bullish_imbalance_evolution',
         'bullish_asc_ask_bid_delta_imbalance',
@@ -1011,13 +1055,13 @@ if __name__ == "__main__":
         'bullish_absorption_score',
         'bullish_market_context_score',
         'bullish_combined_pressure',
-        'naked_poc_dist_above',
-        'bull_imbalance_low_1',
-        'bull_imbalance_low_2',
-        'bull_imbalance_low_3',
-        'bear_imbalance_low_0',
-        'bear_imbalance_low_1',
-        'bear_imbalance_low_2',
+
+        #'bull_imbalance_low_1',
+        #'bull_imbalance_low_2',
+        #'bull_imbalance_low_3',
+        #'bear_imbalance_low_0',
+        #'bear_imbalance_low_1',
+        #'bear_imbalance_low_2',
     ]
 
     excluded_columns_CorrCol = [
@@ -1066,6 +1110,10 @@ if __name__ == "__main__":
     # Sélectionner les colonnes qui ne sont pas dans excluded_columns
     selected_columns_manual = [col for col in df_init_features.columns if col not in excluded_columns]
 
+    # Liste des colonnes à vérifier
+    columns_to_check = ['date', 'trade_category']
+
+
     selected_columnsByFiltering = [
 
     ]
@@ -1089,6 +1137,7 @@ if __name__ == "__main__":
         config=config,
         weight_param=weight_param
     )
+
 
     if results is not None:
         print("entrainement et analyse termisé")

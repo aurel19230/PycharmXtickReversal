@@ -7,7 +7,7 @@ import scipy.stats as stats
 from statsmodels.stats.power import TTestIndPower
 from sklearn.feature_selection import f_classif  # Test F (ANOVA)
 
-from func_standard import ( calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio)
+from func_standard import ( calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio,calculate_rogers_satchell_numba)
 from definition import *
 def plot_distributions_short_long_grid(df, features, class_col='class'):
     """
@@ -2980,3 +2980,390 @@ def evaluate_zscore(params, df, optimize_oversold=False, optimize_overbought=Fal
         import traceback
         traceback.print_exc()
         return {}, None, None
+
+
+def evaluate_regression_rs(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur de volatilité Rogers-Satchell (non annualisé) avec des paramètres optimisés.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés (doit contenir 'period_var_std' ou 'period_var',
+        ainsi que 'std_low_threshold', 'std_high_threshold')
+    df : pandas.DataFrame
+        DataFrame complet avec les colonnes: ['high', 'low', 'open', 'close', 'SessionStartEnd', 'class_binaire']
+    optimize_oversold : bool, default=False
+        Active la logique 'volatilité extrême'
+    optimize_overbought : bool, default=False
+        Active la logique 'volatilité modérée'
+
+    Returns
+    -------
+    tuple
+        (results, df_test_filtered, target_y_test)
+         - results : dict des métriques
+         - df_test_filtered : DataFrame filtré avec class_binaire ∈ [0,1]
+         - target_y_test : Série (ou array) des valeurs de class_binaire
+    """
+    import numpy as np
+    import pandas as pd
+
+    try:
+        # Extraire les paramètres
+        period_var = params.get('period_var_std', params.get('period_var', None))
+        if period_var is None:
+            raise ValueError("Paramètre 'period_var_std' ou 'period_var' manquant dans params.")
+
+        std_low_threshold = params.get('rs_low_threshold')
+        std_high_threshold = params.get('rs_high_threshold')
+
+        # Convertir les colonnes en np.array
+        high_values = pd.to_numeric(df['high'], errors='coerce').values
+        low_values = pd.to_numeric(df['low'], errors='coerce').values
+        open_values = pd.to_numeric(df['open'], errors='coerce').values
+        close_values = pd.to_numeric(df['close'], errors='coerce').values
+
+        # session_starts = True si SessionStartEnd == 10, sinon False
+        session_starts = (df['SessionStartEnd'] == 10).values
+
+        # Calcul de la volatilité RS SANS annualisation
+        rs_volatility = calculate_rogers_satchell_numba(high_values, low_values,
+                                                        open_values, close_values,
+                                                        session_starts, period_var)
+
+        # Création d'indicateurs binaires si souhaité
+        # (logique identique à evaluate_regression_std, mais on applique sur rs_volatility)
+        if optimize_overbought:
+            df['range_volatility'] = np.where(
+                (rs_volatility > std_low_threshold) & (rs_volatility < std_high_threshold),
+                1, 0
+            )
+
+        if optimize_oversold:
+            df['extrem_volatility'] = np.where(
+                (rs_volatility < std_low_threshold) | (rs_volatility > std_high_threshold),
+                1, 0
+            )
+
+        # Prépare les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': 0
+        }
+
+        # Filtrage sur class_binaire ∈ [0,1]
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df_test_filtered['class_binaire']
+        results['total_samples'] = len(df_test_filtered)
+
+        # Bin 0 (volatilité extrême)
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['extrem_volatility'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Bin 1 (volatilité modérée)
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['range_volatility'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calcul du spread si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            # S'assurer d'avoir oversold_df / overbought_df
+            oversold_df = df_test_filtered[
+                df_test_filtered['extrem_volatility'] == 1] if 'oversold_df' not in locals() else oversold_df
+            overbought_df = df_test_filtered[
+                df_test_filtered['range_volatility'] == 1] if 'overbought_df' not in locals() else overbought_df
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de la volatilité Rogers-Satchell: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, valeurs par défaut
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df_test_filtered['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
+        }, df_test_filtered, target_y_test
+
+def evaluate_pullStack_avgDiff(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur pullStack_avgDiff (cumDOM_AskBid_pullStack_avgDiff_ratio) avec des paramètres optimisés.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés (doit contenir 'pullStack_low_threshold' et 'pullStack_high_threshold')
+    df : pandas.DataFrame
+        DataFrame complet avec les colonnes: ['cumDOM_AskBid_pullStack_avgDiff_ratio', 'class_binaire']
+    optimize_oversold : bool, default=False
+        Active la logique 'pullStack extrême'
+    optimize_overbought : bool, default=False
+        Active la logique 'pullStack modéré'
+
+    Returns
+    -------
+    tuple
+        (results, df_test_filtered, target_y_test)
+         - results : dict des métriques
+         - df_test_filtered : DataFrame filtré avec class_binaire ∈ [0,1]
+         - target_y_test : Série (ou array) des valeurs de class_binaire
+    """
+    import numpy as np
+    import pandas as pd
+
+    try:
+        # Extraire les paramètres
+        pullStack_low_threshold = params.get('pullStack_low_threshold')
+        pullStack_high_threshold = params.get('pullStack_high_threshold')
+
+        if pullStack_low_threshold is None or pullStack_high_threshold is None:
+            raise ValueError(
+                "Paramètres 'pullStack_low_threshold' ou 'pullStack_high_threshold' manquants dans params.")
+
+        # Récupérer les valeurs de pullStack
+        pullStack_values = df['cumDOM_AskBid_pullStack_avgDiff_ratio'].values
+
+        # Création d'indicateurs binaires selon le mode d'optimisation
+        if optimize_overbought:
+            # Zone modérée (dans l'intervalle)
+            df['range_pullStack'] = np.where(
+                (pullStack_values > pullStack_low_threshold) & (pullStack_values < pullStack_high_threshold),
+                1, 0
+            )
+
+        if optimize_oversold:
+            # Zone extrême (en dehors de l'intervalle)
+            df['extrem_pullStack'] = np.where(
+                (pullStack_values < pullStack_low_threshold) | (pullStack_values > pullStack_high_threshold),
+                1, 0
+            )
+
+        # Prépare les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': 0
+        }
+
+        # Filtrage sur class_binaire ∈ [0,1]
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df_test_filtered['class_binaire']
+        results['total_samples'] = len(df_test_filtered)
+
+        # Bin 0 (pullStack extrême)
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['extrem_pullStack'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Bin 1 (pullStack modéré)
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['range_pullStack'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calcul du spread si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            # S'assurer d'avoir oversold_df / overbought_df
+            oversold_df = df_test_filtered[
+                df_test_filtered['extrem_pullStack'] == 1] if 'oversold_df' not in locals() else oversold_df
+            overbought_df = df_test_filtered[
+                df_test_filtered['range_pullStack'] == 1] if 'overbought_df' not in locals() else overbought_df
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de pullStack_avgDiff: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, valeurs par défaut
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df_test_filtered['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
+        }, df_test_filtered, target_y_test
+
+def evaluate_volRevMoveZone1_volImpulsMoveExtrem(params, df, optimize_oversold=False, optimize_overbought=False):
+    """
+    Évalue l'indicateur de ratio de volume volRevMoveZone1_volImpulsMoveExtrem avec des paramètres optimisés.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionnaire contenant les paramètres optimisés (doit contenir 'volRev_low_threshold'
+        et 'volRev_high_threshold')
+    df : pandas.DataFrame
+        DataFrame complet avec les colonnes nécessaires incluant 'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone' et 'class_binaire'
+    optimize_oversold : bool, default=False
+        Active la logique 'ratio extrême'
+    optimize_overbought : bool, default=False
+        Active la logique 'ratio modéré'
+
+    Returns
+    -------
+    tuple
+        (results, df_test_filtered, target_y_test)
+         - results : dict des métriques
+         - df_test_filtered : DataFrame filtré avec class_binaire ∈ [0,1]
+         - target_y_test : Série (ou array) des valeurs de class_binaire
+    """
+    import numpy as np
+    import pandas as pd
+
+    try:
+        # Extraire les paramètres
+        volRev_low_threshold = params.get('volRev_low_threshold')
+        volRev_high_threshold = params.get('volRev_high_threshold')
+
+        if volRev_low_threshold is None or volRev_high_threshold is None:
+            raise ValueError("Paramètres 'volRev_low_threshold' ou 'volRev_high_threshold' manquants dans params.")
+
+        # Récupérer les valeurs de ratio de volume
+        volRev_values = df['ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone'].values
+
+        # Création d'indicateurs binaires selon le mode d'optimisation
+        if optimize_overbought:
+            # Zone modérée (dans l'intervalle)
+            df['range_volRev'] = np.where(
+                (volRev_values > volRev_low_threshold) & (volRev_values < volRev_high_threshold),
+                1, 0
+            )
+
+        if optimize_oversold:
+            # Zone extrême (en dehors de l'intervalle)
+            df['extrem_volRev'] = np.where(
+                (volRev_values < volRev_low_threshold) | (volRev_values > volRev_high_threshold),
+                1, 0
+            )
+
+        # Prépare les résultats
+        results = {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': 0
+        }
+
+        # Filtrage sur class_binaire ∈ [0,1]
+        df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
+        target_y_test = df_test_filtered['class_binaire']
+        results['total_samples'] = len(df_test_filtered)
+
+        # Bin 0 (ratio extrême)
+        if optimize_oversold:
+            oversold_df = df_test_filtered[df_test_filtered['extrem_volRev'] == 1]
+            if len(oversold_df) > 0:
+                results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
+                results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
+                results['oversold_success_count'] = oversold_df['class_binaire'].sum()
+                results['bin_0_samples'] = len(oversold_df)
+
+        # Bin 1 (ratio modéré)
+        if optimize_overbought:
+            overbought_df = df_test_filtered[df_test_filtered['range_volRev'] == 1]
+            if len(overbought_df) > 0:
+                results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
+                results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
+                results['overbought_success_count'] = overbought_df['class_binaire'].sum()
+                results['bin_1_samples'] = len(overbought_df)
+
+        # Calcul du spread si les deux modes sont activés
+        if optimize_oversold and optimize_overbought:
+            # S'assurer d'avoir oversold_df / overbought_df
+            oversold_df = df_test_filtered[
+                df_test_filtered['extrem_volRev'] == 1] if 'oversold_df' not in locals() else oversold_df
+            overbought_df = df_test_filtered[
+                df_test_filtered['range_volRev'] == 1] if 'overbought_df' not in locals() else overbought_df
+            if len(oversold_df) > 0 and len(overbought_df) > 0:
+                results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+        return results, df_test_filtered, target_y_test
+
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation du ratio de volume: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # En cas d'erreur, valeurs par défaut
+        df_test_filtered = df[
+            df['class_binaire'].isin([0, 1])].copy() if 'df_test_filtered' not in locals() else df_test_filtered
+        target_y_test = df_test_filtered['class_binaire'] if 'target_y_test' not in locals() else target_y_test
+
+        return {
+            'bin_0_win_rate': 0,
+            'bin_1_win_rate': 0,
+            'bin_0_pct': 0,
+            'bin_1_pct': 0,
+            'bin_spread': 0,
+            'oversold_success_count': 0,
+            'overbought_success_count': 0,
+            'bin_0_samples': 0,
+            'bin_1_samples': 0,
+            'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
+        }, df_test_filtered, target_y_test

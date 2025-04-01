@@ -30,7 +30,7 @@ class modelType (Enum):
     CATBOOST=2
     RF=3
     SVC=4
-
+    XGBRF=5 #random forest using xgb pour faster computing
 class optuna_doubleMetrics(Enum):
     DISABLE = 0
     USE_DIST_TO_IDEAL = 1
@@ -115,56 +115,81 @@ import numpy as np
 def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
     """
     Prépare les données d'entraînement et de validation pour la validation croisée,
-    en gérant la conversion GPU/CPU selon la configuration.
+    en restant au format pandas (DataFrame/Series) et en utilisant l'indexation par position (.iloc).
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     config : dict
         Dictionnaire de configuration contenant la clé 'device_' avec la valeur 'cpu' ou 'gpu'.
     data : dict
-        Dictionnaire contenant les données nécessaires pour les folds.
+        Contient les clés suivantes (toutes au format pandas) :
+            - 'X_train_no99_fullRange': DataFrame des features
+            - 'X_train_no99_fullRange_pd': DataFrame identique ou similaire (optionnel)
+            - 'y_train_no99_fullRange': Series de la target
+            - 'y_pnl_data_train_no99_fullRange': Series du PnL
     train_pos : np.ndarray
-        Positions des échantillons pour l'entraînement.
+        Positions (lignes) à prendre pour l'entraînement
     val_pos : np.ndarray
-        Positions des échantillons pour la validation.
+        Positions (lignes) à prendre pour la validation
 
-    Returns:les
-    --------
-    dict : Contient les données transformées.
+    Returns
+    -------
+    X_train_cv : DataFrame (features train)
+    X_train_cv_pd : DataFrame identique ou “brute” (si besoin) pour train
+    Y_train_cv : Series (target train)
+    X_val_cv : DataFrame (features val)
+    X_val_cv_pd : DataFrame identique ou “brute” (si besoin) pour val
+    y_val_cv : Series (target val)
+    y_pnl_data_train_cv : Series (PnL train)
+    y_pnl_data_val_cv : Series (PnL val)
     """
-    #check_label_pnl_alignment(data)
-    # Extract fold data
-    X_train_cv = data['X_train_no99_fullRange'][train_pos].reshape(len(train_pos), -1)
-    # X_train_cv_pd reste un DataFrame
-    X_train_cv_pd = data['X_train_no99_fullRange_pd'].iloc[train_pos]
-    Y_train_cv = data['y_train_no99_fullRange'][train_pos].reshape(-1)
 
-    X_val_cv = data['X_train_no99_fullRange'][val_pos].reshape(len(val_pos), -1)
-    # X_val_cv_pd reste un DataFrame
-    X_val_cv_pd = data['X_train_no99_fullRange_pd'].iloc[val_pos]
-    y_val_cv = data['y_train_no99_fullRange'][val_pos].reshape(-1)
+    # --- 1) Extraction par .iloc => indexation par position ---
+    # Features
+    X_train_cv = data['X_train_no99_fullRange'].iloc[train_pos]
+    X_val_cv   = data['X_train_no99_fullRange'].iloc[val_pos]
 
-    y_pnl_data_train_cv = data['y_pnl_data_train_no99_fullRange'][train_pos].reshape(-1)
-    y_pnl_data_val_cv=data['y_pnl_data_train_no99_fullRange'][val_pos].reshape(-1)
+    # (Optionnel) Les versions "pd" si elles sont différentes et qu'on en a besoin
+    X_train_cv_pd = data.get('X_train_no99_fullRange_pd', X_train_cv).iloc[train_pos]
+    X_val_cv_pd   = data.get('X_train_no99_fullRange_pd', X_val_cv).iloc[val_pos]
 
-    # Handle GPU/CPU conversion
-    if config['device_'] != 'cpu':
+    # Targets
+    Y_train_cv = data['y_train_no99_fullRange'].iloc[train_pos]
+    y_val_cv   = data['y_train_no99_fullRange'].iloc[val_pos]
+
+    # PnL
+    y_pnl_data_train_cv = data['y_pnl_data_train_no99_fullRange'].iloc[train_pos]
+    y_pnl_data_val_cv   = data['y_pnl_data_train_no99_fullRange'].iloc[val_pos]
+
+    # --- 2) GPU/CPU (optionnel) ---
+    # Si device != 'cpu' et qu'on veut vraiment manipuler du GPU, il faudrait convertir en arrays,
+    # puis faire du cupy, ce qui signifie quitter le format DataFrame. Exemple ci-dessous en commentaire :
+    """
+    if config.get('device_', 'cpu') != 'cpu':
         import cupy as cp
+        # Conversion DataFrame -> ndarray
+        X_train_cv_arr = X_train_cv.to_numpy()
+        X_val_cv_arr   = X_val_cv.to_numpy()
+        # Cupy arrays
+        X_train_cv_gpu = cp.asarray(X_train_cv_arr)
+        X_val_cv_gpu   = cp.asarray(X_val_cv_arr)
+        # Idem pour Y_train_cv, y_val_cv, etc.
+        # --> Puis potentiellement reconvertir en DataFrame cuDF (si tu utilises cuDF),
+        # ou juste garder en Cupy array.
+    """
 
-        # Conversion GPU -> CPU (CuPy -> NumPy)
-        X_train_cv = cp.asnumpy(X_train_cv)
-        X_val_cv = cp.asnumpy(X_val_cv)
-        Y_train_cv = cp.asnumpy(Y_train_cv)
-        y_val_cv = cp.asnumpy(y_val_cv)
-        y_pnl_data_train_cv=cp.asnumpy(y_pnl_data_train_cv);
-        y_pnl_data_val_cv=cp.asnumpy(y_pnl_data_val_cv);
+    return (
+        X_train_cv,         # DataFrame (features) - train
+        X_train_cv_pd,      # DataFrame "pd" (if needed) - train
+        Y_train_cv,         # Series (target) - train
+        X_val_cv,           # DataFrame (features) - val
+        X_val_cv_pd,        # DataFrame "pd" - val
+        y_val_cv,           # Series (target) - val
+        y_pnl_data_train_cv,# Series (PnL) - train
+        y_pnl_data_val_cv   # Series (PnL) - val
+    )
 
-    else:
-        # Pas de conversion nécessaire si on est déjà sur CPU
-        pass
 
-
-    return X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv
 
 def sigmoidCustom(x):
 # Supposons que x est déjà un tableau CuPy

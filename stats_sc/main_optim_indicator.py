@@ -80,9 +80,76 @@ from pynput import keyboard as pynput_keyboard  # Alternative si keyboard pose p
 
 
 # Définir le type d'indicateur à optimiser
-indicator_type = "vwap"
+indicator_type = "volrevmovezone1_volImpulsmoveextrem"
 # Add these global flags to control which zones to optimize
+if indicator_type == "volrevmovezone1_volImpulsmoveextrem":
+    # Configuration d'optimisation
+    OPTIMIZE_OVERSOLD = False  # Si False, désactive l'optimisation de la zone de survente => trouve le pire taux de gain
+    OPTIMIZE_OVERBOUGHT = True  # Si True, optimise la zone de surachat => optimise le taux de gain
+    SPLIT_SCORE_VAL = 0.3  # Score validation compte pour 65%, train pour 35%
 
+    # Contraintes pour les bins
+    MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
+    MAX_BIN_0_WIN_RATE = 0.459  # Maximum pour bin0 (doit être < 0.5)
+    MAX_BIN_1_WIN_RATE = 0.52  # Minimum pour bin1 (doit être > 0.5)
+    MIN_BIN_SIZE_0 = 0.08  # Taille minimale pour bin0
+    MIN_BIN_SIZE_1 = 0.05  # Taille minimale pour bin1
+    COEFF_SPREAD = 1  # Coefficient pour l'écart entre bins
+    COEFF_BIN_SIZE = 0  # Coefficient pour la taille des bins
+
+    # Plages de recherche pour les paramètres du volume ratio
+    # Note: Vous devrez ajuster ces valeurs en fonction de la distribution de votre indicateur ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone
+    VOLREV_LOW_THRESHOLD_L = 0  # Limite inférieure du seuil bas
+    VOLREV_LOW_THRESHOLD_H = 5  # Limite supérieure du seuil bas
+
+    VOLREV_HIGH_THRESHOLD_L = 3  # Limite inférieure du seuil haut
+    VOLREV_HIGH_THRESHOLD_H = 5  # Limite supérieure du seuil haut
+if indicator_type == "pullstack_avgdiff":
+    # Configuration d'optimisation
+    OPTIMIZE_OVERSOLD = False  # Si False, désactive l'optimisation de la zone de survente => trouve le pire taux de gain
+    OPTIMIZE_OVERBOUGHT = True  # Si True, optimise la zone de surachat => optimise le taux de gain
+    SPLIT_SCORE_VAL = 0.2  # Score validation compte pour 65%, train pour 35%
+
+    # Contraintes pour les bins
+    MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
+    MAX_BIN_0_WIN_RATE = 0.48  # Maximum pour bin0 (doit être < 0.5)
+    MAX_BIN_1_WIN_RATE = 0.52  # Minimum pour bin1 (doit être > 0.5)
+    MIN_BIN_SIZE_0 = 0.06  # Taille minimale pour bin0
+    MIN_BIN_SIZE_1 = 0.07  # Taille minimale pour bin1
+    COEFF_SPREAD = 1  # Coefficient pour l'écart entre bins
+    COEFF_BIN_SIZE = 0  # Coefficient pour la taille des bins
+
+    # Plages de recherche pour les paramètres du pullStack
+    # Note: Vous devrez ajuster ces valeurs en fonction de la distribution de votre indicateur cumDOM_AskBid_pullStack_avgDiff_ratio
+    PULLSTACK_LOW_THRESHOLD_L = 0  # Limite inférieure du seuil bas
+    PULLSTACK_LOW_THRESHOLD_H = 2  # Limite supérieure du seuil bas
+
+    PULLSTACK_HIGH_THRESHOLD_L = 3   # Limite inférieure du seuil haut
+    PULLSTACK_HIGH_THRESHOLD_H = 8  # Limite supérieure du seuil haut
+if indicator_type == "rogers_satchell":
+    # Configuration d'optimisation
+    OPTIMIZE_OVERSOLD = False  # Si False, désactive l'optimisation de la zone de survente => trouve le pire taux de gain
+    OPTIMIZE_OVERBOUGHT = True  # Si True, optimise la zone de surachat => optimise le taux de gain
+    SPLIT_SCORE_VAL = 0.65  # Score validation compte pour 65%, train pour 35%
+
+    # Contraintes pour les bins
+    MIN_BIN_SPREAD = 0.0501  # Écart minimum entre bins
+    MAX_BIN_0_WIN_RATE = 0.459  # Maximum pour bin0 (doit être < 0.5)
+    MAX_BIN_1_WIN_RATE = 0.52  # Minimum pour bin1 (doit être > 0.5)
+    MIN_BIN_SIZE_0 = 0.08# Taille minimale pour bin0
+    MIN_BIN_SIZE_1 = 0.075  # Taille minimale pour bin1
+    COEFF_SPREAD = 1  # Coefficient pour l'écart entre bins
+    COEFF_BIN_SIZE = 0  # Coefficient pour la taille des bins
+
+    # Plages de recherche pour les paramètres
+    PERIOD_VAR_L =30  # Limite inférieure de la période
+    PERIOD_VAR_H = 40  # Limite supérieure de la période
+
+    RS_LOW_THRESHOLD_L = 0.0001  # Limite inférieure du seuil bas
+    RS_LOW_THRESHOLD_H = 0.0003  # Limite supérieure du seuil bas
+
+    RS_HIGH_THRESHOLD_L = 0.0001  # Limite inférieure du seuil haut
+    RS_HIGH_THRESHOLD_H = 0.0003  # Limite supérieure du seuil haut
 
 if indicator_type == "regression_slope":
     OPTIMIZE_OVERSOLD = False  # Set to False to disable oversold zone optimization => => find the worst winrate
@@ -162,7 +229,7 @@ if indicator_type == "vwap":
     MAX_BIN_0_WIN_RATE = 0.475 # Maximum pour bin0 (doit être < 0.5) => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
     MAX_BIN_1_WIN_RATE = 0.505  # Minimum pour bin1 (doit être > 0.5) => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
     MIN_BIN_SIZE_0 = 0.07  # Taille minimale pour bin0 => find the worst winrate (work with OPTIMIZE_OVERSOLD param)
-    MIN_BIN_SIZE_1 = 0.14  # Taille minimale pour bin1 => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
+    MIN_BIN_SIZE_1 = 0.13  # Taille minimale pour bin1 => optimize de winrate (work with OPTIMIZE_OVERBOUGHT param)
     COEFF_SPREAD = 1
     COEFF_BIN_SIZE = 0
 
@@ -537,34 +604,38 @@ def evaluate_best_params_on_test_data(best_params, indicator_type, df_test):
     print(f"ÉVALUATION DES MEILLEURS PARAMÈTRES POUR '{indicator_type}' SUR LES DONNÉES DE TEST")
     print(f"{'=' * 80}")
 
-
-
     # Initialiser les résultats
     test_results = {}
 
     # Pour chaque type d'indicateur, appliquer la logique d'évaluation appropriée
     if indicator_type == "stochastic":
-        test_results,df_test_filtered,target_y_test =  evaluate_stochastic(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_stochastic(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "williams_r":
-        test_results,df_test_filtered,target_y_test =  evaluate_williams_r(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_williams_r(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "mfi":
-        test_results,df_test_filtered,target_y_test =  evaluate_mfi(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_mfi(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "mfi_divergence":
-        test_results,df_test_filtered,target_y_test =  evaluate_mfi_divergence(best_params,df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_mfi_divergence(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "regression_r2":
-        test_results,df_test_filtered,target_y_test =  evaluate_regression_r2(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_regression_r2(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "regression_std":
-        test_results,df_test_filtered,target_y_test =  evaluate_regression_std(best_params,df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_regression_std(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "regression_slope":
-        test_results,df_test_filtered,target_y_test = evaluate_regression_slope(best_params, df_test,optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_regression_slope(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "atr":
-        test_results,df_test_filtered,target_y_test =  evaluate_atr(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_atr(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "vwap":
-        test_results,df_test_filtered,target_y_test =  evaluate_vwap(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_vwap(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "percent_bb_simu":
-        test_results,df_test_filtered,target_y_test =  evaluate_percent_bb(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_percent_bb(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     elif indicator_type == "zscore":
-        test_results,df_test_filtered,target_y_test =  evaluate_zscore(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+        test_results, df_test_filtered, target_y_test = evaluate_zscore(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+    elif indicator_type == "rogers_satchell":
+        test_results, df_test_filtered, target_y_test = evaluate_regression_rs(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+    elif indicator_type == "pullstack_avgdiff":
+        test_results, df_test_filtered, target_y_test = evaluate_pullStack_avgDiff(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
+    elif indicator_type == "volrevmovezone1_volImpulsmoveextrem":
+        test_results, df_test_filtered, target_y_test = evaluate_volRevMoveZone1_volImpulsMoveExtrem(best_params, df_test, optimize_oversold=OPTIMIZE_OVERSOLD, optimize_overbought=OPTIMIZE_OVERBOUGHT)
     else:
         print(f"Type d'indicateur '{indicator_type}' non reconnu.")
         return {}
@@ -851,11 +922,6 @@ def is_df_test_respect_constraint(study,best_params_, indicator_type, df_test):
     print("is_testVSval & is_testVStrain:", is_testVSval & is_testVStrain)
 
     return is_testVSval or is_testVStrain,test_results
-
-
-
-
-
 def print_best_trial_callback(study, trial):
     # N'afficher que périodiquement
     global BEST_STUDY_SCORE
@@ -863,33 +929,33 @@ def print_best_trial_callback(study, trial):
     global STOP_OPTIMIZATION
     # print(DF_TEST_CALCULATION)
     # print(STOP_OPTIMIZATION)
-    test_result_={}
-    is_tresult=False
+    test_result_ = {}
+    is_tresult = False
     try:
-        if study.best_value >= BEST_STUDY_SCORE and DF_TEST_CALCULATION==True:
+        if study.best_value >= BEST_STUDY_SCORE and DF_TEST_CALCULATION == True:
             print("study.best_value > BEST_STUDY_SCORE and DF_TEST_CALCULATION==True")
             BEST_STUDY_SCORE = study.best_value
             best_trial = study.best_trial
             best_params_ = best_trial.params
-            is_tresult, test_result_=is_df_test_respect_constraint(study, best_params_, indicator_type, df_test)
+            is_tresult, test_result_ = is_df_test_respect_constraint(study, best_params_, indicator_type, df_test)
             if is_tresult:
                 print(
                     "✅ Contraintes respectées sur le jeu de test par rapport à val et train. On stoppe l'optimisation.")
                 study.stop()
             else:
-                print("❌ Contraintes non respectées sur le jeu de test par raport à VAL et/ou TRAIN:  TEST doit avoir WR < à au moins a VAL ou TEST 2\n Pour la taille on prend les données cible d'optim")
+                print(
+                    "❌ Contraintes non respectées sur le jeu de test par raport à VAL et/ou TRAIN:  TEST doit avoir WR < à au moins a VAL ou TEST 2\n Pour la taille on prend les données cible d'optim")
 
     except ValueError:
         BEST_STUDY_SCORE = -np.inf
-
-
 
     if trial.number % 50 == 0 or is_tresult:
         try:
             print(f"\n----⚠️ trial: {trial.number}----")
             best_trial = study.best_trial
             print(f"\n📊 Meilleur Trial jusqu'à présent pour {indicator_type} en mode " +
-                  ("OPTIMIZE_OVERBOUGH" if OPTIMIZE_OVERBOUGHT else "OPTIMIZE_OVERSOLD" if OPTIMIZE_OVERSOLD else "INCONNU") + " :")
+                  (
+                      "OPTIMIZE_OVERBOUGH" if OPTIMIZE_OVERBOUGHT else "OPTIMIZE_OVERSOLD" if OPTIMIZE_OVERSOLD else "INCONNU") + " :")
             print(f"  Trial ID: {best_trial.number}")
             print(f"  Score: {best_trial.value:.4f}")
 
@@ -907,7 +973,6 @@ def print_best_trial_callback(study, trial):
             bin_1_pct_train = best_trial.user_attrs.get('bin_1_pct_train', None)
             bin_spread_train = best_trial.user_attrs.get('bin_spread_train', None)
             column_name_train = best_trial.user_attrs.get('column_name_train', None)
-
 
             # Vérification des paramètres selon l'indicateur
             if 'vwap_low_threshold' in best_trial.params or 'vwap_high_threshold' in best_trial.params:
@@ -963,6 +1028,23 @@ def print_best_trial_callback(study, trial):
                 params_str = f"  📌 Paramètres Régression Écart-type: période={period_var_std}, std_low_threshold={std_low_threshold}, std_high_threshold={std_high_threshold}"
                 print(params_str)
 
+            elif 'rs_low_threshold' in best_trial.params or 'rs_high_threshold' in best_trial.params:
+                period_var = best_trial.params.get('period_var', 'N/A')
+                rs_low_threshold = best_trial.params.get('rs_low_threshold', 'N/A')
+                rs_high_threshold = best_trial.params.get('rs_high_threshold', 'N/A')
+
+                # Construction conditionnelle des paramètres de Rogers-Satchell
+                params_str = f"  📌 Paramètres Rogers-Satchell: période={period_var}, rs_low_threshold={rs_low_threshold:.7f}, rs_high_threshold={rs_high_threshold:.7f}"
+                print(params_str)
+
+            elif 'pullStack_low_threshold' in best_trial.params or 'pullStack_high_threshold' in best_trial.params:
+                pullStack_low_threshold = best_trial.params.get('pullStack_low_threshold', 'N/A')
+                pullStack_high_threshold = best_trial.params.get('pullStack_high_threshold', 'N/A')
+
+                # Construction conditionnelle des paramètres de PullStack
+                params_str = f"  📌 Paramètres PullStack: pullStack_low_threshold={pullStack_low_threshold:.7f}, pullStack_high_threshold={pullStack_high_threshold:.7f}"
+                print(params_str)
+
             elif 'slope_range_threshold' in best_trial.params or 'slope_extrem_threshold' in best_trial.params:
                 period_var_slope = best_trial.params.get('period_var_slope', 'N/A')
                 slope_range_threshold = best_trial.params.get('slope_range_threshold', 'N/A')
@@ -1003,6 +1085,13 @@ def print_best_trial_callback(study, trial):
                 if OPTIMIZE_OVERBOUGHT:
                     params_str += f", zscore_low_threshold={zscore_low_threshold:.4f} | zscore_high_threshold={zscore_high_threshold:.4f}"
                 print(params_str)
+            elif 'volRev_low_threshold' in best_trial.params or 'volRev_high_threshold' in best_trial.params:
+                volRev_low_threshold = best_trial.params.get('volRev_low_threshold', 'N/A')
+                volRev_high_threshold = best_trial.params.get('volRev_high_threshold', 'N/A')
+
+                # Construction conditionnelle des paramètres de Volume Ratio
+                params_str = f"  📌 Paramètres Volume Ratio: volRev_low_threshold={volRev_low_threshold:.7f}, volRev_high_threshold={volRev_high_threshold:.7f}"
+                print(params_str)
             else:
                 print(f"  📌 Paramètres optimisés: {best_trial.params}")
 
@@ -1014,6 +1103,10 @@ def print_best_trial_callback(study, trial):
                     bin0_name = "Distance VWAP Extrême"
                 elif 'r2_low_threshold' in best_trial.params:
                     bin0_name = "Volatilité Extrême"
+                elif 'rs_low_threshold' in best_trial.params:
+                    bin0_name = "Volatilité RS Extrême"
+                elif 'pullStack_low_threshold' in best_trial.params:
+                    bin0_name = "PullStack Extrême"
                 elif 'slope' in best_trial.params:
                     bin0_name = "Volatilité Basse"
                 elif 'slope_range_threshold' in best_trial.params:
@@ -1022,7 +1115,8 @@ def print_best_trial_callback(study, trial):
                     bin0_name = "ATR Extrême"
                 elif 'mfi_period' in best_trial.params:
                     bin0_name = "Divergence Haussière"
-
+                elif 'volRev_low_threshold' in best_trial.params:
+                    bin0_name = "Volume Ratio Extrême"
                 # Affichage du bin 0 avec le nombre de trades réussis
                 oversold_success_count_val = best_trial.user_attrs.get('oversold_success_count_val', 0)
                 oversold_success_count_train = best_trial.user_attrs.get('oversold_success_count_train', 0)
@@ -1051,6 +1145,10 @@ def print_best_trial_callback(study, trial):
                     bin1_name = "Distance VWAP Modérée"
                 elif 'r2_low_threshold' in best_trial.params:
                     bin1_name = "Volatilité Modérée"
+                elif 'rs_low_threshold' in best_trial.params:
+                    bin1_name = "Volatilité RS Modérée"
+                elif 'pullStack_low_threshold' in best_trial.params:
+                    bin1_name = "PullStack Modéré"
                 elif 'slope' in best_trial.params:
                     bin1_name = "Volatilité Haute"
                 elif 'slope_extrem_threshold' in best_trial.params:
@@ -1059,7 +1157,8 @@ def print_best_trial_callback(study, trial):
                     bin1_name = "ATR Modéré"
                 elif 'mfi_period' in best_trial.params:
                     bin1_name = "Divergence Baissière"
-
+                elif 'volRev_low_threshold' in best_trial.params:
+                    bin1_name = "Volume Ratio Modéré"
                 # Affichage du bin 1 avec le nombre de trades réussis
                 overbought_success_count_val = best_trial.user_attrs.get('overbought_success_count_val', 0)
                 overbought_success_count_train = best_trial.user_attrs.get('overbought_success_count_train', 0)
@@ -1095,6 +1194,884 @@ def print_best_trial_callback(study, trial):
             print(f" ❌ Pas encore de meilleur essai trouvé... pour {indicator_type}")
 
         print("\n")
+
+def objective_volRevMoveZone1_volImpulsMoveExtrem(trial, df_train_, df_val_):
+    """
+    Fonction objective optimisée pour Optuna qui ajuste les paramètres de l'indicateur
+    de ratio volrevmovezone1_volImpulsmoveextrem selon le mode d'optimisation (survente, surachat ou les deux).
+    Calcule et vérifie les métriques sur le TRAIN, puis sur la VALIDATION.
+    """
+    # ==============================
+    # 1. Paramètres à optimiser
+    # ==============================
+    volRev_low_threshold = trial.suggest_float('volRev_low_threshold', VOLREV_LOW_THRESHOLD_L, VOLREV_LOW_THRESHOLD_H)
+
+    if OPTIMIZE_OVERBOUGHT:
+        low = volRev_low_threshold
+    else:
+        low = VOLREV_HIGH_THRESHOLD_L
+
+    # Ensuite, suggérer le seuil haut en commençant à partir du seuil bas
+    # Cela garantit que high_threshold > low_threshold
+    volRev_high_threshold = trial.suggest_float('volRev_high_threshold',
+                                           low,  # Commence à la valeur du seuil bas
+                                           VOLREV_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
+
+    # ==============================
+    # 2. Calculer signaux + métriques sur TRAIN
+    # ==============================
+
+    # --- 2.1 Récupération des valeurs du ratio de volume sur TRAIN
+    volRev_values_train = df_train_['ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone'].values
+
+    # Filtrer les valeurs NaN pour les volatilités (uniquement pour le logging)
+    valid_volRev_train = volRev_values_train[~np.isnan(volRev_values_train)]
+
+    if len(valid_volRev_train) > 0 and trial.number % 50 == 0:
+        print(f"[TRAIN] Volume Ratio max (excluding NaN): {valid_volRev_train.max()}")
+        print(f"[TRAIN] Volume Ratio min (excluding NaN): {valid_volRev_train.min()}")
+        print(f"[TRAIN] Number of valid Volume Ratio values: {len(valid_volRev_train)} out of {len(volRev_values_train)} "
+              f"({len(valid_volRev_train) / len(volRev_values_train) * 100:.2f}%)")
+
+    # --- 2.2 Créer les indicateurs avec une logique adaptée au mode d'optimisation
+    if OPTIMIZE_OVERBOUGHT:
+        # Zone modérée de ratio (dans l'intervalle)
+        df_train_['range_volRev'] = np.where(
+            (volRev_values_train > volRev_low_threshold) & (volRev_values_train < volRev_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        # Zone extrême de ratio (en dehors de l'intervalle)
+        df_train_['extrem_volRev'] = np.where(
+            (volRev_values_train < volRev_low_threshold) | (volRev_values_train > volRev_high_threshold),
+            1, 0
+        )
+
+    # --- 2.3 Filtrer les lignes binaires sur le TRAIN
+    df_train_filtered = df_train_[df_train_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 2.4 Calculer les métriques sur TRAIN
+    bin_0_win_rate_train = 0.5  # Valeur par défaut
+    bin_1_win_rate_train = 0.5  # Valeur par défaut
+    bin_0_pct_train = 0
+    bin_1_pct_train = 0
+    oversold_success_count_train = 0
+    overbought_success_count_train = 0
+
+    try:
+        # Si on optimise la "survente" (ratio extrême)
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_train = df_train_filtered[df_train_filtered['extrem_volRev'] == 1]
+            if len(oversold_df_train) == 0:
+                return -np.inf  # Pas de trades, on pénalise
+            bin_0_win_rate_train = oversold_df_train['class_binaire'].mean()
+            bin_0_pct_train = len(oversold_df_train) / len(df_train_filtered)
+            oversold_success_count_train = oversold_df_train['class_binaire'].sum()
+
+        # Si on optimise le "surachat" (ratio modéré)
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_train = df_train_filtered[df_train_filtered['range_volRev'] == 1]
+            if len(overbought_df_train) == 0:
+                return -np.inf
+            bin_1_win_rate_train = overbought_df_train['class_binaire'].mean()
+            bin_1_pct_train = len(overbought_df_train) / len(df_train_filtered)
+            overbought_success_count_train = overbought_df_train['class_binaire'].sum()
+
+        # Calcul spread si on optimise les deux en même temps
+        bin_spread_train = (bin_1_win_rate_train - bin_0_win_rate_train) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        params_check_constraints = {
+            "max_bin_0_win_rate": MAX_BIN_0_WIN_RATE,
+            "max_bin_1_win_rate": MAX_BIN_1_WIN_RATE,
+            "min_bin_size_0": MIN_BIN_SIZE_0,
+            "min_bin_size_1": MIN_BIN_SIZE_1,
+        }
+
+        # Vérifier les contraintes sur TRAIN
+        if not check_bin_constraints(
+                bin_0_pct_train,
+                bin_1_pct_train,
+                bin_0_win_rate_train,
+                bin_1_win_rate_train,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score TRAIN
+        combined_score_train = calculate_optimization_score(
+            bin_0_pct_train,
+            bin_1_pct_train,
+            bin_0_win_rate_train,
+            bin_1_win_rate_train,
+            bin_spread_train
+        )
+
+    except Exception as e:
+        print(f"[TRAIN] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 3. Calculer signaux + métriques sur VALIDATION
+    # ==============================
+    # --- 3.1 Récupération des valeurs du ratio de volume sur VALIDATION
+    volRev_values_val = df_val_['ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone'].values
+
+    # Filtrer les valeurs NaN pour les ratios (uniquement pour le logging)
+    valid_volRev_val = volRev_values_val[~np.isnan(volRev_values_val)]
+
+    if len(valid_volRev_val) > 0 and trial.number % 50 == 0:
+        print(f"[VAL] Volume Ratio max (excluding NaN): {valid_volRev_val.max()}")
+        print(f"[VAL] Volume Ratio min (excluding NaN): {valid_volRev_val.min()}")
+        print(f"[VAL] Number of valid Volume Ratio values: {len(valid_volRev_val)} out of {len(volRev_values_val)} "
+              f"({len(valid_volRev_val) / len(volRev_values_val) * 100:.2f}%)")
+
+    # --- 3.2 Créer les indicateurs pour VALIDATION
+    if OPTIMIZE_OVERBOUGHT:
+        df_val_['range_volRev'] = np.where(
+            (volRev_values_val > volRev_low_threshold) & (volRev_values_val < volRev_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        df_val_['extrem_volRev'] = np.where(
+            (volRev_values_val < volRev_low_threshold) | (volRev_values_val > volRev_high_threshold),
+            1, 0
+        )
+
+    # --- 3.3 Filtrer les lignes binaires sur la VAL
+    df_val_filtered = df_val_[df_val_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 3.4 Calculer les métriques sur VAL
+    bin_0_win_rate_val = 0.5
+    bin_1_win_rate_val = 0.5
+    bin_0_pct_val = 0
+    bin_1_pct_val = 0
+    oversold_success_count_val = 0
+    overbought_success_count_val = 0
+
+    try:
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_val = df_val_filtered[df_val_filtered['extrem_volRev'] == 1]
+            if len(oversold_df_val) == 0:
+                return -np.inf
+            bin_0_win_rate_val = oversold_df_val['class_binaire'].mean()
+            bin_0_pct_val = len(oversold_df_val) / len(df_val_filtered)
+            oversold_success_count_val = oversold_df_val['class_binaire'].sum()
+
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_val = df_val_filtered[df_val_filtered['range_volRev'] == 1]
+            if len(overbought_df_val) == 0:
+                return -np.inf
+            bin_1_win_rate_val = overbought_df_val['class_binaire'].mean()
+            bin_1_pct_val = len(overbought_df_val) / len(df_val_filtered)
+            overbought_success_count_val = overbought_df_val['class_binaire'].sum()
+            print(bin_1_pct_val)
+            print(bin_1_win_rate_val)
+        bin_spread_val = (bin_1_win_rate_val - bin_0_win_rate_val) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        # Vérifier les contraintes sur VAL
+        if not check_bin_constraints(
+                bin_0_pct_val,
+                bin_1_pct_val,
+                bin_0_win_rate_val,
+                bin_1_win_rate_val,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score VAL
+        combined_score_val = calculate_optimization_score(
+            bin_0_pct_val,
+            bin_1_pct_val,
+            bin_0_win_rate_val,
+            bin_1_win_rate_val,
+            bin_spread_val
+        )
+
+    except Exception as e:
+        print(f"[VAL] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 4. Stocker toutes les métriques (TRAIN + VAL)
+    # ==============================
+    metrics = {
+        # --- Métriques TRAIN
+        'bin_0_win_rate_train': float(bin_0_win_rate_train),
+        'bin_1_win_rate_train': float(bin_1_win_rate_train),
+        'bin_0_pct_train': float(bin_0_pct_train),
+        'bin_1_pct_train': float(bin_1_pct_train),
+        'bin_spread_train': float(bin_spread_train),
+        'combined_score_train': float(combined_score_train),
+
+        # --- Métriques VAL
+        'bin_0_win_rate_val': float(bin_0_win_rate_val),
+        'bin_1_win_rate_val': float(bin_1_win_rate_val),
+        'bin_0_pct_val': float(bin_0_pct_val),
+        'bin_1_pct_val': float(bin_1_pct_val),
+        'bin_spread_val': float(bin_spread_val),
+        'combined_score_val': float(combined_score_val),
+
+        # --- Hyperparamètres
+        'volRev_low_threshold': volRev_low_threshold,
+        'volRev_high_threshold': volRev_high_threshold,
+
+        # --- Comptes bruts
+        'oversold_success_count_train': int(oversold_success_count_train),
+        'overbought_success_count_train': int(overbought_success_count_train),
+        'oversold_success_count_val': int(oversold_success_count_val),
+        'overbought_success_count_val': int(overbought_success_count_val),
+    }
+
+    # Stocker toutes les métriques d'un coup
+    for key, value in metrics.items():
+        trial.set_user_attr(key, value)
+
+    # ==============================
+    # 5. Logs périodiques
+    # ==============================
+    if trial.number % 50 == 0:
+        mode_str = ("COMPLET" if (OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else
+                    "VOLUME RATIO EXTRÊME uniquement" if OPTIMIZE_OVERSOLD else
+                    "VOLUME RATIO MODÉRÉ uniquement")
+
+        print(f"Trial {trial.number} [Mode: {mode_str}]:")
+
+        print(f"  --- TRAIN ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_train:.4f}, Bin0={bin_0_pct_train:.2%}, Bin1={bin_1_pct_train:.2%}")
+            print(
+                f"  Win rates: Bin0(Volume Ratio extrême)={bin_0_win_rate_train:.4f}, Bin1(Volume Ratio modéré)={bin_1_win_rate_train:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_train:.2%}, Win rate: {bin_0_win_rate_train:.4f}, Trades réussis: {oversold_success_count_train}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_train:.2%}, Win rate: {bin_1_win_rate_train:.4f}, Trades réussis: {overbought_success_count_train}")
+        print(f"  Score TRAIN: {combined_score_train:.2f}")
+
+        print(f"  --- VALIDATION ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_val:.4f}, Bin0={bin_0_pct_val:.2%}, Bin1={bin_1_pct_val:.2%}")
+            print(
+                f"  Win rates: Bin0(Volume Ratio extrême)={bin_0_win_rate_val:.4f}, Bin1(Volume Ratio modéré)={bin_1_win_rate_val:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_val:.2%}, Win rate: {bin_0_win_rate_val:.4f}, Trades réussis: {oversold_success_count_val}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_val:.2%}, Win rate: {bin_1_win_rate_val:.4f}, Trades réussis: {overbought_success_count_val}")
+        print(f"  Score VAL: {combined_score_val:.2f}")
+
+        params_str = f"  Paramètres: volRev_low_threshold={volRev_low_threshold:.7f}, volRev_high_threshold={volRev_high_threshold:.7f}"
+        print(params_str)
+
+        # Score mixte final
+        score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+        print(f"  Score MIX: {score_mix:.2f}")
+
+    # ==============================
+    # 6. Retourner le score final (Mix)
+    # ==============================
+    score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+    return score_mix
+
+def objective_pullStack_avgDiff(trial, df_train_, df_val_):
+    """
+    Fonction objective optimisée pour Optuna qui ajuste les paramètres de l'indicateur
+    pullStack_avgDiff_ratio selon le mode d'optimisation (survente, surachat ou les deux).
+    Calcule et vérifie les métriques sur le TRAIN, puis sur la VALIDATION.
+    """
+    # ==============================
+    # 1. Paramètres à optimiser
+    # ==============================
+    pullStack_low_threshold = trial.suggest_float('pullStack_low_threshold', PULLSTACK_LOW_THRESHOLD_L, PULLSTACK_LOW_THRESHOLD_H)
+
+    if OPTIMIZE_OVERBOUGHT:
+        low = pullStack_low_threshold
+    else:
+        low = PULLSTACK_HIGH_THRESHOLD_L
+
+    # Ensuite, suggérer le seuil haut en commençant à partir du seuil bas
+    # Cela garantit que high_threshold > low_threshold
+    pullStack_high_threshold = trial.suggest_float('pullStack_high_threshold',
+                                           low,  # Commence à la valeur du seuil bas
+                                           PULLSTACK_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
+
+    # ==============================
+    # 2. Calculer signaux + métriques sur TRAIN
+    # ==============================
+
+    # --- 2.1 Récupération des valeurs de pullStack sur TRAIN
+    pullStack_train = df_train_['cumDOM_AskBid_pullStack_avgDiff_ratio'].values
+
+    # Filtrer les valeurs NaN pour le pullStack (uniquement pour le logging)
+    valid_pullStack_train = pullStack_train[~np.isnan(pullStack_train)]
+
+    if len(valid_pullStack_train) > 0 and trial.number % 50 == 0:
+        print(f"[TRAIN] pullStack max (excluding NaN): {valid_pullStack_train.max()}")
+        print(f"[TRAIN] pullStack min (excluding NaN): {valid_pullStack_train.min()}")
+        print(f"[TRAIN] Number of valid pullStack values: {len(valid_pullStack_train)} out of {len(pullStack_train)} "
+              f"({len(valid_pullStack_train) / len(pullStack_train) * 100:.2f}%)")
+
+    # --- 2.2 Créer les indicateurs avec une logique adaptée au mode d'optimisation
+    if OPTIMIZE_OVERBOUGHT:
+        # Zone modérée de pullStack (dans l'intervalle)
+        df_train_['range_pullStack'] = np.where(
+            (pullStack_train > pullStack_low_threshold) & (pullStack_train < pullStack_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        # Zone extrême de pullStack (en dehors de l'intervalle)
+        df_train_['extrem_pullStack'] = np.where(
+            (pullStack_train < pullStack_low_threshold) | (pullStack_train > pullStack_high_threshold),
+            1, 0
+        )
+
+    # --- 2.3 Filtrer les lignes binaires sur le TRAIN
+    df_train_filtered = df_train_[df_train_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 2.4 Calculer les métriques sur TRAIN
+    bin_0_win_rate_train = 0.5  # Valeur par défaut
+    bin_1_win_rate_train = 0.5  # Valeur par défaut
+    bin_0_pct_train = 0
+    bin_1_pct_train = 0
+    oversold_success_count_train = 0
+    overbought_success_count_train = 0
+
+    try:
+        # Si on optimise la "survente" (pullStack extrême)
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_train = df_train_filtered[df_train_filtered['extrem_pullStack'] == 1]
+            if len(oversold_df_train) == 0:
+                return -np.inf  # Pas de trades, on pénalise
+            bin_0_win_rate_train = oversold_df_train['class_binaire'].mean()
+            bin_0_pct_train = len(oversold_df_train) / len(df_train_filtered)
+            oversold_success_count_train = oversold_df_train['class_binaire'].sum()
+
+        # Si on optimise le "surachat" (pullStack modéré)
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_train = df_train_filtered[df_train_filtered['range_pullStack'] == 1]
+            if len(overbought_df_train) == 0:
+                return -np.inf
+            bin_1_win_rate_train = overbought_df_train['class_binaire'].mean()
+            bin_1_pct_train = len(overbought_df_train) / len(df_train_filtered)
+            overbought_success_count_train = overbought_df_train['class_binaire'].sum()
+
+        # Calcul spread si on optimise les deux en même temps
+        bin_spread_train = (bin_1_win_rate_train - bin_0_win_rate_train) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        params_check_constraints = {
+            "max_bin_0_win_rate": MAX_BIN_0_WIN_RATE,
+            "max_bin_1_win_rate": MAX_BIN_1_WIN_RATE,
+            "min_bin_size_0": MIN_BIN_SIZE_0,
+            "min_bin_size_1": MIN_BIN_SIZE_1,
+        }
+
+        # Vérifier les contraintes sur TRAIN
+        if not check_bin_constraints(
+                bin_0_pct_train,
+                bin_1_pct_train,
+                bin_0_win_rate_train,
+                bin_1_win_rate_train,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score TRAIN
+        combined_score_train = calculate_optimization_score(
+            bin_0_pct_train,
+            bin_1_pct_train,
+            bin_0_win_rate_train,
+            bin_1_win_rate_train,
+            bin_spread_train
+        )
+
+    except Exception as e:
+        print(f"[TRAIN] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 3. Calculer signaux + métriques sur VALIDATION
+    # ==============================
+
+    # --- 3.1 Récupération des valeurs de pullStack sur VALIDATION
+    pullStack_val = df_val_['cumDOM_AskBid_pullStack_avgDiff_ratio'].values
+
+    # Filtrer les valeurs NaN pour le pullStack (uniquement pour le logging)
+    valid_pullStack_val = pullStack_val[~np.isnan(pullStack_val)]
+
+    if len(valid_pullStack_val) > 0 and trial.number % 50 == 0:
+        print(f"[VAL] pullStack max (excluding NaN): {valid_pullStack_val.max()}")
+        print(f"[VAL] pullStack min (excluding NaN): {valid_pullStack_val.min()}")
+        print(f"[VAL] Number of valid pullStack values: {len(valid_pullStack_val)} out of {len(pullStack_val)} "
+              f"({len(valid_pullStack_val) / len(pullStack_val) * 100:.2f}%)")
+
+    # --- 3.2 Créer les indicateurs pour VALIDATION
+    if OPTIMIZE_OVERBOUGHT:
+        df_val_['range_pullStack'] = np.where(
+            (pullStack_val > pullStack_low_threshold) & (pullStack_val < pullStack_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        df_val_['extrem_pullStack'] = np.where(
+            (pullStack_val < pullStack_low_threshold) | (pullStack_val > pullStack_high_threshold),
+            1, 0
+        )
+
+    # --- 3.3 Filtrer les lignes binaires sur la VAL
+    df_val_filtered = df_val_[df_val_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 3.4 Calculer les métriques sur VAL
+    bin_0_win_rate_val = 0.5
+    bin_1_win_rate_val = 0.5
+    bin_0_pct_val = 0
+    bin_1_pct_val = 0
+    oversold_success_count_val = 0
+    overbought_success_count_val = 0
+
+    try:
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_val = df_val_filtered[df_val_filtered['extrem_pullStack'] == 1]
+            if len(oversold_df_val) == 0:
+                return -np.inf
+            bin_0_win_rate_val = oversold_df_val['class_binaire'].mean()
+            bin_0_pct_val = len(oversold_df_val) / len(df_val_filtered)
+            oversold_success_count_val = oversold_df_val['class_binaire'].sum()
+
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_val = df_val_filtered[df_val_filtered['range_pullStack'] == 1]
+            if len(overbought_df_val) == 0:
+                return -np.inf
+            bin_1_win_rate_val = overbought_df_val['class_binaire'].mean()
+            bin_1_pct_val = len(overbought_df_val) / len(df_val_filtered)
+            overbought_success_count_val = overbought_df_val['class_binaire'].sum()
+
+        bin_spread_val = (bin_1_win_rate_val - bin_0_win_rate_val) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        # Vérifier les contraintes sur VAL
+        if not check_bin_constraints(
+                bin_0_pct_val,
+                bin_1_pct_val,
+                bin_0_win_rate_val,
+                bin_1_win_rate_val,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score VAL
+        combined_score_val = calculate_optimization_score(
+            bin_0_pct_val,
+            bin_1_pct_val,
+            bin_0_win_rate_val,
+            bin_1_win_rate_val,
+            bin_spread_val
+        )
+
+    except Exception as e:
+        print(f"[VAL] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 4. Stocker toutes les métriques (TRAIN + VAL)
+    # ==============================
+    metrics = {
+        # --- Métriques TRAIN
+        'bin_0_win_rate_train': float(bin_0_win_rate_train),
+        'bin_1_win_rate_train': float(bin_1_win_rate_train),
+        'bin_0_pct_train': float(bin_0_pct_train),
+        'bin_1_pct_train': float(bin_1_pct_train),
+        'bin_spread_train': float(bin_spread_train),
+        'combined_score_train': float(combined_score_train),
+
+        # --- Métriques VAL
+        'bin_0_win_rate_val': float(bin_0_win_rate_val),
+        'bin_1_win_rate_val': float(bin_1_win_rate_val),
+        'bin_0_pct_val': float(bin_0_pct_val),
+        'bin_1_pct_val': float(bin_1_pct_val),
+        'bin_spread_val': float(bin_spread_val),
+        'combined_score_val': float(combined_score_val),
+
+        # --- Hyperparamètres
+        'pullStack_low_threshold': pullStack_low_threshold,
+        'pullStack_high_threshold': pullStack_high_threshold,
+
+        # --- Comptes bruts
+        'oversold_success_count_train': int(oversold_success_count_train),
+        'overbought_success_count_train': int(overbought_success_count_train),
+        'oversold_success_count_val': int(oversold_success_count_val),
+        'overbought_success_count_val': int(overbought_success_count_val),
+    }
+
+    # Stocker toutes les métriques d'un coup
+    for key, value in metrics.items():
+        trial.set_user_attr(key, value)
+
+    # ==============================
+    # 5. Logs périodiques
+    # ==============================
+    if trial.number % 50 == 0:
+        mode_str = ("COMPLET" if (OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else
+                    "PULLSTACK EXTRÊME uniquement" if OPTIMIZE_OVERSOLD else
+                    "PULLSTACK MODÉRÉ uniquement")
+
+        print(f"Trial {trial.number} [Mode: {mode_str}]:")
+
+        print(f"  --- TRAIN ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_train:.4f}, Bin0={bin_0_pct_train:.2%}, Bin1={bin_1_pct_train:.2%}")
+            print(
+                f"  Win rates: Bin0(PullStack extrême)={bin_0_win_rate_train:.4f}, Bin1(PullStack modéré)={bin_1_win_rate_train:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_train:.2%}, Win rate: {bin_0_win_rate_train:.4f}, Trades réussis: {oversold_success_count_train}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_train:.2%}, Win rate: {bin_1_win_rate_train:.4f}, Trades réussis: {overbought_success_count_train}")
+        print(f"  Score TRAIN: {combined_score_train:.2f}")
+
+        print(f"  --- VALIDATION ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_val:.4f}, Bin0={bin_0_pct_val:.2%}, Bin1={bin_1_pct_val:.2%}")
+            print(
+                f"  Win rates: Bin0(PullStack extrême)={bin_0_win_rate_val:.4f}, Bin1(PullStack modéré)={bin_1_win_rate_val:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_val:.2%}, Win rate: {bin_0_win_rate_val:.4f}, Trades réussis: {oversold_success_count_val}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_val:.2%}, Win rate: {bin_1_win_rate_val:.4f}, Trades réussis: {overbought_success_count_val}")
+        print(f"  Score VAL: {combined_score_val:.2f}")
+
+        params_str = f"  Paramètres: pullStack_low_threshold={pullStack_low_threshold:.7f}, pullStack_high_threshold={pullStack_high_threshold:.7f}"
+        print(params_str)
+
+        # Score mixte final
+        score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+        print(f"  Score MIX: {score_mix:.2f}")
+
+    # ==============================
+    # 6. Retourner le score final (Mix)
+    # ==============================
+    score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+    return score_mix
+def objective_RS(trial, df_train_, df_val_):
+    """
+    Fonction objective optimisée pour Optuna qui ajuste les paramètres de l'indicateur
+    de volatilité Rogers-Satchell selon le mode d'optimisation (survente, surachat ou les deux).
+    Calcule et vérifie les métriques sur le TRAIN, puis sur la VALIDATION.
+    """
+    # ==============================
+    # 1. Paramètres à optimiser
+    # ==============================
+    period_var = trial.suggest_int('period_var', PERIOD_VAR_L, PERIOD_VAR_H)
+    rs_low_threshold = trial.suggest_float('rs_low_threshold', RS_LOW_THRESHOLD_L, RS_LOW_THRESHOLD_H)
+
+    if OPTIMIZE_OVERBOUGHT:
+        low = rs_low_threshold
+    else:
+        low = RS_HIGH_THRESHOLD_L
+
+    # Ensuite, suggérer le seuil haut en commençant à partir du seuil bas
+    # Cela garantit que high_threshold > low_threshold
+    rs_high_threshold = trial.suggest_float('rs_high_threshold',
+                                           low,  # Commence à la valeur du seuil bas
+                                           RS_HIGH_THRESHOLD_H)  # Jusqu'à la limite supérieure
+
+    # ==============================
+    # 2. Calculer signaux + métriques sur TRAIN
+    # ==============================
+
+    # --- 2.1 Calcul de la volatilité Rogers-Satchell sur TRAIN
+    high_train = pd.to_numeric(df_train_['high'], errors='coerce').values
+    low_train = pd.to_numeric(df_train_['low'], errors='coerce').values
+    open_train = pd.to_numeric(df_train_['open'], errors='coerce').values
+    close_train = pd.to_numeric(df_train_['close'], errors='coerce').values
+    session_starts_train = (df_train_['SessionStartEnd'] == 10).values
+
+    # Calcul de la volatilité RS SANS annualisation
+    rs_volatility_train = calculate_rogers_satchell_numba(high_train, low_train,
+                                                          open_train, close_train,
+                                                          session_starts_train, period_var)
+
+    # Filtrer les valeurs NaN pour les volatilités (uniquement pour le logging)
+    valid_rs_train = rs_volatility_train[~np.isnan(rs_volatility_train)]
+
+    if len(valid_rs_train) > 0 and trial.number % 50 == 0:
+        print(f"[TRAIN] RS volatility max (excluding NaN): {valid_rs_train.max()}")
+        print(f"[TRAIN] RS volatility min (excluding NaN): {valid_rs_train.min()}")
+        print(f"[TRAIN] Number of valid RS values: {len(valid_rs_train)} out of {len(rs_volatility_train)} "
+              f"({len(valid_rs_train) / len(rs_volatility_train) * 100:.2f}%)")
+
+    # --- 2.2 Créer les indicateurs avec une logique adaptée au mode d'optimisation
+    if OPTIMIZE_OVERBOUGHT:
+        # Zone modérée de volatilité (dans l'intervalle)
+        df_train_['range_volatility'] = np.where(
+            (rs_volatility_train > rs_low_threshold) & (rs_volatility_train < rs_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        # Zone extrême de volatilité (en dehors de l'intervalle)
+        df_train_['extrem_volatility'] = np.where(
+            (rs_volatility_train < rs_low_threshold) | (rs_volatility_train > rs_high_threshold),
+            1, 0
+        )
+
+    # --- 2.3 Filtrer les lignes binaires sur le TRAIN
+    df_train_filtered = df_train_[df_train_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 2.4 Calculer les métriques sur TRAIN
+    bin_0_win_rate_train = 0.5  # Valeur par défaut
+    bin_1_win_rate_train = 0.5  # Valeur par défaut
+    bin_0_pct_train = 0
+    bin_1_pct_train = 0
+    oversold_success_count_train = 0
+    overbought_success_count_train = 0
+
+    try:
+        # Si on optimise la "survente" (volatilité extrême)
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_train = df_train_filtered[df_train_filtered['extrem_volatility'] == 1]
+            if len(oversold_df_train) == 0:
+                return -np.inf  # Pas de trades, on pénalise
+            bin_0_win_rate_train = oversold_df_train['class_binaire'].mean()
+            bin_0_pct_train = len(oversold_df_train) / len(df_train_filtered)
+            oversold_success_count_train = oversold_df_train['class_binaire'].sum()
+
+        # Si on optimise le "surachat" (volatilité modérée)
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_train = df_train_filtered[df_train_filtered['range_volatility'] == 1]
+            if len(overbought_df_train) == 0:
+                return -np.inf
+            bin_1_win_rate_train = overbought_df_train['class_binaire'].mean()
+            bin_1_pct_train = len(overbought_df_train) / len(df_train_filtered)
+            overbought_success_count_train = overbought_df_train['class_binaire'].sum()
+
+        # Calcul spread si on optimise les deux en même temps
+        bin_spread_train = (bin_1_win_rate_train - bin_0_win_rate_train) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        params_check_constraints = {
+            "max_bin_0_win_rate": MAX_BIN_0_WIN_RATE,
+            "max_bin_1_win_rate": MAX_BIN_1_WIN_RATE,
+            "min_bin_size_0": MIN_BIN_SIZE_0,
+            "min_bin_size_1": MIN_BIN_SIZE_1,
+        }
+
+        # Vérifier les contraintes sur TRAIN
+        if not check_bin_constraints(
+                bin_0_pct_train,
+                bin_1_pct_train,
+                bin_0_win_rate_train,
+                bin_1_win_rate_train,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score TRAIN
+        combined_score_train = calculate_optimization_score(
+            bin_0_pct_train,
+            bin_1_pct_train,
+            bin_0_win_rate_train,
+            bin_1_win_rate_train,
+            bin_spread_train
+        )
+
+    except Exception as e:
+        print(f"[TRAIN] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 3. Calculer signaux + métriques sur VALIDATION
+    # ==============================
+
+    # --- 3.1 Calcul de la volatilité Rogers-Satchell sur VALIDATION
+    high_val = pd.to_numeric(df_val_['high'], errors='coerce').values
+    low_val = pd.to_numeric(df_val_['low'], errors='coerce').values
+    open_val = pd.to_numeric(df_val_['open'], errors='coerce').values
+    close_val = pd.to_numeric(df_val_['close'], errors='coerce').values
+    session_starts_val = (df_val_['SessionStartEnd'] == 10).values
+
+    # Calcul de la volatilité RS SANS annualisation
+    rs_volatility_val = calculate_rogers_satchell_numba(high_val, low_val,
+                                                        open_val, close_val,
+                                                        session_starts_val, period_var)
+
+    # Filtrer les valeurs NaN pour les volatilités (uniquement pour le logging)
+    valid_rs_val = rs_volatility_val[~np.isnan(rs_volatility_val)]
+
+    if len(valid_rs_val) > 0 and trial.number % 50 == 0:
+        print(f"[VAL] RS volatility max (excluding NaN): {valid_rs_val.max()}")
+        print(f"[VAL] RS volatility min (excluding NaN): {valid_rs_val.min()}")
+        print(f"[VAL] Number of valid RS values: {len(valid_rs_val)} out of {len(rs_volatility_val)} "
+              f"({len(valid_rs_val) / len(rs_volatility_val) * 100:.2f}%)")
+
+    # --- 3.2 Créer les indicateurs pour VALIDATION
+    if OPTIMIZE_OVERBOUGHT:
+        df_val_['range_volatility'] = np.where(
+            (rs_volatility_val > rs_low_threshold) & (rs_volatility_val < rs_high_threshold),
+            1, 0
+        )
+
+    if OPTIMIZE_OVERSOLD:
+        df_val_['extrem_volatility'] = np.where(
+            (rs_volatility_val < rs_low_threshold) | (rs_volatility_val > rs_high_threshold),
+            1, 0
+        )
+
+    # --- 3.3 Filtrer les lignes binaires sur la VAL
+    df_val_filtered = df_val_[df_val_['class_binaire'].isin([0, 1])].copy()
+
+    # --- 3.4 Calculer les métriques sur VAL
+    bin_0_win_rate_val = 0.5
+    bin_1_win_rate_val = 0.5
+    bin_0_pct_val = 0
+    bin_1_pct_val = 0
+    oversold_success_count_val = 0
+    overbought_success_count_val = 0
+
+    try:
+        if OPTIMIZE_OVERSOLD:
+            oversold_df_val = df_val_filtered[df_val_filtered['extrem_volatility'] == 1]
+            if len(oversold_df_val) == 0:
+                return -np.inf
+            bin_0_win_rate_val = oversold_df_val['class_binaire'].mean()
+            bin_0_pct_val = len(oversold_df_val) / len(df_val_filtered)
+            oversold_success_count_val = oversold_df_val['class_binaire'].sum()
+
+        if OPTIMIZE_OVERBOUGHT:
+            overbought_df_val = df_val_filtered[df_val_filtered['range_volatility'] == 1]
+            if len(overbought_df_val) == 0:
+                return -np.inf
+            bin_1_win_rate_val = overbought_df_val['class_binaire'].mean()
+            bin_1_pct_val = len(overbought_df_val) / len(df_val_filtered)
+            overbought_success_count_val = overbought_df_val['class_binaire'].sum()
+
+        bin_spread_val = (bin_1_win_rate_val - bin_0_win_rate_val) if (
+                OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else 0
+
+        # Vérifier les contraintes sur VAL
+        if not check_bin_constraints(
+                bin_0_pct_val,
+                bin_1_pct_val,
+                bin_0_win_rate_val,
+                bin_1_win_rate_val,
+                params_check_constraints,
+                optimize_oversold=OPTIMIZE_OVERSOLD,
+                optimize_overbought=OPTIMIZE_OVERBOUGHT):
+            return -np.inf
+
+        # Calcul du score VAL
+        combined_score_val = calculate_optimization_score(
+            bin_0_pct_val,
+            bin_1_pct_val,
+            bin_0_win_rate_val,
+            bin_1_win_rate_val,
+            bin_spread_val
+        )
+
+    except Exception as e:
+        print(f"[VAL] Erreur lors du calcul: {e}")
+        return -np.inf
+
+    # ==============================
+    # 4. Stocker toutes les métriques (TRAIN + VAL)
+    # ==============================
+    metrics = {
+        # --- Métriques TRAIN
+        'bin_0_win_rate_train': float(bin_0_win_rate_train),
+        'bin_1_win_rate_train': float(bin_1_win_rate_train),
+        'bin_0_pct_train': float(bin_0_pct_train),
+        'bin_1_pct_train': float(bin_1_pct_train),
+        'bin_spread_train': float(bin_spread_train),
+        'combined_score_train': float(combined_score_train),
+
+        # --- Métriques VAL
+        'bin_0_win_rate_val': float(bin_0_win_rate_val),
+        'bin_1_win_rate_val': float(bin_1_win_rate_val),
+        'bin_0_pct_val': float(bin_0_pct_val),
+        'bin_1_pct_val': float(bin_1_pct_val),
+        'bin_spread_val': float(bin_spread_val),
+        'combined_score_val': float(combined_score_val),
+
+        # --- Hyperparamètres
+        'period_var': period_var,
+        'rs_low_threshold': rs_low_threshold,
+        'rs_high_threshold': rs_high_threshold,
+
+        # --- Comptes bruts
+        'oversold_success_count_train': int(oversold_success_count_train),
+        'overbought_success_count_train': int(overbought_success_count_train),
+        'oversold_success_count_val': int(oversold_success_count_val),
+        'overbought_success_count_val': int(overbought_success_count_val),
+    }
+
+    # Stocker toutes les métriques d'un coup
+    for key, value in metrics.items():
+        trial.set_user_attr(key, value)
+
+    # ==============================
+    # 5. Logs périodiques
+    # ==============================
+    if trial.number % 50 == 0:
+        mode_str = ("COMPLET" if (OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT) else
+                    "VOLATILITÉ EXTRÊME uniquement" if OPTIMIZE_OVERSOLD else
+                    "VOLATILITÉ MODÉRÉE uniquement")
+
+        print(f"Trial {trial.number} [Mode: {mode_str}]:")
+
+        print(f"  --- TRAIN ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_train:.4f}, Bin0={bin_0_pct_train:.2%}, Bin1={bin_1_pct_train:.2%}")
+            print(
+                f"  Win rates: Bin0(Volatilité extrême)={bin_0_win_rate_train:.4f}, Bin1(Volatilité modérée)={bin_1_win_rate_train:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_train:.2%}, Win rate: {bin_0_win_rate_train:.4f}, Trades réussis: {oversold_success_count_train}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_train:.2%}, Win rate: {bin_1_win_rate_train:.4f}, Trades réussis: {overbought_success_count_train}")
+        print(f"  Score TRAIN: {combined_score_train:.2f}")
+
+        print(f"  --- VALIDATION ---")
+        if OPTIMIZE_OVERSOLD and OPTIMIZE_OVERBOUGHT:
+            print(f"  Spread={bin_spread_val:.4f}, Bin0={bin_0_pct_val:.2%}, Bin1={bin_1_pct_val:.2%}")
+            print(
+                f"  Win rates: Bin0(Volatilité extrême)={bin_0_win_rate_val:.4f}, Bin1(Volatilité modérée)={bin_1_win_rate_val:.4f}")
+        elif OPTIMIZE_OVERSOLD:
+            print(
+                f"  Bin0={bin_0_pct_val:.2%}, Win rate: {bin_0_win_rate_val:.4f}, Trades réussis: {oversold_success_count_val}")
+        elif OPTIMIZE_OVERBOUGHT:
+            print(
+                f"  Bin1={bin_1_pct_val:.2%}, Win rate: {bin_1_win_rate_val:.4f}, Trades réussis: {overbought_success_count_val}")
+        print(f"  Score VAL: {combined_score_val:.2f}")
+
+        params_str = f"  Paramètres: period={period_var}"
+        params_str += f", rs_low_threshold={rs_low_threshold:.7f}, rs_high_threshold={rs_high_threshold:.7f}"
+        print(params_str)
+
+        # Score mixte final
+        score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+        print(f"  Score MIX: {score_mix:.2f}")
+
+    # ==============================
+    # 6. Retourner le score final (Mix)
+    # ==============================
+    score_mix = SPLIT_SCORE_VAL * combined_score_val + (1 - SPLIT_SCORE_VAL) * combined_score_train
+    return score_mix
 
 def objective_regressionSlope_modified(trial, df_train_, df_val_):
     """
@@ -4198,7 +5175,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
     show_optimization_mode()
 
     if indicator_type in ["stochastic", "regression_slope", "regression_std", "regression_r2", "atr", "vwap",
-                          "percent_bb_simu", "zscore","imbalance"]:
+                          "percent_bb_simu", "zscore", "rogers_satchell", "pullstack_avgdiff","volrevmovezone1_volImpulsmoveextrem"]:
 
         # Pour le stochastique, désactiver l'échantillonnage multivarié
         sampler = optuna.samplers.TPESampler(
@@ -4237,7 +5214,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
         # Vérifier si le type d'indicateur est reconnu, sinon utiliser stochastic comme valeur par défaut
         valid_indicator_types = ["stochastic", "williams_r", "mfi", "mfi_divergence",
                                  "regression_r2", "regression_std", "regression_slope", "atr", "vwap",
-                                 "percent_bb_simu", "zscore", "imbalance"]
+                                 "percent_bb_simu", "zscore", "imbalance", "rogers_satchell", "pullstack_avgdiff","volrevmovezone1_volimpulsmoveextrem"]
 
 
         if indicator_type.lower() not in valid_indicator_types:
@@ -4267,11 +5244,18 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             objective_func = lambda trial: objective_perctBB_simu_modified(trial, df_train_,df_val_)
         elif indicator_type.lower() == "zscore":
             objective_func = lambda trial: objective_zscore_modified(trial, df_train_,df_val_)
+        elif indicator_type.lower() == "rogers_satchell":
+            objective_func = lambda trial: objective_RS(trial, df_train_, df_val_)
+        elif indicator_type.lower() == "pullstack_avgdiff":
+            objective_func = lambda trial: objective_pullStack_avgDiff(trial, df_train_, df_val_)
         elif indicator_type.lower() == "stochastic":
             objective_func = lambda trial: objective_stochastic_modified(trial, df_train_,df_val_)
 
+        elif indicator_type.lower() == "volrevmovezone1_volimpulsmoveextrem":
+            objective_func = lambda trial: objective_volRevMoveZone1_volImpulsMoveExtrem(trial, df_train_, df_val_)
         else:  # Default to stochastic
-            exit(77)
+            print(indicator_type.lower())
+            exit(76)
             objective_func = lambda trial: objective_stochastic_modified(trial, df_train_)
             # Si l'indicateur n'était pas reconnu, on force la valeur à "stochastic" pour la cohérence
             if indicator_type.lower() not in valid_indicator_types:
@@ -4346,10 +5330,15 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
         print(f"RÉSULTATS FINAUX DE L'OPTIMISATION BANDES DE BOLLINGER %B - MODE {mode_text}")
     elif indicator_type.lower() == "zscore":
         print(f"RÉSULTATS FINAUX DE L'OPTIMISATION Z-SCORE - MODE {mode_text}")
-    elif indicator_type.lower() == "imbalance":
-        print(f"RÉSULTATS FINAUX DE L'OPTIMISATION IMBALANCE - MODE {mode_text}")
+    elif indicator_type.lower() == "rogers_satchell":
+        print(f"RÉSULTATS FINAUX DE L'OPTIMISATION ROGERS-SATCHELL - MODE {mode_text}")
+    elif indicator_type.lower() == "pullstack_avgdiff":
+        print(f"RÉSULTATS FINAUX DE L'OPTIMISATION PULLSTACK AVGDIFF - MODE {mode_text}")
+    elif indicator_type.lower() == "volrevmovezone1_volimpulsmoveextrem":
+        print(f"RÉSULTATS FINAUX DE L'OPTIMISATION VOLUME RATIO - MODE {mode_text}")
     else:  # Default to stochastic (cohérent avec la section d'attribution de fonction objective)
         print(f"RÉSULTATS FINAUX DE L'OPTIMISATION STOCHASTIQUE - MODE {mode_text}")
+        exit(44)
 
     # Afficher les meilleurs résultats avec statistiques détaillées
     if len(study.trials) > 0:
@@ -4435,6 +5424,21 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             if OPTIMIZE_OVERBOUGHT:
                 print(
                     f"  Seuil de volatilité haute (std_low_threshold): {best_trial.params.get('std_low_threshold', 'N/A')}  et  (std_high_threshold): {best_trial.params.get('std_high_threshold', 'N/A')}")
+        elif indicator_type.lower() == "rogers_satchell":
+            print(f"  Période: {best_trial.params.get('period_var', 'N/A')}")
+            if OPTIMIZE_OVERSOLD:
+                print(
+                    f"  Seuil de volatilité RS extrême (rs_low_threshold): {best_trial.params.get('rs_low_threshold', 'N/A')} et (rs_high_threshold): {best_trial.params.get('rs_high_threshold', 'N/A')}")
+            if OPTIMIZE_OVERBOUGHT:
+                print(
+                    f"  Seuil de volatilité RS modérée (rs_low_threshold): {best_trial.params.get('rs_low_threshold', 'N/A')} et (rs_high_threshold): {best_trial.params.get('rs_high_threshold', 'N/A')}")
+        elif indicator_type.lower() == "pullstack_avgdiff":
+            if OPTIMIZE_OVERSOLD:
+                print(
+                    f"  Seuil PullStack extrême (pullStack_low_threshold): {best_trial.params.get('pullStack_low_threshold', 'N/A'):.7f} et (pullStack_high_threshold): {best_trial.params.get('pullStack_high_threshold', 'N/A'):.7f}")
+            if OPTIMIZE_OVERBOUGHT:
+                print(
+                    f"  Seuil PullStack modéré (pullStack_low_threshold): {best_trial.params.get('pullStack_low_threshold', 'N/A'):.7f} et (pullStack_high_threshold): {best_trial.params.get('pullStack_high_threshold', 'N/A'):.7f}")
         elif indicator_type.lower() == "regression_slope":
             print(f"  Période de la pente: {best_trial.params.get('period_var_slope', 'N/A')}")
             if OPTIMIZE_OVERSOLD:
@@ -4480,13 +5484,13 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
                 print(f"  Seuil bas %B (bb_low_threshold): {best_trial.params.get('bb_low_threshold', 'N/A')}")
             if OPTIMIZE_OVERBOUGHT:
                 print(f"  Seuil haut %B (bb_high_threshold): {best_trial.params.get('bb_high_threshold', 'N/A')}")
-        elif indicator_type.lower() == "percent_bb_simu":
-            print(f"  Période des bandes de Bollinger: {best_trial.params.get('period_var_bb', 'N/A')}")
-            print(f"  Écart-type: {best_trial.params.get('std_dev', 'N/A')}")
+        elif indicator_type.lower() == "volrevmovezone1_volimpulsmoveextrem":
             if OPTIMIZE_OVERSOLD:
-                print(f"  Seuil bas %B (bb_low_threshold): {best_trial.params.get('bb_low_threshold', 'N/A')}")
+                print(
+                    f"  Seuil Volume Ratio extrême (volRev_low_threshold): {best_trial.params.get('volRev_low_threshold', 'N/A'):.7f} et (volRev_high_threshold): {best_trial.params.get('volRev_high_threshold', 'N/A'):.7f}")
             if OPTIMIZE_OVERBOUGHT:
-                print(f"  Seuil haut %B (bb_high_threshold): {best_trial.params.get('bb_high_threshold', 'N/A')}")
+                print(
+                    f"  Seuil Volume Ratio modéré (volRev_low_threshold): {best_trial.params.get('volRev_low_threshold', 'N/A'):.7f} et (volRev_high_threshold): {best_trial.params.get('volRev_high_threshold', 'N/A'):.7f}")
 
         else:
             exit(456)
@@ -4528,7 +5532,15 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
         elif indicator_type.lower() == "zscore":
             bin0_name = "Z-Score Extrême"
             bin1_name = "Z-Score Modéré"
-
+        elif indicator_type.lower() == "rogers_satchell":
+            bin0_name = "Volatilité RS Extrême"
+            bin1_name = "Volatilité RS Modérée"
+        elif indicator_type.lower() == "pullstack_avgdiff":
+            bin0_name = "PullStack Extrême"
+            bin1_name = "PullStack Modéré"
+        elif indicator_type.lower() == "volrevmovezone1_volimpulsmoveextrem":
+            bin0_name = "Volume Ratio Extrême"
+            bin1_name = "Volume Ratio Modéré"
         # Afficher uniquement les statistiques pertinentes selon le mode
         if OPTIMIZE_OVERSOLD:
             oversold_success_count = best_trial.user_attrs.get('oversold_success_count', 0)
@@ -4589,7 +5601,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             else:
                 print(f"    ✅ Bin 1: Bonne couverture des données ({bin_1_pct:.2%})")
 
-        # Écart par rapport à 50% - uniquement pour les bins pertinents
+            # Écart par rapport à 50% - uniquement pour les bins pertinents
         print("\n  3. Écart par rapport à 50% (neutralité):")
         if OPTIMIZE_OVERSOLD:
             if bin_0_wr > 0.48:
@@ -4611,7 +5623,6 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
         print("\n💡 CONCLUSION:")
 
         indicator_name = ""
-        indicator_name = ""
         if indicator_type.lower() == "williams_r":
             indicator_name = "Williams %R"
         elif indicator_type.lower() == "mfi":
@@ -4630,8 +5641,13 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             indicator_name = "Bandes de Bollinger %B"
         elif indicator_type.lower() == "zscore":
             indicator_name = "Z-Score"
-        elif indicator_type.lower() == "imbalance":
-            indicator_name = "Imbalance"
+        elif indicator_type.lower() == "rogers_satchell":
+            indicator_name = "Rogers-Satchell"
+        elif indicator_type.lower() == "pullstack_avgdiff":
+            indicator_name = "PullStack Average Difference"
+        # Ajouter cette condition dans la section qui détermine indicator_name
+        elif indicator_type.lower() == "volrevmovezone1_volimpulsmoveextrem":
+            indicator_name = "Volume Ratio"
         else:
             exit(78)
 
@@ -4649,7 +5665,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             print(f"  avec une taille d'échantillon {sample_quality} et une couverture {coverage_quality} des données.")
 
             quality_issues = (
-                        spread_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
+                    spread_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
 
         elif OPTIMIZE_OVERSOLD:
             # Critères pour le mode survente uniquement
@@ -4662,7 +5678,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             print(f"  avec une taille d'échantillon {sample_quality} et une couverture {coverage_quality} des données.")
 
             quality_issues = (
-                        wr_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
+                    wr_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
 
         elif OPTIMIZE_OVERBOUGHT:
             # Critères pour le mode surachat uniquement
@@ -4675,7 +5691,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             print(f"  avec une taille d'échantillon {sample_quality} et une couverture {coverage_quality} des données.")
 
             quality_issues = (
-                        wr_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
+                    wr_quality == "faible" or sample_quality == "insuffisante" or coverage_quality == "faible")
 
         # Recommandations finales
         if quality_issues:
@@ -4692,7 +5708,7 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
         print("\n⚠️ Aucun essai valide n'a été trouvé.")
         print("Essayez d'ajuster les contraintes avec modify_constraints().")
 
-    # Afficher des informations supplémentaires pour les divergences MFI
+        # Afficher des informations supplémentaires pour les divergences MFI
     if indicator_type.lower() == "mfi_divergence" and len(study.trials) > 0:
         bearish_success_count = best_trial.user_attrs.get('bearish_success_count', 0)
         bullish_success_count = best_trial.user_attrs.get('bullish_success_count', 0)
@@ -4712,8 +5728,9 @@ def run_indicator_optimization(df_train_,df_val_ ,df_val_filtered_, indicator_ty
             print(f"    • Win rate: {bin_1_wr:.4f}")
 
     return study
+
 if indicator_type == "stochastic":
-    study_stoch = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered,indicator_type="stochastic", n_trials=20000)
+    study_stoch = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="stochastic", n_trials=20000)
     study = study_stoch
 elif indicator_type == "williams_r":
     study_williams = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="williams_r", n_trials=20000)
@@ -4725,32 +5742,38 @@ elif indicator_type == "mfi_divergence":
     study_mfi_div = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="mfi_divergence", n_trials=20000)
     study = study_mfi_div
 elif indicator_type == "regression_r2":
-    study_regression = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered,indicator_type="regression_r2", n_trials=20000)
+    study_regression = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="regression_r2", n_trials=20000)
     study = study_regression
 elif indicator_type == "regression_std":
-    study_regression_std = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered,  indicator_type="regression_std", n_trials=200000)
+    study_regression_std = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="regression_std", n_trials=200000)
     study = study_regression_std
 elif indicator_type == "regression_slope":
-    study_regression_slope = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered, indicator_type="regression_slope", n_trials=20000)
+    study_regression_slope = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="regression_slope", n_trials=20000)
     study = study_regression_slope
 elif indicator_type == "atr":
-    study_atr = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered,  indicator_type="atr", n_trials=20000)
+    study_atr = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="atr", n_trials=20000)
     study = study_atr
 elif indicator_type == "vwap":
-    study_vwap = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered,  indicator_type="vwap", n_trials=20000)
+    study_vwap = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="vwap", n_trials=20000)
     study = study_vwap
 elif indicator_type == "percent_bb_simu":
-    study_bb = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered, indicator_type="percent_bb_simu", n_trials=20000)
+    study_bb = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="percent_bb_simu", n_trials=20000)
     study = study_bb
 elif indicator_type == "zscore":
-    study_zscore = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered,  indicator_type="zscore", n_trials=20000)
+    study_zscore = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="zscore", n_trials=20000)
     study = study_zscore
-elif indicator_type == "imbalance":
-    study_imbalance = run_indicator_optimization(df_train_=df_train, df_val_=df_val,df_val_filtered_=df_val_filtered, indicator_type="imbalance", n_trials=20000)
-    study = study_imbalance
+elif indicator_type == "rogers_satchell":
+    study_rs = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="rogers_satchell", n_trials=20000)
+    study = study_rs
+elif indicator_type == "pullstack_avgdiff":
+    study_pullStack = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="pullstack_avgdiff", n_trials=20000)
+    study = study_pullStack
+elif indicator_type == "volrevmovezone1_volImpulsmoveextrem":
+    study_volRev = run_indicator_optimization(df_train_=df_train, df_val_=df_val, df_val_filtered_=df_val_filtered, indicator_type="volrevmovezone1_volImpulsmoveextrem", n_trials=20000)
+    study = study_volRev
 else:
     print(f"Type d'indicateur non reconnu: {indicator_type}")
-    exit(78)
+    exit(61)
 
 
 
