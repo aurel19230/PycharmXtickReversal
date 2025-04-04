@@ -80,7 +80,7 @@ from func_standard import (print_notification,
                            reTrain_finalModel_analyse, init_dataSet,best_modellastFold_analyse,
                            calculate_normalized_pnl_objectives,
                            run_cross_validation,
-                           setup_model_params_optuna, setup_model_weight_optuna, cv_config,
+                           setup_model_params_optuna, setup_other_params, cv_config,
                            load_features_and_sections, manage_rfe_selection,
                            setup_cv_method,
                            calculate_constraints_optuna, add_session_id, process_cv_results)
@@ -199,7 +199,7 @@ from numbers import Integral
 
 def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, study=None, X_train=None, X_test=None, y_train_label=None,y_pnl_data_train=None,
                      X_train_full=None, device=None, modele_param_optuna_range=None, config=None, nb_split_tscv=None,
-                     model_weight_optuna=None, weight_param=None, random_state_seed_=None, is_log_enabled=None,
+                     other_params=None, weight_param=None, random_state_seed_=None, is_log_enabled=None,
                      cv_method=cv_config.K_FOLD,  model=None, ENV='pycharm'):
     """
     Fonction d'objectif pour Optuna, incluant l’exécution d’une cross-validation,
@@ -224,7 +224,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
         params_optuna = setup_model_params_optuna(trial, config, random_state_seed_)
 
         # 3) Configuration du poids du modèle (class weight, etc.)
-        model_weight_optuna = setup_model_weight_optuna(trial, weight_param, config)
+        other_params = setup_other_params(trial, weight_param, config, other_params)
 
         # 4) Configuration de la méthode de cross-validation
         cv = setup_cv_method(
@@ -243,7 +243,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
             config=config,
             trial=trial,
             params=params_optuna,
-            model_weight_optuna=model_weight_optuna
+            other_params=other_params
         )
 
         # 6) Lancement de la cross-validation
@@ -255,7 +255,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
             df_init_candles=df_init_candles,
             trial=trial,
             params=params_optuna,
-            model_weight_optuna=model_weight_optuna,
+            other_params=other_params,
             cv=cv,
             nb_split_tscv=nb_split_tscv,
             is_log_enabled=is_log_enabled,
@@ -436,7 +436,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     trial.set_user_attr('train_pred_proba_log_odds', train_pred_proba_log_odds)
 
     trial.set_user_attr('params_optuna', params_optuna)
-    trial.set_user_attr('model_weight_optuna', model_weight_optuna)
+    trial.set_user_attr('other_params', other_params)
     trial.set_user_attr('weight_param', weight_param)
 
     # scores_ens_val_list
@@ -568,10 +568,38 @@ def train_and_evaluate_model(
     print(f"Shape de df_init_features avant filtrage  (99, mannuel des features): {df_init_features.shape}")
 
     (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
-     X_train, y_train_label, X_test, y_test_label,y_pnl_data_train,y_pnl_data_test,
+     X_train_noInfNan, y_train_label_noInfNan, X_test_noInfNan, y_test_label_noInfNan,y_pnl_data_train_noInfNan,y_pnl_data_test_noInfNan,
+     colomnsList_with_vif_stat_without_pca_, high_corr_columns_used4pca,
      nb_SessionTrain, nb_SessionTest, nan_value) = (
         init_dataSet(df_init_features=df_init_features ,nanvalue_to_newval=nanvalue_to_newval,
                      config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
+
+    other_params = {
+        'high_corr_columns_used4pca': high_corr_columns_used4pca,
+        'colomnsList_with_vif_stat_without_pca_': colomnsList_with_vif_stat_without_pca_
+    }
+
+    # X_train=X_train_noInfNan[""]
+    # 🔁 Fusion des deux listes de colonnes à conserver
+    columns_to_keep = list(set(colomnsList_with_vif_stat_without_pca_ + high_corr_columns_used4pca))
+
+    # ✅ Application sur les datasets filtrés
+    X_train = X_train_noInfNan[columns_to_keep].copy()
+    X_test = X_test_noInfNan[columns_to_keep].copy()
+
+    # 🖨️ Vérification
+    print(f"\n🧪 Colonnes conservées dans X_train et X_test : {len(columns_to_keep)}")
+    print(columns_to_keep)
+    print(f"✅ Dimensions X_train : {X_train.shape}, X_test : {X_test.shape}")
+    y_train_label=y_train_label_noInfNan
+    y_test_label=y_test_label_noInfNan
+    y_pnl_data_train=y_pnl_data_train_noInfNan
+    y_pnl_data_test=y_pnl_data_test_noInfNan
+
+
+
+
+    #print(X_train.shape)
 
     # Affichage de la distribution des classes d'entraînement
     print("\n" + "=" * 60)
@@ -692,7 +720,7 @@ def train_and_evaluate_model(
     assert X_test.shape[0] == y_test_label.shape[0], "X_test et y_test_label doivent avoir le même nombre de lignes"
 
     # Adjust the objective wrapper function
-    def objective_wrapper(trial, study, model_weight_optuna):
+    def objective_wrapper(trial, study, other_params):
         # Call your original objective function
         score_adjustedStd_val, pnl_perTrade_diff = objective_optuna(df_init_features=df_init_features,
                                                                     df_init_candles=df_init_candles,
@@ -703,7 +731,7 @@ def train_and_evaluate_model(
                                                                     X_train_full=X_train_full,
                                                                     device=device,
                                                                     config=config, nb_split_tscv=nb_split_tscv,
-                                                                    model_weight_optuna=model_weight_optuna,
+                                                                    other_params=other_params,
                                                                     weight_param=weight_param,
                                                                     random_state_seed_=random_state_seed,
                                                                     is_log_enabled=is_log_enabled,
@@ -718,7 +746,7 @@ def train_and_evaluate_model(
             # Return both objectives
             return score_adjustedStd_val, pnl_perTrade_diff
 
-    model_weight_optuna = {}
+
 
     weightPareto_pnl_val = config.get('weightPareto_pnl_val', 0.6)
     weightPareto_pnl_diff = config.get('weightPareto_pnl_diff', 0.4)
@@ -789,7 +817,7 @@ def train_and_evaluate_model(
 
     # Lancer l'optimisationxxxxxx
     study_optuna.optimize(
-        lambda trial: objective_wrapper(trial, study_optuna, model_weight_optuna),
+        lambda trial: objective_wrapper(trial, study_optuna, other_params),
         n_trials=n_trials_optimization,
         callbacks=[callback_optuna_wrapper, callback_optuna_stop]
     )
@@ -803,9 +831,9 @@ def train_and_evaluate_model(
     # Après l'optimisation
     # best_params = bestResult_dict["best_params"]
     params_optuna = bestResult_dict["params_optuna"]
-    model_weight_optuna = bestResult_dict["model_weight_optuna"]
+    other_params = bestResult_dict["other_params"]
 
-    optimal_threshold = model_weight_optuna['threshold']
+    optimal_threshold = other_params['threshold']
 
     selected_feature_names = bestResult_dict["selected_feature_names"]
     rfe_param_value = bestResult_dict["use_of_rfe_in_optuna"]
@@ -814,7 +842,7 @@ def train_and_evaluate_model(
     print(
         f"## Optimisation Optuna terminée Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
     print(f"## Meilleurs hyperparamètres trouvés pour params_optuna: ", params_optuna)
-    print(f"## Meilleurs hyperparamètres trouvés pour model_weight_optuna: ", model_weight_optuna)
+    print(f"## Meilleurs hyperparamètres trouvés pour other_params: ", other_params)
 
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])

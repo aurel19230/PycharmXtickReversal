@@ -10,11 +10,10 @@ def train_and_evaluate_randomforest_model(
         y_val_cv=None,
         y_pnl_data_train_cv=None,
         y_pnl_data_val_cv_OrTest=None,
-        params=None,
+        params_optuna=None,
         other_params=None,
         config=None,
         fold_num=0,
-        fold_raw_data=None,
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
@@ -49,7 +48,7 @@ def train_and_evaluate_randomforest_model(
 
     # -- 3) Entraînement du modèle -------------------------------------------
     start_time_train = time.time()
-    current_model = ModelClass(**params)
+    current_model = ModelClass(**params_optuna)
     # Vérifier que sample_weight est supporté (XGBRFClassifier le supporte aussi)
     current_model.fit(X_train_cv, y_train_cv, sample_weight=sample_weights_train)
     train_time = time.time() - start_time_train
@@ -161,7 +160,7 @@ def train_and_evaluate_randomforest_model(
 
     # -- 13) Debug info ----------------------------------------------------
     debug_info = {
-        'model_params': params,
+        'model_params': params_optuna,
         'threshold': threshold,
         'feature_importances': feature_importances_dict,
         'execution_times': {
@@ -180,7 +179,6 @@ def train_and_evaluate_randomforest_model(
 
     return {
         'current_model': current_model,
-        'fold_raw_data': fold_raw_data,
         'y_train_predProba': y_train_predProba,
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,

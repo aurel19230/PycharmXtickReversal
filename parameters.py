@@ -44,13 +44,13 @@ def get_model_param_range(model_type):
 
             # Profondeur maximale - approximation pour num_leaves=91
             # Formule: max_depth ≈ log2(num_leaves)
-            'max_depth': {'min': 3, 'max': 15},
+            'max_depth': {'min': 3, 'max': 10},
 
             # Taux d'apprentissage - directement similaire (0.011)
             'learning_rate': {'min': 0.008, 'max': 0.09, 'log': True},
 
             # min_child_weight - analogue à min_child_samples=124
-            'min_child_weight': {'min': 10, 'max': 130},
+            'min_child_weight': {'min': 15, 'max': 130},
 
             # subsample - similaire à bagging_fraction=0.66
             'subsample': {'min': 0.5, 'max': 0.9},
@@ -65,7 +65,7 @@ def get_model_param_range(model_type):
             'colsample_bynode': {'min': 0.6, 'max': 0.9},
 
             # gamma - similaire à min_split_gain=4.29
-            'min_split_loss': {'min': 2, 'max': 10},
+            'min_split_loss': {'min': 1, 'max': 3}, #était à 10
 
             # reg_alpha - similaire à lambda_l1=0.15
             'reg_alpha': {'min': 0.1, 'max': 1.3, 'log': True},
@@ -144,62 +144,60 @@ def get_model_param_range(model_type):
         }
     elif model_type == modelType.RF:
         return {
-            # Nombre d'arbres dans la forêt - plus d'arbres = plus robuste mais rendements décroissants
-            'n_estimators': {'min': 100, 'max': 1000},
+            # Équivalent à bagging_freq et bagging_fraction dans LGBM
+            'n_estimators': {'min': 150, 'max': 500},  # Réduit le max pour plus d'efficacité
 
-            # Profondeur maximale - contrôle la complexité des arbres
-            'max_depth': {'min': 3, 'max': 12},
+            # Influence la complexité comme num_leaves dans LGBM
+            'max_depth': {'min': 5, 'max': 15},  # Augmentation pour permettre des arbres plus complexes
 
-            # Nombre minimal d'échantillons pour diviser un nœud - régule la taille des splits
-            'min_samples_split': {'min': 15, 'max': 130},
+            # Comparable au min_split_gain dans LGBM
+            'min_samples_split': {'min': 10, 'max': 50},  # Ajusté pour permettre plus de splits
 
-            # Nombre minimal d'échantillons dans une feuille - impact sur la régularisation
-            'min_samples_leaf': {'min': 1, 'max': 60},
+            # Similaire à min_child_samples dans LGBM
+            'min_samples_leaf': {'min': 5, 'max': 40},  # Ajusté pour correspondre à la plage LGBM
 
-            # Nombre de caractéristiques à considérer pour la meilleure division
-            'max_features': {'min': 0.5, 'max': 0.9},  # Proportion des features
+            # Similaire à feature_fraction dans LGBM
+            'max_features': {'min': 0.6, 'max': 0.95},  # Aligné sur feature_fraction de LGBM
 
-            # Poids maximum des feuilles - contrôle l'influence relative des feuilles
-            'max_leaf_nodes': {'min': 100, 'max': 400},
+            # Influence la complexité comme num_leaves dans LGBM
+            'max_leaf_nodes': {'min': 40, 'max': 100},  # Aligné sur num_leaves de LGBM
 
-            # Paramètre de complexité pour l'élagage des arbres
-            'ccp_alpha': {'min': 1e-4, 'max': 1.0, 'log': True},
+            # Ajouté pour contrôler la régularisation comme lambda_l1/l2 dans LGBM
+            'ccp_alpha': {'min': 0.0001, 'max': 0.01, 'log': True},
 
-            # Pourcentage minimal d'échantillons requis pour être considéré comme "impureté"
-            'min_impurity_decrease': {'min': 1e-4, 'max': 1.0, 'log': True},
+            # Ajouté pour contrôler les splits comme min_split_gain dans LGBM
+            'min_impurity_decrease': {'min': 0.0001, 'max': 0.01, 'log': True},
 
-            # Bootstrap - si True, utilise le bootstrapping pour construire les arbres
-            'bootstrap': [True], #[True, False],
-
+            # Bootstrap - garde True pour le bagging (similaire au concept dans LGBM)
+            'bootstrap': [True],
         }
     elif model_type == modelType.SVC:
         return {
-            # Paramètre de régularisation - contrôle le compromis entre la marge et les erreurs
-            'C': {'min': 0.1, 'max': 100, 'log': True},
+            # Paramètre de régularisation - équivalent inverse de lambda_l1/l2 dans LGBM
+            # Des valeurs plus élevées = moins de régularisation = log odds plus étendus
+            'C': {'min': 0.01, 'max': 5, 'log': True},
 
-            # Paramètre gamma pour les noyaux 'rbf', 'poly' et 'sigmoid'
-            'gamma': {'min': 0.0001, 'max': 10, 'log': True},
+            # Paramètre gamma contrôle la complexité locale - similaire à num_leaves/max_depth
+            # Valeurs plus élevées = frontières plus complexes = log odds plus différenciés
+            'gamma': {'min': 0.001, 'max': 5, 'log': True},
 
-            # Degré du polynôme pour le noyau 'poly'
-            'degree': {'min': 2, 'max': 5},
+            # Degré du polynôme pour le noyau 'poly' - impact sur complexité
+            'degree': {'min': 2, 'max': 4},  # Réduit légèrement pour éviter surapprentissage
 
-            # Coefficient pour les noyaux 'poly' et 'sigmoid'
-            'coef0': {'min': 0.0, 'max': 10.0},
+            # Coefficient pour les noyaux 'poly' et 'sigmoid' - influence la flexibilité
+            'coef0': {'min': 0.1, 'max': 5.0},  # Plage plus adaptée aux données financières
 
-            # Stratégie de gestion des classes déséquilibrées
+            # Gestion des classes déséquilibrées - important pour les signaux de trading
             'class_weight': ['balanced', None],
 
-            # Tolérance pour le critère d'arrêt
-            # 'tol': {'min': 1e-4, 'max': 1e-2, 'log': True},
+            # Tolérance pour convergence - impacte la précision des frontières
+            'tol': {'min': 0.5e-5, 'max': 1e-2, 'log': True},  # Décommenté car important
 
-            # # Taille du cache pour le noyau (en MB)
-            # 'cache_size': [200, 500, 1000],
+            # Noyau - crucial pour la flexibilité du modèle
+            'kernel': ['rbf', 'poly','sigmoid'],  # Ajouté explicitement pour varier la complexité
 
-            # Stratégie un-contre-un ou un-contre-tous pour la classification multiclasse
-            # 'decision_function_shape': ['ovo', 'ovr'],
-
-            # # Shrinking heuristic
-            # 'shrinking': [True, False],
+            # Shrinking heuristic - accélère l'entraînement et peut influencer les décisions limites
+            'shrinking': [True, False],  # Décommenté car peut impacter performance
         }
     elif model_type == modelType.CATBOOST:
         return {
@@ -264,7 +262,7 @@ def get_weight_param():
     weight_param = {
         # Nombre d'itérations de boosting (équivalent à num_boost_round dans XGB)
         'num_boost_round': {'min': 400, 'max': 1200},
-        'threshold': {'min': 0.45, 'max': 0.55},  # total_trades_val = tp + fp
+        'threshold': {'min': 0.43, 'max': 0.57},  # total_trades_val = tp + fp
         'w_p': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
         'w_n': {'min': 1, 'max': 1},  # car déja pris en compte dans le weigh des data
 
@@ -299,11 +297,16 @@ def get_config():
         'use_of_rfe_in_optuna': rfe_param.NO_RFE,
         'min_features_if_RFE_AUTO': 3,
         'optuna_objective_type': optuna_doubleMetrics.DISABLE,  # USE_DIST_TO_IDEAL, DISABLE
+        #hard penealties via constraints
         'use_optuna_constraints_func': True,
         'config_constraint_min_trades_threshold_by_Fold': 25,
         'config_constraint_ratioWinrate_train_val': 25,
         'config_constraint_winrates_val_by_fold': 51,
-        'use_imbalance_penalty': False, #pour prendre en compte les différence de trade entre les folds
+        'config_constraint_max_std_trades':np.inf, #active (std max autorisée entre folds) ex 0.15 sinon np.inf
+        #soft penality via score
+        'use_imbalance_penalty': True, #pour prendre en compte les différence de trade entre les folds
+        'use_std_penalty': True,  # pour prendre en compte les différence de trade entre les folds
+
         'is_log_enabled': False,
         'remove_inf_nan_afterFeaturesSelections': True,
        # 'compute_feature_stat': AutoFilteringOptions.ENABLE_VIF_CORR_MI , #ENABLE_MRMR #DISPLAY_MODE_NOFILTERING ENABLE_VIF_CORR_MI ENABLE_FISHER
@@ -314,10 +317,10 @@ def get_config():
         'n_simulations_monte':100,
         'powAnaly_threshold':0.5,
         'corr_threshold': 2,
-        'mi_threshold': 0.01,
+        'mi_threshold': 0.0075,
         "fisher_score_threshold": 4.5,  # exemple de seuil Fisher (optionnel)
         "fisher_pvalue_threshold": 0.05,  # seuil classique p-value (optionnel)
-        "mrmr_score_threshold":  0.01, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
+        "mrmr_score_threshold":  0.0075, # par défaut -np.inf ( quand commenté) , ce qui signifie pas de seuil
         'use_pnl_theoric':True,
         'nb_pca':2,#0 desactivate pca computing
         'scaler_choice': scalerChoice.SCALER_ROBUST,  # ou  ou SCALER_DISABLE SCALER_ROBUST SCALER_STANDARD SCALER_ROBUST SCALER_STANDARD SCALER_MINMAX SCALER_MAXABS
@@ -326,10 +329,10 @@ def get_config():
         # cv_config.K_FOLD, #,  TIME_SERIE_SPLIT TIMESERIES_SPLIT_BY_ID TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL
         #'reinsert_nan_inf_afterScaling':False, ne fonctionne pas à date
         'svc_probability':False, #calibration interne des probabilité avec cv intterne
-        'svc_kernel':'poly', #['rbf', 'poly', 'sigmoid'],
-        'model_type': modelType.LGBM, #XGB LGBM SVC RF XGBRF
-        'custom_objective_lossFct': model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
-        'custom_metric_eval': model_custom_metric.LGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
+        #'svc_kernel':'poly', #['rbf', 'poly', 'sigmoid'],
+        'model_type': modelType.XGB, #XGB LGBM SVC RF XGBRF
+        'custom_objective_lossFct': model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED  ,#LGB_CUSTOM_OBJECTIVE_PROFITBASED XGB_CUSTOM_OBJECTIVE_PROFITBASED LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY LGB_CUSTOM_OBJECTIVE_PROFITBASED
+        'custom_metric_eval': model_custom_metric.XGB_CUSTOM_METRIC_PNL, #LGB_CUSTOM_METRIC_PNL XGB_CUSTOM_METRIC_PNL
          #'custom_objective_lossFct': xgb_metric.XGB_METRIC_CUSTOM_METRIC_PROFITBASED, LGB_CUSTOM_METRIC_PNL
 
     }

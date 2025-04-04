@@ -265,11 +265,10 @@ def train_and_evaluate_xgb_model(
         y_val_cv=None,
         y_pnl_data_train_cv=None,
         y_pnl_data_val_cv_OrTest=None,
-        params=None,
+        params_optuna=None,
         other_params=None,
         config=None,
         fold_num=0,
-        fold_raw_data=None,
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
@@ -286,7 +285,7 @@ def train_and_evaluate_xgb_model(
     custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
     if custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_PROFITBASED:
         obj_function = xgb_create_weighted_logistic_obj_cpu(other_params['w_p'], other_params['w_n'])
-        params['disable_default_eval_metric'] = 1
+        params_optuna['disable_default_eval_metric'] = 1
     # elif custom_objective_lossFct == model_custom_objective.XGB_CUSTOM_OBJECTIVE_BINARY:
     #     obj_function = None
     #     params.update({'objective': 'binary:logistic'})
@@ -305,13 +304,13 @@ def train_and_evaluate_xgb_model(
                                               metric_dict=other_params, config=config)
     else:
         custom_metric = None
-        params.update({'eval_metric': ['auc', 'logloss']})
+        params_optuna.update({'eval_metric': ['auc', 'logloss']})
 
     evals_result = {}
 
     # Entraînement du modèle
     current_model = xgb.train(
-        params,
+        params_optuna,
         dtrain,
         num_boost_round=other_params['num_boost_round'],
         evals=[(dtrain, 'train'), (dval, 'eval')],
@@ -387,7 +386,6 @@ def train_and_evaluate_xgb_model(
     # Retour de l'ensemble
     return {
         'current_model': current_model,
-        'fold_raw_data': fold_raw_data,
         'y_train_predProba': y_train_predProba,
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,

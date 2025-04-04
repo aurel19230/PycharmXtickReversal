@@ -225,7 +225,6 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
 
         # 3) Configuration du poids du modèle (class weight, etc.)
         other_params = setup_other_params(trial, weight_param, config, other_params)
-
         # 4) Configuration de la méthode de cross-validation
         cv = setup_cv_method(
             df_init_features=df_init_features,
@@ -235,6 +234,8 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
             nb_split_tscv=nb_split_tscv,
             config=config
         )
+        other_params["cv"]=cv
+
 
         # 5) Gestion éventuelle de la RFE (feature selection)
         X_train, selected_feature_names = manage_rfe_selection(
@@ -254,7 +255,7 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
             y_pnl_data_train=y_pnl_data_train,
             df_init_candles=df_init_candles,
             trial=trial,
-            params=params_optuna,
+            params_optuna=params_optuna,
             other_params=other_params,
             cv=cv,
             nb_split_tscv=nb_split_tscv,
@@ -509,15 +510,15 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
 
     # 12) Calcul des objectifs finaux
-    objectives = calculate_normalized_pnl_objectives(
+    objectives = calculate_normalized_pnl_objectives(trial=trial,
         tp_train_list=tp_train_by_fold,
         fp_train_list=fp_train_by_fold,
         tp_val_list=tp_val_by_fold,
         fp_val_list=fp_val_by_fold,
         scores_train_list=train_bestIdx_custom_metric_pnl,
         scores_val_list=val_bestIdx_custom_metric_pnl,
+                                                     config=config,
         fold_stats=fold_stats,
-        use_imbalance_penalty=use_imbalance_penalty
     )
     raw_metrics = objectives['raw_metrics']
 
@@ -551,7 +552,7 @@ def train_and_evaluate_model(
     nb_split_tscv = config.get('nb_split_tscv_', 10)
     nanvalue_to_newval = config.get('nanvalue_to_newval_', np.nan)
     random_state_seed = config.get('random_state_seed', 30)
-    # early_stopping_rounds = config.get('early_stopping_rounds', 180)
+# early_stopping_rounds = config.get('early_stopping_rounds', 180)
     cv_method = config.get('cv_method', cv_config.K_FOLD)
     # optuna_objective_type_value = config.get('optuna_objective_type ', optuna_doubleMetrics.USE_DIST_TO_IDEAL)
     is_log_enabled = config.get('is_log_enabled', False)
@@ -570,7 +571,7 @@ def train_and_evaluate_model(
     (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
      X_train_noInfNan, y_train_label_noInfNan, X_test_noInfNan, y_test_label_noInfNan,y_pnl_data_train_noInfNan,y_pnl_data_test_noInfNan,
      colomnsList_with_vif_stat_without_pca_, high_corr_columns_used4pca,
-     nb_SessionTrain, nb_SessionTest, nan_value) = (
+     nb_SessionTrain, nb_SessionTest, nan_value,scaler_init_dataSet,pca_object_init_dataSet) = (
         init_dataSet(df_init_features=df_init_features ,nanvalue_to_newval=nanvalue_to_newval,
                      config=config, CUSTOM_SESSIONS_=CUSTOM_SESSIONS, results_directory=results_directory))
 
@@ -842,9 +843,28 @@ def train_and_evaluate_model(
     print(
         f"## Optimisation Optuna terminée Meilleur essai : {bestResult_dict['best_optunaTrial_number']}")
     print(f"## Meilleurs hyperparamètres trouvés pour params_optuna: ", params_optuna)
-    print(f"## Meilleurs hyperparamètres trouvés pour other_params: ", other_params)
 
+    def mask_large_fields(d, excluded_keys):
+        for key in d:
+            if key in excluded_keys:
+                d[key] = f"<{key} -- contenu masqué>"
+            elif isinstance(d[key], dict):
+                mask_large_fields(d[key], excluded_keys)  # Appel récursif
+        return d
+
+    excluded_keys = [
+        'y_train_no99_fullRange',
+        'y_train_no99_fullRange_pd',
+        'y_pnl_data_train_no99_fullRange',
+        'y_train_trade_pnl_no99_fullRange_pd',
+        'X_train_no99_fullRange',  # ← ajoute-le ici aussi !
+        'X_train_no99_fullRange_pd'
+    ]
+
+    masked_params = mask_large_fields(other_params.copy(), excluded_keys)
+    print("## Meilleurs hyperparamètres trouvés pour other_params:", masked_params)
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
+
     print("## Meilleur score Objective 1 (pnl_norm_objective): ", bestResult_dict["pnl_norm_objective"])
     if config.get('optuna_objective_type', optuna_doubleMetrics.DISABLE) != optuna_doubleMetrics.DISABLE:
         print("## Meilleur score Objective 2 (ecart_train_val): ",
@@ -854,27 +874,19 @@ def train_and_evaluate_model(
     print(selected_feature_names)
     X_train = X_train[selected_feature_names]
     X_test = X_test[selected_feature_names]
+    # Calculate the size of the feature list
+    num_features = len(selected_feature_names)
+    print(f"Number of selected features: {num_features}")
 
     print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
-
-
-
-
-    print_notification('###### DEBUT: ANALYSE DERNIER FOLD ##########', color="blue")
-
-   # best_modellastFold_analyse( X_test=X_test,
-    #                            y_test_label=y_test_label,bestResult_dict=bestResult_dict,
-     #                           results_directory=results_directory,config=config)
-
-    print_notification('###### FIN: ANALYSE DERNIER FOLD ##########', color="blue")
-
 
 
     reTrain_finalModel_analyse(
         X_train=X_train, X_train_full=X_train_full, X_test=X_test, X_test_full=X_test_full,
         y_train_label_=y_train_label, y_test_label_=y_test_label,y_pnl_data_train=y_pnl_data_train,y_pnl_data_test=y_pnl_data_test,
         nb_SessionTest=nb_SessionTest, nan_value=nan_value, feature_names=selected_feature_names,
-        config=config, weight_param=weight_param, bestResult_dict=bestResult_dict)
+        config=config, weight_param=weight_param, other_params=other_params,bestResult_dict=bestResult_dict,
+    scaler_init_dataSet=scaler_init_dataSet,pca_object_init_dataSet=pca_object_init_dataSet)
 
 
 ############### main######################

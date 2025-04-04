@@ -112,7 +112,7 @@ def check_label_pnl_alignment(data):
         print("Vérification OK : tous les échantillons label=1 ont un PnL strictement > 0.")
 
 import numpy as np
-def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
+def prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos):
     """
     Prépare les données d'entraînement et de validation pour la validation croisée,
     en restant au format pandas (DataFrame/Series) et en utilisant l'indexation par position (.iloc).
@@ -146,20 +146,20 @@ def prepare_dataSplit_cv_train_val(config, data, train_pos, val_pos):
 
     # --- 1) Extraction par .iloc => indexation par position ---
     # Features
-    X_train_cv = data['X_train_no99_fullRange'].iloc[train_pos]
-    X_val_cv   = data['X_train_no99_fullRange'].iloc[val_pos]
+    X_train_cv = data_4cv['X_train_no99_fullRange'].iloc[train_pos]
+    X_val_cv   = data_4cv['X_train_no99_fullRange'].iloc[val_pos]
 
     # (Optionnel) Les versions "pd" si elles sont différentes et qu'on en a besoin
-    X_train_cv_pd = data.get('X_train_no99_fullRange_pd', X_train_cv).iloc[train_pos]
-    X_val_cv_pd   = data.get('X_train_no99_fullRange_pd', X_val_cv).iloc[val_pos]
+    X_train_cv_pd = data_4cv.get('X_train_no99_fullRange_pd', X_train_cv).iloc[train_pos]
+    X_val_cv_pd   = data_4cv.get('X_train_no99_fullRange_pd', X_val_cv).iloc[val_pos]
 
     # Targets
-    Y_train_cv = data['y_train_no99_fullRange'].iloc[train_pos]
-    y_val_cv   = data['y_train_no99_fullRange'].iloc[val_pos]
+    Y_train_cv = data_4cv['y_train_no99_fullRange'].iloc[train_pos]
+    y_val_cv   = data_4cv['y_train_no99_fullRange'].iloc[val_pos]
 
     # PnL
-    y_pnl_data_train_cv = data['y_pnl_data_train_no99_fullRange'].iloc[train_pos]
-    y_pnl_data_val_cv   = data['y_pnl_data_train_no99_fullRange'].iloc[val_pos]
+    y_pnl_data_train_cv = data_4cv['y_pnl_data_train_no99_fullRange'].iloc[train_pos]
+    y_pnl_data_val_cv   = data_4cv['y_pnl_data_train_no99_fullRange'].iloc[val_pos]
 
     # --- 2) GPU/CPU (optionnel) ---
     # Si device != 'cpu' et qu'on veut vraiment manipuler du GPU, il faudrait convertir en arrays,
@@ -484,6 +484,16 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
     return pred_proba_afterSig,pred_proba_log_odds, predictions_converted, (tn, fp, fn, tp), y_true_converted
 
 
+def timestamp_to_date_utc_(timestamp):
+    try:
+        date_format = "%Y-%m-%d %H:%M:%S"
+        if isinstance(timestamp, pd.Series):
+            return timestamp.apply(lambda x: time.strftime(date_format, time.gmtime(x)))
+        return time.strftime(date_format, time.gmtime(timestamp))
+    except Exception as e:
+        print(f"Erreur lors de la conversion timestamp->date: {str(e)}")
+        return None
+
 def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, fold_num, nb_split_tscv, fold_raw_data
                            ,is_log_enabled,df_init_candles):
     """
@@ -520,15 +530,7 @@ def compute_raw_train_dist(X_train_full, X_train_cv_pd, X_val_cv_pd, fold_num, n
     """
     try:
         # 1. Conversion des timestamps en dates UTC
-        def timestamp_to_date_utc_(timestamp):
-            try:
-                date_format = "%Y-%m-%d %H:%M:%S"
-                if isinstance(timestamp, pd.Series):
-                    return timestamp.apply(lambda x: time.strftime(date_format, time.gmtime(x)))
-                return time.strftime(date_format, time.gmtime(timestamp))
-            except Exception as e:
-                print(f"Erreur lors de la conversion timestamp->date: {str(e)}")
-                return None
+
 
 
 
@@ -1185,3 +1187,159 @@ def compile_debug_info(model_weight_optuna, config, val_pred_proba, y_train_pred
         }
     }
 
+
+def are_scalers_partially_identical(scaler1, scaler2, columns1, columns2):
+    """
+    Vérifie si deux objets scaler sont identiques pour les colonnes communes
+
+    Args:
+        scaler1: Premier scaler à comparer
+        scaler2: Second scaler à comparer
+        columns1: Liste des noms de colonnes pour scaler1
+        columns2: Liste des noms de colonnes pour scaler2
+
+    Returns:
+        bool: True si les paramètres sont identiques pour les colonnes communes
+    """
+    # Vérifie d'abord qu'ils sont du même type
+    if type(scaler1) != type(scaler2):
+        print("Les scalers sont de types différents")
+        return False
+
+    # Trouver les colonnes communes
+    common_columns = set(columns1) & set(columns2)
+    if not common_columns:
+        print("Aucune colonne commune entre les deux scalers")
+        return False
+
+    print(f"Nombre de colonnes communes: {len(common_columns)}")
+
+    # Obtenir les indices des colonnes communes
+    indices1 = [columns1.index(col) for col in common_columns]
+    indices2 = [columns2.index(col) for col in common_columns]
+
+    # Comparaison des attributs selon le type de scaler
+    if hasattr(scaler1, 'mean_'):
+        # Pour StandardScaler
+        means_equal = np.allclose(scaler1.mean_[indices1], scaler2.mean_[indices2])
+        scales_equal = np.allclose(scaler1.scale_[indices1], scaler2.scale_[indices2])
+        print(f"Moyennes identiques pour colonnes communes: {means_equal}")
+        print(f"Écarts-types identiques pour colonnes communes: {scales_equal}")
+        return means_equal and scales_equal
+
+    elif hasattr(scaler1, 'center_'):
+        # Pour RobustScaler
+        centers_equal = np.allclose(scaler1.center_[indices1], scaler2.center_[indices2])
+        scales_equal = np.allclose(scaler1.scale_[indices1], scaler2.scale_[indices2])
+        print(f"Médianes identiques pour colonnes communes: {centers_equal}")
+        print(f"IQR identiques pour colonnes communes: {scales_equal}")
+        return centers_equal and scales_equal
+
+    elif hasattr(scaler1, 'min_'):
+        # Pour MinMaxScaler
+        mins_equal = np.allclose(scaler1.min_[indices1], scaler2.min_[indices2])
+        scales_equal = np.allclose(scaler1.scale_[indices1], scaler2.scale_[indices2])
+        print(f"Minimums identiques pour colonnes communes: {mins_equal}")
+        print(f"Échelles identiques pour colonnes communes: {scales_equal}")
+        return mins_equal and scales_equal
+
+    else:
+        # Pour les autres types de scalers
+        print("Type de scaler non géré par cette fonction")
+        return False
+
+
+
+
+
+
+
+def are_pca_identical(pca1, pca2):
+    """Vérifie si deux objets PCA sont identiques"""
+    # Vérifier que le nombre de composantes est le même
+    if pca1.n_components != pca2.n_components:
+        print("Nombre de composantes différent")
+        return False
+
+    # Vérifier que les moyennes sont identiques
+    means_equal = np.allclose(pca1.mean_, pca2.mean_)
+
+    # Pour les composantes, attention car le signe peut être inversé
+    # On compare les valeurs absolues des produits scalaires
+    components_similar = True
+    for i in range(pca1.n_components):
+        # Calculer le produit scalaire normalisé (cosinus de l'angle entre les vecteurs)
+        dot_product = np.abs(np.dot(pca1.components_[i], pca2.components_[i]) /
+                             (np.linalg.norm(pca1.components_[i]) * np.linalg.norm(pca2.components_[i])))
+        if dot_product < 0.99:  # Si l'angle est significatif (cosinus < 0.99)
+            components_similar = False
+            print(f"Composante {i + 1} différente (cosinus: {dot_product})")
+
+    # Vérifier que les variances expliquées sont similaires
+    variance_equal = np.allclose(pca1.explained_variance_ratio_, pca2.explained_variance_ratio_)
+
+    print(f"Moyennes identiques: {means_equal}")
+    print(f"Composantes similaires: {components_similar}")
+    print(f"Variances expliquées identiques: {variance_equal}")
+
+    return means_equal and components_similar and variance_equal
+
+
+import pandas as pd
+import numpy as np
+
+import pandas as pd
+import numpy as np
+
+
+def compare_dataframes(df1, df2, name1, name2, tolerance=1e-6):
+    # Comparaison des noms de colonnes avec plus de détails
+    print("\nDiagnostic détaillé des colonnes:")
+
+    # Convertir les noms de colonnes en listes pour préserver l'ordre
+    cols1 = list(df1.columns)
+    cols2 = list(df2.columns)
+
+    # Afficher les colonnes avec leur représentation brute
+    print(f"\nColonnes de {name1} ({len(cols1)}):")
+    for i, col in enumerate(cols1):
+        print(f"  {i}: '{col}' (type: {type(col)}, repr: {repr(col)})")
+
+    print(f"\nColonnes de {name2} ({len(cols2)}):")
+    for i, col in enumerate(cols2):
+        print(f"  {i}: '{col}' (type: {type(col)}, repr: {repr(col)})")
+
+    # Vérifier les colonnes communes et comparer leurs valeurs
+    common_cols = set([str(c).strip() for c in cols1]) & set([str(c).strip() for c in cols2])
+    print(f"\nNombre de colonnes communes (ignorant casse/espaces): {len(common_cols)}")
+
+    # Comparer les valeurs des colonnes qui semblent identiques
+    print("\nComparaison des valeurs pour les colonnes qui semblent correspondre:")
+
+    for col1 in cols1:
+        # Chercher une colonne équivalente dans df2
+        col1_norm = str(col1).strip().lower()
+        for col2 in cols2:
+            col2_norm = str(col2).strip().lower()
+            if col1_norm == col2_norm:
+                print(f"\nComparaison: '{col1}' et '{col2}'")
+
+                # Vérifier si les données sont identiques
+                if df1[col1].equals(df2[col2]):
+                    print("  ✅ Valeurs identiques")
+                else:
+                    print("  ❌ Valeurs différentes")
+
+                    # Si numériques, calculer les différences
+                    if pd.api.types.is_numeric_dtype(df1[col1]) and pd.api.types.is_numeric_dtype(df2[col2]):
+                        diff = np.abs(df1[col1] - df2[col2])
+                        max_diff = diff.max()
+                        print(f"  Différence max: {max_diff}")
+
+                        # Afficher quelques exemples de différences
+                        if max_diff > 0:
+                            diff_indices = np.where(diff > 0)[0][:3]  # Prendre jusqu'à 3 exemples
+                            print("  Exemples de différences:")
+                            for idx in diff_indices:
+                                print(f"    Index {idx}: {df1[col1].iloc[idx]} vs {df2[col2].iloc[idx]}")
+                break

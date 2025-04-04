@@ -87,7 +87,7 @@ def train_and_evaluate_lightgbm_model(
         y_val_cv=None,
         y_pnl_data_train_cv=None,
         y_pnl_data_val_cv_OrTest=None,
-        params=None,
+        params_optuna=None,
         other_params=None,
         config=None,
         fold_num=0,
@@ -99,7 +99,6 @@ def train_and_evaluate_lightgbm_model(
 ):
     # Calcul des poids
     sample_weights_train, sample_weights_val = compute_sample_weights(y_train_cv, y_val_cv)
-
     # Création des datasets LightGBM avec les poids
     ltrain = lgb.Dataset(X_train_cv, label=y_train_cv, weight=sample_weights_train)
     lval = lgb.Dataset(X_val_cv, label=y_val_cv, weight=sample_weights_val)
@@ -107,17 +106,17 @@ def train_and_evaluate_lightgbm_model(
     # Configuration des paramètres selon l'objectif
     custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
     if custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_PROFITBASED:
-        params.update({
+        params_optuna.update({
             'objective': lgb_weighted_logistic_objective(other_params['w_p'], other_params['w_n']),
             'metric': None,
             'device_type': 'cpu'
         })
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_BINARY:
-        params.update({'objective': 'binary', 'metric': None, 'device_type': 'cpu'})
+        params_optuna.update({'objective': 'binary', 'metric': None, 'device_type': 'cpu'})
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY:
-        params.update({'objective': 'cross_entropy', 'metric': None, 'device_type': 'cpu'})
+        params_optuna.update({'objective': 'cross_entropy', 'metric': None, 'device_type': 'cpu'})
     elif custom_objective_lossFct == model_custom_objective.LGB_CUSTOM_OBJECTIVE_CROSS_ENTROPY_LAMBDA:
-        params.update({'objective': 'cross_entropy_lambda', 'metric': None, 'device_type': 'cpu'})
+        params_optuna.update({'objective': 'cross_entropy_lambda', 'metric': None, 'device_type': 'cpu'})
     else:
         raise ValueError("Choisir une fonction objective / Fonction objective non reconnue")
 
@@ -125,14 +124,14 @@ def train_and_evaluate_lightgbm_model(
         custom_metric = lgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
                                               metric_dict=other_params, config=config)
     else:
-        params.update({'metric': ['auc', 'binary_logloss']})
+        params_optuna.update({'metric': ['auc', 'binary_logloss']})
 
-    params['early_stopping_rounds'] = config.get('early_stopping_rounds', 13)
-    params['verbose'] = -1
+    params_optuna['early_stopping_rounds'] = config.get('early_stopping_rounds', 13)
+    params_optuna['verbose'] = -1
 
     evals_result = {}
     current_model = lgb.train(
-        params=params,
+        params=params_optuna,
         train_set=ltrain,
         num_boost_round=other_params['num_boost_round'],
         valid_sets=[ltrain, lval],

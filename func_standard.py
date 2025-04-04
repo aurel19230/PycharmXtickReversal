@@ -31,6 +31,8 @@ from func_lightgbm import *
 from func_RF import *
 from func_SVC import *
 
+x_train_vifStatPCA_initDataSet_DEBUG_global = pd.DataFrame()
+
 
 CUSTOM_SESSIONS = {
     "Opening": {
@@ -148,8 +150,6 @@ def detect_environment():
         if 'PYCHARM_HOSTED' in os.environ or 'PYCHARM_MATPLOTLIB_PORT' in os.environ:
             return 'pycharm'
         return 'other'
-
-
 
 
 import torch
@@ -329,7 +329,6 @@ def split_sessions(df, test_size=0.2, min_train_sessions=2, min_test_sessions=2)
     return train_df, len(train_sessions), test_df, len(test_sessions)
 
 
-
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
 
@@ -338,10 +337,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
+
 if platform.system() != "Darwin":  # "Darwin" est le nom interne de macOS
     import cupy as cp
 else:
     print("CuPy ne sera pas importé sur macOS.")
+
 
 def check_gpu_availability():
     torch_available = torch.cuda.is_available()
@@ -562,7 +563,7 @@ def to_numpy(array):
     return np.asarray(array)
 
 
-def plot_fp_tp_rates(X=None,y_label= None, y_pred_proba_afterSig=None, feature_deltaTime_name=None,
+def plot_fp_tp_rates(X=None, y_label=None, y_pred_proba_afterSig=None, feature_deltaTime_name=None,
                      optimal_optuna_threshold=None, dataset_name=None, results_directory=None):
     """
     Trace les taux de FP et TP empilés en fonction du temps sur une période de 22h à 21h.
@@ -645,8 +646,6 @@ def plot_fp_tp_rates(X=None,y_label= None, y_pred_proba_afterSig=None, feature_d
 
 
 import numba as nb
-
-
 
 
 def calculate_weighted_adjusted_score_custom(scores, weight_split, nb_split_weight, std_penalty_factor=1.0):
@@ -1758,7 +1757,7 @@ def analyze_predictions_by_range(X_test, y_pred_proba, shap_values_all, prob_min
         print(f"Aucun échantillon trouvé dans la plage de probabilités {prob_min:.2f} - {prob_max:.2f}")
         return
 
-    #print(f"Nombre d'échantillons dans la plage {prob_min:.2f} - {prob_max:.2f}: {len(selected_samples)}")
+    # print(f"Nombre d'échantillons dans la plage {prob_min:.2f} - {prob_max:.2f}: {len(selected_samples)}")
 
     # Calculer l'importance des features basée sur les valeurs SHAP
     feature_importance = np.abs(shap_values_all).mean(0)
@@ -1938,7 +1937,7 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
         config = {}
     if selected_columns_manual is None:
         selected_columns_manual = list(X_train.columns)
-    result={}
+    result = {}
     # # Résultat à retourner
     # result = {
     #     'X_train': X_train,
@@ -1959,11 +1958,11 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
     if X_train_full is not None:
         print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
         compute_display_statistic(X=X_train_full, name="X_train_full",
-                                             config=config, compute_feature_stat=False)
+                                  config=config, compute_feature_stat=False)
 
     print(f"Features X_train après exclusion manuelle des features (sur trades short après exclusion de 99):")
     compute_display_statistic(X=X_train, name="X_train",
-                                         config=config, compute_feature_stat=False)
+                              config=config, compute_feature_stat=False)
 
     # Affichage des valeurs NaN dans les ensembles de données
     print(f"\nValeurs NaN : X_train={X_train.isna().sum().sum()}, y_train_label={y_train_label.isna().sum()}", end="")
@@ -1992,7 +1991,7 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             # result['X_train_noInfNan'] = X_train_noInfNan
             # result['y_train_label_noInfNan'] = y_train_label_noInfNan
             # result['df_pnl_data_train'] = df_pnl_data_train
-        else: #df_pnl_data_train is None:
+        else:  # df_pnl_data_train is None:
             X_train_noInfNan, y_train_label_noInfNan, _, mask_train_noInfNan = remove_nan_inf(
                 X=X_train, y=y_train_label, df_pnl_data=None, dataset_name="train")
             # result['X_train_noInfNan'] = X_train_noInfNan
@@ -2021,10 +2020,10 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
 
     if chosen_scaler != scalerChoice.SCALER_DISABLE:
-        #print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+        # print(f"\n-- Scaler {chosen_scaler} actif ---\n")
         # Appliquer le scaling
         if X_test_noInfNan is not None and y_test_label is not None:
-            X_train_scaled, X_test_scaled, y_train_label_scaled, y_test_label_scaled, scaler, scaler_params = apply_data_feature_scaling(
+            X_train_scaled, X_test_scaled, y_train_label_scaled, y_test_label_scaled, scaler = apply_data_feature_scaling(
                 X_train_noInfNan, X_test_noInfNan, y_train_label_noInfNan, y_test_label_noInfNan,
                 mask_train_noInfNan, mask_test_noInfNan,
                 chosen_scaler=chosen_scaler,
@@ -2036,7 +2035,7 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             y_train_label_for_filtering = y_train_label_scaled
         else:
             # Cas où X_test ou y_test_label n'est pas fourni
-            X_train_scaled, _, y_train_label_scaled, _, scaler, scaler_params = apply_data_feature_scaling(
+            X_train_scaled, _, y_train_label_scaled, _, scaler = apply_data_feature_scaling(
                 X_train, X_train.copy(), y_train_label, y_train_label.copy(),
                 mask_train_noInfNan, mask_train_noInfNan,
                 chosen_scaler=chosen_scaler,
@@ -2047,7 +2046,7 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             X_train_for_filtering = X_train_scaled
             y_train_label_for_filtering = y_train_label_scaled
 
-        #result['scaler'] = scaler
+        # result['scaler'] = scaler
     else:
         print("\n-- Pas de scaler actif ---\n")
         # Si pas de scaling, on utilise les données originales pour le filtrage
@@ -2069,7 +2068,7 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
             compute_feature_stat=True,
             is_compute_vif=is_compute_vif)
 
-        result['vif_stat_pca_result']=vif_stat_pca_result
+        result['vif_stat_pca_result'] = vif_stat_pca_result
         # #compute pca on xtest
         # if stats_result is not None:
         #     # Extraire les informations du résultat
@@ -2140,10 +2139,12 @@ def filter_features(X_train, y_train_label, X_test=None, y_test_label=None,
         #     print("Aucune colonne retournée par compute_display_statistic")
         #     selected_columns_afterVifCorrMiFiltering = list(X_train.columns)
         #     exit(81)
-    #rajouter dans result les colonnes de df_feature_vifAndStat_selected qui sont les colonnes selection après vif et stat
+    # rajouter dans result les colonnes de df_feature_vifAndStat_selected qui sont les colonnes selection après vif et stat
     for key in result:
         print(f"- {key}")
-    return result
+    return result,scaler
+
+
 #  explanation = """
 #     🔍 **Explication des variables du tableau de résultats :**
 #
@@ -2445,10 +2446,7 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     print(f"Shape de X_test  après filtrage mannuel des features: {X_test.shape}")
     print("=" * 60)
 
-
     # Liste des colonnes à vérifier
-
-
 
     # # Affichage des informations sur les features après exclusion manuelle
     # print(f"\nFeatures X_train_full après exclusion manuelle des features (short + 99)(a verivier AL)):")
@@ -2458,14 +2456,14 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     # compute_display_statistic(X=X_train, name="X_train",
     #                                config=config, compute_feature_stat=False)
 
-    X_train_cc=X_train.copy()
+    X_train_cc = X_train.copy()
     y_train_label_cc = y_train_label.copy()
     X_test_cc = X_test.copy()
     y_test_label_cc = y_test_label.copy()
-    df_pnl_data_train=df_pnl_data_train.copy()
-    df_pnl_data_test=df_pnl_data_test.copy()
+    df_pnl_data_train = df_pnl_data_train.copy()
+    df_pnl_data_test = df_pnl_data_test.copy()
     # Appel de la fonction
-    result = filter_features(
+    result ,scaler= filter_features(
         X_train=X_train,
         y_train_label=y_train_label,
         X_test=X_test,
@@ -2478,8 +2476,8 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
         X_train_full=X_train_full
     )
 
-    mask_train_noInfNan=result['mask_train_noInfNan']
-    mask_test_noInfNan=result['mask_test_noInfNan']
+    mask_train_noInfNan = result['mask_train_noInfNan']
+    mask_test_noInfNan = result['mask_test_noInfNan']
 
     # Récupération des données nettoyées et des colonnes sélectionnées
     # Nettoyage cohérent des features, labels, et PNL avec les masques
@@ -2491,7 +2489,6 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     y_test_label_clean_noInfNan = y_test_label_cc[mask_test_noInfNan]
     df_pnl_data_test_clean_noInfNan = df_pnl_data_test[mask_test_noInfNan]
 
-
     # selectionner les colonnes vif_stat
     # ajouter les highcorr_pca_colonms et leur contenu
     # memoriser et propager le non des highcorr_pca_colonms
@@ -2500,14 +2497,15 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     # Faire le scaler sur train puis sur val avec le pca_
     # vif_stat_pca_result = compute_display_statistic(
 
+    vif_stat_pca_result = result['vif_stat_pca_result']
 
-    vif_stat_pca_result=result['vif_stat_pca_result']
+    colomnsList_with_vif_stat_with_pca_ = vif_stat_pca_result['colomnsList_with_pca_vif_stat']
+    pca_info = vif_stat_pca_result["pca_info"]
+    high_corr_columns_used4pca = pca_info['high_corr_columns_used4pca']
+    pca_object = pca_info['pca_object']
 
-    colomnsList_with_vif_stat_with_pca_=vif_stat_pca_result['colomnsList_with_pca_vif_stat']
-    pca_info=vif_stat_pca_result["pca_info"]
-    high_corr_columns_used4pca=pca_info['high_corr_columns_used4pca']
-
-    print(f"\n📊 Colonnes finales utilisées (avec PCA + VIF + stats): {len(colomnsList_with_vif_stat_with_pca_)} colonnes")
+    print(
+        f"\n📊 Colonnes finales utilisées (avec PCA + VIF + stats): {len(colomnsList_with_vif_stat_with_pca_)} colonnes")
     print(colomnsList_with_vif_stat_with_pca_)
 
     # 📤 Extraction des colonnes ne contenant pas 'pca_'
@@ -2521,7 +2519,6 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
 
     print(f"\n🔍 Colonnes utilisées pour le PCA (corrélées entre elles) : {len(high_corr_columns_used4pca)} colonnes")
     print(high_corr_columns_used4pca)
-
 
     min_val = X_train_clean_noInfNan['bull_imbalance_low_3'].min()
     max_val = X_train_clean_noInfNan['bull_imbalance_low_3'].max()
@@ -2548,8 +2545,7 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     check_equality(X_test_clean_noInfNan, X_test, 'X_test_clean_noInfNan', 'X_test')
     check_equality(y_test_label_clean_noInfNan, y_test_label, 'y_test_label_clean_noInfNan', 'y_test_label')
 
-
-    #récupére les colonnes filtré après vif et stat et filtre le dataframe clean pour utiliser ces valeurs esuite
+    # récupére les colonnes filtré après vif et stat et filtre le dataframe clean pour utiliser ces valeurs esuite
     # selected_columns = result['selected_columns']
     #
     # # Utilisation des colonnes sélectionnées
@@ -2588,11 +2584,12 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     check_columns_not_empty_or_zero(X_test_clean_noInfNan, "X_test_clean_noInfNan")
 
     # Retour des ensembles de données préparés
+
     return (X_train_full, y_train_full_label, X_test_full, y_test_full_label,
             X_train_clean_noInfNan, y_train_label_clean_noInfNan, X_test_clean_noInfNan, y_test_label_clean_noInfNan,
             df_pnl_data_train_clean_noInfNan, df_pnl_data_test_clean_noInfNan,
-            colomnsList_with_vif_stat_without_pca_,high_corr_columns_used4pca,
-            nb_SessionTrain, nb_SessionTest, nan_value)
+            colomnsList_with_vif_stat_without_pca_, high_corr_columns_used4pca,
+            nb_SessionTrain, nb_SessionTest, nan_value,scaler,pca_object)
 
 
 def add_early_stopping_zone(ax, best_iteration, color='orange', alpha=0.2):
@@ -2833,14 +2830,14 @@ def analyze_shap_interactions(final_model, X_test, results_directory, dataset_na
     --------
     None
     """
-    #lxtest = lgb.Dataset(X_test) semble inutile
+    # lxtest = lgb.Dataset(X_test) semble inutile
     shap_interaction_values = final_model.predict(
         X_test,
         pred_interactions=True,
         iteration_range=(0, final_model.best_iteration)  # C'est correct tel quel
     )
     # Calcul des valeurs d'interaction SHAP
-    #shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
+    # shap_interaction_values = final_model.predict(xgb.DMatrix(X_test), pred_interactions=True)
     # Exclure le biais en supprimant la dernière ligne et la dernière colonne
     shap_interaction_values = shap_interaction_values[:, :-1, :-1]
 
@@ -2938,9 +2935,9 @@ def analyze_shap_interactions(final_model, X_test, results_directory, dataset_na
 
     print(f"Heatmap des interactions sauvegardée sous 'feature_interaction_heatmap_{dataset_name}.png'")
 
-def best_modellastFold_analyse( X_test=None, y_test_label=None,
-                                bestResult_dict=None,results_directory=None,config=None):
 
+def best_modellastFold_analyse(X_test=None, y_test_label=None,
+                               bestResult_dict=None, results_directory=None, config=None):
     best_modellastFold_string = bestResult_dict['best_modellastFold_string']
     best_modellastFold_params = bestResult_dict['best_modellastFold_params']
     # Recharger le modèle
@@ -2950,9 +2947,9 @@ def best_modellastFold_analyse( X_test=None, y_test_label=None,
     if best_modellastFold_params:
         best_modellastFold.params.update(best_modellastFold_params)
 
-    other_params_best=bestResult_dict["other_params"]
+    other_params_best = bestResult_dict["other_params"]
     y_pred_proba_afterSig, pred_proba_log_odds, predictions_converted, (
-    tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+        tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
         model=best_modellastFold,
         X_data=X_test,
         y_true=y_test_label,
@@ -2972,11 +2969,15 @@ def best_modellastFold_analyse( X_test=None, y_test_label=None,
     print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
     """
+
+
 def reTrain_finalModel_analyse(
-                             X_train=None, X_train_full=None, X_test=None, X_test_full=None,
-                             y_train_label_=None, y_test_label_=None, y_pnl_data_train=None,y_pnl_data_test=None,
-                             nb_SessionTest=None, nan_value=None, feature_names=None,
-                             config=None, weight_param=None, bestResult_dict=None,is_log_enabled=False):
+        X_train=None, X_train_full=None, X_test=None, X_test_full=None,
+        y_train_label_=None, y_test_label_=None, y_pnl_data_train=None, y_pnl_data_test=None,
+        nb_SessionTest=None, nan_value=None, feature_names=None,
+        config=None, weight_param=None,other_params=None, bestResult_dict=None, is_log_enabled=False,
+        scaler_init_dataSet=None,pca_object_init_dataSet=None):
+
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
     results_directory = config.get('results_directory', None)
     params_optuna = bestResult_dict["params_optuna"]
@@ -3005,10 +3006,177 @@ def reTrain_finalModel_analyse(
     print(f"Période de test : du {timestamp_to_date_utc(start_time_test)} au {timestamp_to_date_utc(end_time_test)}")
     print(f"Nombre de sessions test : {num_sessions_test}\n")
 
-    #config.update({
+    model = config['model_type']
+    # Sélection du processor de fold selon le framework
+    print(f"Model demandé : {model}")
+    try:
+        fold_processor = select_fold_processor(model)
+    except ValueError as e:
+        print(f"❌ Erreur lors de la sélection du processor : {e}")
+        exit(1)
+    print(fold_processor)
+    # Mise à jour des métriques et statistiques
+    all_fold_stats = {}
+
+    # Utilisation d'une variable globale
+
+    # for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
+    #     # Validation des indices
+    #     validate_fold_indices(train_pos, val_pos)
+    #
+    #     # Préparation des données du fold
+    #     fold_raw_data = prepare_fold_data(X_train, y_train_label_, train_pos, val_pos)
+
+    # Log des informations du fold
+    # if is_log_enabled:
+    #   log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
+    data_4cv={}
+
+
+
+    train_pos=None
+    val_pos=None
+    data_4cv["X_train"] = X_train
+    data_4cv["X_test"] = X_test
+    data_4cv["y_train_label"] = y_train_label_
+    data_4cv["y_test_label"] = y_test_label_
+    data_4cv["y_pnl_data_train"] = y_pnl_data_train
+    data_4cv["y_pnl_data_test"] = y_pnl_data_test
+    if list(X_train.columns) != list(X_test.columns):
+        raise ValueError("Les colonnes de X_train ne correspondent pas à celles de X_test (ordre ou contenu différent)")
+
+    # # Mapping pour compatibilité avec le traitement des folds
+    # data_4cv["X_train_cv"] = data_4cv["X_train"]
+    # data_4cv["X_val_cv"] = data_4cv["X_test"]
+    # data_4cv["Y_train_cv"] = data_4cv["y_train_label"]
+    # data_4cv["y_val_cv"] = data_4cv["y_test_label"]
+    # data_4cv["y_pnl_data_train_cv"] = data_4cv["y_pnl_data_train"]
+    # data_4cv["y_pnl_data_val_cv"] = data_4cv["y_pnl_data_test"]
+
+    # Traitement du fold avec le processor approprié
+    try:
+        print("➡️ Appel de fold_processor avec les paramètres suivants :")
+        # print(f"train_pos: {train_pos}")
+        # print(f"val_pos: {val_pos}")
+        print(f"params_optuna: {params_optuna}")
+        print(f"data keys: {list(data_4cv.keys())}")
+        print(f"config keys: {list(config.keys())}")
+        print(f"fold_num: {1}")
+
+        fold_results= fold_processor(
+            train_pos=train_pos,
+            val_pos=val_pos,
+            params_optuna=params_optuna,
+            other_params=other_params_best,
+            data_4cv=data_4cv,
+            is_log_enabled=is_log_enabled,
+            config=config,
+            fold_num=1,
+            log_evaluation=0)
+        # comparer
+        # scaler_init_dataSet=None,pca_object_init_dataSet=None):
+        # avec
+        scaler_cv_train_test=fold_results["scaler"]
+        pca_model_cv_train_test=fold_results["pca_model"]
+        # x_train_vifStatPCA_trainFinal_noCV=fold_results["x_train_vifStatPCA_trainFinal_noCV"]
+        # global x_train_vifStatPCA_initDataSet_DEBUG_global
+        # x_train_vifStatPCA_initDataSet_DEBUG_global
+        # result = compare_dataframes(
+        #     x_train_vifStatPCA_trainFinal_noCV,
+        #     x_train_vifStatPCA_initDataSet_DEBUG_global,
+        #     "x_train_vifStatPCA_trainFinal_noCV",
+        #     "x_train_vifStatPCA_initDataSet_DEBUG_global"
+        # )
+        #
+        # print("\nRésultat final:", "OK" if result else "PAS OK")
+        #
+        # exit(888)
+        final_model=fold_results['current_model']
+    except Exception as e:
+        print("❌ Erreur dans process_cv_fold_xgboost :")
+        print("Type:", type(e).__name__)
+        print("Message:", str(e))
+        traceback.print_exc()  # Affiche la stack complète 🔥
+        raise  # Optionnel : fait remonter l’erreur au niveau supérieur
+
+    data_4cv=other_params['data_4cv']
+    cv=other_params["cv"]
+    nb_pca = config.get('nb_pca', 1)
+
+    for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
+        # Validation des indices
+        validate_fold_indices(train_pos, val_pos)
+        (X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,
+         y_pnl_data_train_cv, y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
+            config, data_4cv, train_pos, val_pos)
+
+        if list(X_train.columns) != list(X_val_cv.columns):
+            raise ValueError(
+                "Les colonnes de X_val ne correspondent pas à celles de X_train (ordre ou contenu différent)")
+
+        # 1. Appliquer le scaling aux données de validation
+        X_val_cv_scaled_np = scaler_cv_train_test.transform(X_val_cv.values)
+        X_val_cv_scaled = pd.DataFrame(X_val_cv_scaled_np, columns=X_val_cv.columns, index=X_val_cv.index)
+
+
+        high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
+        columns_without_pca = other_params['colomnsList_with_vif_stat_without_pca_']
+        # 2. Appliquer la PCA aux données de validation scalées
+        pca_val = pca_model_cv_train_test.transform(X_val_cv[high_corr_columns_used4pca])
+        pca_cols = [f'pca_{i + 1}' for i in range(nb_pca)]
+        print("nb_pca: ",nb_pca)
+        print("Shape of pca_val:", pca_val.shape)
+        print(pca_cols)
+        print("Type of X_val_cv_scaled:", type(X_val_cv_scaled))
+        print("Est-ce un DataFrame?", isinstance(X_val_cv_scaled, pd.DataFrame))
+        for i, col_name in enumerate(pca_cols):
+            X_val_cv_scaled[col_name] = pca_val[:, i]
+
+
+        X_val_cv_scaled.drop(columns=high_corr_columns_used4pca, inplace=True)
+        print("high_corr_columns_used4pca: ",high_corr_columns_used4pca)
+        # Juste les noms de colonnes
+        print("\n===== DÉMARRAGE DE LA PREDICTION =====")
+        print(f"X_val_cv   : {len(X_val_cv_scaled.columns)} colonnes -> {list(X_val_cv_scaled.columns)}")
+        print("========================================================================\n")
+
+        start_time_train, end_time_train, _ = get_val_cv_time_range(X_full=X_train_full, X=X_train_cv_pd)
+        print("Train dates: de", timestamp_to_date_utc_(start_time_train), "à", timestamp_to_date_utc_(end_time_train))
+        start_time_val, end_time_val, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
+        print("Validation dates: de", timestamp_to_date_utc_(start_time_val), "à", timestamp_to_date_utc_(end_time_val))
+        # Prédictions et métriques
+        sample_weights_train, sample_weights_val = compute_sample_weights(Y_train_cv, y_val_cv)
+
+        dval = xgb.DMatrix(X_val_cv_scaled, label=y_val_cv, weight=sample_weights_val)
+
+        val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
+            predict_and_compute_metrics(model=final_model, X_data=dval, y_true=y_val_cv,
+                                        best_iteration=final_model.best_iteration, threshold=other_params['threshold'],
+                                        config=config)
+        # Nombre total d'échantillons
+        total_samples = tn_val + fp_val + fn_val + tp_val
+
+        # Nombre de trades pris (prédictions positives)
+        total_trades = tp_val + fp_val
+
+        # Winrate (proportion de trades gagnants parmi tous les trades pris)
+        winrate = tp_val / total_trades if total_trades > 0 else 0
+        winrate_percent = winrate * 100
+
+        # Part des trades pris parmi tous les échantillons
+        trade_rate = total_trades / total_samples if total_samples > 0 else 0
+        trade_rate_percent = trade_rate * 100
+
+        # Affichage des résultats
+        print(f"Nombre total d'échantillons: {total_samples}")
+        print(f"Nombre total de trades: {total_trades}")
+        print(f"Winrate: {winrate_percent:.2f}%")
+        print(f"Part des trades pris: {trade_rate_percent:.2f}%")
+    exit(74)
+    # config.update({
     #   'y_pnl_data_train_cv': y_train_label_,
     #   'y_pnl_data_val_cv_OrTest': y_test_label_
-    #})
+    # })
     results = train_and_evaluate_lightgbm_model(
         X_train_cv=X_train,
         X_val_cv=X_test,
@@ -3026,14 +3194,16 @@ def reTrain_finalModel_analyse(
         log_evaluation=5
     )
 
-    final_model=results['current_model']
+    final_model = results['current_model']
     evals_result = results['evals_result']
     # Affichage des résultats clés
     print(f"Sur X_Test :")
     print(f"  - Meilleur nombre d'itérations : {final_model.best_iteration}")
     print(f"  - Meilleur score : {final_model.best_score}")
-    print(f"        - soit PNL {results['eval_metrics']['val_bestVal_custom_metric_pnl']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
-    print(f"        - Rappel sur train: PNL de {results['train_metrics']['train_bestVal_custom_metric_pnl']} | pour {results['train_metrics']['total_samples']}  samples")
+    print(
+        f"        - soit PNL {results['eval_metrics']['val_bestVal_custom_metric_pnl']} avec best_titeration de {results['eval_metrics']['best_iteration']} iérations | pour {results['eval_metrics']['total_samples']} samples ")
+    print(
+        f"        - Rappel sur train: PNL de {results['train_metrics']['train_bestVal_custom_metric_pnl']} | pour {results['train_metrics']['total_samples']}  samples")
     # Création du nom de fichier avec timestamp
     current_time = datetime.now()
     timestamp = current_time.strftime("%y%m%d_%H_%M_%S")  # Format: YYMMDD_HH_MM_SS
@@ -3046,8 +3216,6 @@ def reTrain_finalModel_analyse(
     model_file = os.path.join(save_dir, f"final_training_model_{timestamp}.json")
     final_model.save_model(model_file)
     print(f"\nModèle sauvegardé: {model_file}")
-
-
 
     # Utilisation de la fonction
     plot_custom_metric_evolution_with_trade_info(final_model, evals_result, n_train_trades=len(X_train),
@@ -3110,11 +3278,11 @@ def reTrain_finalModel_analyse(
         print("ERREUR : Les prédictions ne sont pas dans l'intervalle [0, 1] attendu pour une classification binaire.")
         print("Vous devez appliquer une transformation (comme sigmoid) aux prédictions.")
         print("Exemple : y_pred_proba_afterSig = sigmoidCustom(final_model.predict(dtest))")
-        exit(11)
     else:
         print("Les prédictions sont dans l'intervalle [0, 1] attendu pour une classification binaire.")
     """
-    y_pred_proba_afterSig, pred_proba_log_odds,predictions_converted, (tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+    y_pred_proba_afterSig, pred_proba_log_odds, predictions_converted, (
+    tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
         model=final_model,
         X_data=X_test,
         y_true=y_test_label_,
@@ -3123,7 +3291,6 @@ def reTrain_finalModel_analyse(
         config=config
     )
 
-
     reporting_model_performance(pred_proba_log_odds, tp_xtest, fp_xtest, fn_xtest, tn_xtest, config)
 
     print_notification('###### FIN: GENERATION PREDICTION AVEC MOBEL FINAL (TEST) ##########', color="blue")
@@ -3131,12 +3298,12 @@ def reTrain_finalModel_analyse(
     print_notification('###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur (XTEST) ##########',
                        color="blue")
 
-
     ###### DEBUT: ANALYSE DE LA DISTRIBUTION DES PROBABILITÉS PRÉDITES sur XTEST ##########
 
     # Pour la courbe de calibration et l'histogramme
-    plot_calibrationCurve_distrib(y_test_label_converted, y_pred_proba_afterSig, optimal_optuna_threshold=optimal_optuna_threshold,
-                                  num_sessions=nb_SessionTest, results_directory=results_directory,config=config)
+    plot_calibrationCurve_distrib(y_test_label_converted, y_pred_proba_afterSig,
+                                  optimal_optuna_threshold=optimal_optuna_threshold,
+                                  num_sessions=nb_SessionTest, results_directory=results_directory, config=config)
 
     # Pour le graphique des taux FP/TP par feature
 
@@ -3195,7 +3362,7 @@ def reTrain_finalModel_analyse(
         import cupy as cp
         # Conversion si nécessaire
         y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig,
-                                                                         cp.ndarray) else y_pred_proba_afterSig
+                                                                              cp.ndarray) else y_pred_proba_afterSig
         y_test_label_np = cp.asnumpy(y_test_label_) if isinstance(y_test_label_, cp.ndarray) else y_test_label_
     else:
         # Sur CPU, y_pred_proba_afterSig et y_test_label_ sont déjà en NumPy
@@ -3243,8 +3410,8 @@ def reTrain_finalModel_analyse(
     # Sous-graphique 1 : Courbe ROC
 
     # Convertir les tableaux CuPy en NumPy
-   # y_test_label_np = cp.asnumpy(y_test_label) if isinstance(y_test_label, cp.ndarray) else y_test_label
-   # y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
+    # y_test_label_np = cp.asnumpy(y_test_label) if isinstance(y_test_label, cp.ndarray) else y_test_label
+    # y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
 
     # Calculer la courbe ROC et le score AUC
     fpr, tpr, _ = roc_curve(y_test_label_np, y_test_predProba_np)
@@ -3264,7 +3431,7 @@ def reTrain_finalModel_analyse(
     # Assurez-vous que y_pred_proba_afterSig est en NumPy
 
     # Conversion de y_pred_proba_afterSig en NumPy
-#    y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
+    #    y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
 
     # Assurez-vous que optimal_optuna_threshold est un scalaire Python
     optimal_optuna_threshold = float(optimal_optuna_threshold)
@@ -3292,7 +3459,7 @@ def reTrain_finalModel_analyse(
     # Ajout des annotations pour les comptes
 
     # Convertir y_pred_proba_afterSig en NumPy si c'est un tableau CuPy
-#    y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
+    #    y_test_predProba_np = cp.asnumpy(y_pred_proba_afterSig) if isinstance(y_pred_proba_afterSig, cp.ndarray) else y_pred_proba_afterSig
 
     # Utiliser la version NumPy pour les calculs
     num_below = np.sum(y_test_predProba_np <= optimal_optuna_threshold)
@@ -3377,22 +3544,23 @@ def reTrain_finalModel_analyse(
     print_notification('###### FIN: ANALYSE DES DEPENDENCES SHAP DU MOBEL FINAL (ENTRAINEMENT) ##########',
                        color="blue")
 
-   # print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########',
+    # print_notification('###### DEBUT: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########',
     #                    color="blue")
 
     # Appeler la fonction d'analyse
-    #analyze_nan_impact(model=final_model, X_train=X_train, feature_names=feature_names,
+    # analyze_nan_impact(model=final_model, X_train=X_train, feature_names=feature_names,
     #                  shap_values=shap_values_train, nan_value=nan_value,
     #                  save_dir=os.path.join(results_directory, 'nan_analysis_results'))
 
-    #print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########',
+    # print_notification('###### FIN: ANALYSE DE L\'IMPACT DES VALEURS NaN DU MOBEL FINAL (ENTRAINEMENT) ##########',
     #                  color="blue")
 
     ###### DEBUT: ANALYSE DES ERREURS ##########
     print_notification('###### DEBUT: ANALYSE DES ERREURS ##########', color="blue")
     # Analyse des erreurs
 
-    results_df, error_df = analyze_errors(X_test, y_test_label_, predictions_converted, y_pred_proba_afterSig, feature_names,
+    results_df, error_df = analyze_errors(X_test, y_test_label_, predictions_converted, y_pred_proba_afterSig,
+                                          feature_names,
                                           save_dir=os.path.join(results_directory, 'analyse_error'),
                                           top_features=resulat_test_shap_feature_importance['top_10_features'])
 
@@ -3467,7 +3635,7 @@ import numpy as np
 
 """
 def custom_profit_scorer(y_true, y_pred_proba, other_params=None, normalize=False):
-  
+
     if other_params is None:
         other_params = {}
 
@@ -3803,24 +3971,25 @@ def sessions_selection(df, selected_sessions=None, CUSTOM_SESSIONS_=None, result
     mask_selected = create_mask_numba(timestamps, periods_starts, periods_ends)
     df_filtered.loc[~mask_selected, 'class_binaire'] = 99
 
-
     # Après avoir appliqué le masque de filtrage
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("STATISTIQUES APRÈS FILTRAGE PAR SESSIONS")
-    print("="*50)
+    print("=" * 50)
     success_filtered = len(df_filtered[df_filtered['class_binaire'] == 1])
     failure_filtered = len(df_filtered[df_filtered['class_binaire'] == 0])
     filtered_99 = len(df_filtered[df_filtered['class_binaire'] == 99])
     total_filtered = success_filtered + failure_filtered
     filtered_win_rate = (success_filtered / total_filtered * 100) if total_filtered > 0 else 0
 
-    print(f"Trades réussis (1): {success_filtered} (avant: {original_success_count}, différence: {success_filtered - original_success_count})")
-    print(f"Trades échoués (0): {failure_filtered} (avant: {original_failure_count}, différence: {failure_filtered - original_failure_count})")
+    print(
+        f"Trades réussis (1): {success_filtered} (avant: {original_success_count}, différence: {success_filtered - original_success_count})")
+    print(
+        f"Trades échoués (0): {failure_filtered} (avant: {original_failure_count}, différence: {failure_filtered - original_failure_count})")
     print(f"Trades filtrés (99): {filtered_99}")
     print(f"Total trades après filtrage: {total_filtered} (avant: {original_total_count})")
     print(f"Win Rate après filtrage: {filtered_win_rate:.2f}% (avant: {original_win_rate:.2f}%)")
-    print(f"Pourcentage de données conservées: {(total_filtered/original_total_count*100):.2f}%")
-    print("="*50)
+    print(f"Pourcentage de données conservées: {(total_filtered / original_total_count * 100):.2f}%")
+    print("=" * 50)
 
     # Vérification de cohérence
     if total_filtered != cum_total_count:
@@ -3913,73 +4082,102 @@ def calculate_global_ecart(
 
     return ecart_global
 
-
-def calculate_normalized_pnl_objectives(
-        tp_train_list, fp_train_list, tp_val_list, fp_val_list,
-        scores_train_list, scores_val_list, fold_stats,
-        use_imbalance_penalty=True,
-        use_trade_weighting_for_ecart=True  # Activer ou non la pondération
+def calculate_normalized_pnl_objectives(trial,
+        tp_train_list, fp_train_list,
+        tp_val_list, fp_val_list,
+        scores_train_list, scores_val_list,
+        fold_stats,
+        config=None,
+        use_trade_weighting_for_ecart=True
 ):
-    # Vérification que toutes les listes ont la même longueur
+    import math
+    import numpy as np
+
     lengths = [len(tp_train_list), len(fp_train_list),
                len(tp_val_list), len(fp_val_list),
                len(scores_train_list), len(scores_val_list)]
-
-    if not all(length == lengths[0] for length in lengths):
-        print("ERREUR: Les listes n'ont pas toutes la même longueur!")
+    if not all(length == lengths[0] for length in lengths) or not lengths[0]:
+        print("ERREUR: Listes incohérentes ou vides.")
         return {
             'pnl_norm_objective': float('-inf'),
             'ecart_train_val': float('inf')
         }
 
-    if not lengths[0]:  # Si les listes sont vides
-        print("ERREUR: Les listes sont vides!")
-        return {
-            'pnl_norm_objective': float('-inf'),
-            'ecart_train_val': float('inf')
-        }
-
-    # Calcul des métriques pour chaque fold
     fold_metrics = []
     for i in range(len(scores_train_list)):
         train_trades = tp_train_list[i] + fp_train_list[i]
         val_trades = tp_val_list[i] + fp_val_list[i]
-
-        train_trades = max(train_trades, 1e-8)  # Éviter la division par zéro
+        train_trades = max(train_trades, 1e-8)
         val_trades = max(val_trades, 1e-8)
 
-        train_winrate = tp_train_list[i] / train_trades
-        val_winrate = tp_val_list[i] / val_trades
-
         fold_metrics.append({
-            'winrate_diff': abs(train_winrate - val_winrate), #modifier cela car nous l'avons deja calculé vec perctDiff_winrateRatio_train_val' (pourcentatge de différence des ratio)
-            'n_trades_val': val_trades,
-            'val_pnl': scores_val_list[i]
+            'val_pnl': scores_val_list[i],
+            'n_trades_val': val_trades
         })
 
-    # Calcul du PnL et de l'écart global (en remplaçant la logique existante)
     total_pnl = sum(m['val_pnl'] for m in fold_metrics)
-    avg_pnl = total_pnl / len(fold_metrics) if fold_metrics else float('-inf')
-
-    print(f"total_pnl:{total_pnl}  avg_pnl:{avg_pnl}  ")
+    avg_pnl = total_pnl / len(fold_metrics)
 
     ecart_global = calculate_global_ecart(
-        tp_train_list, fp_train_list, tp_val_list, fp_val_list,
+        tp_train_list, fp_train_list,
+        tp_val_list, fp_val_list,
         use_trade_weighting=use_trade_weighting_for_ecart
     )
 
-    # Pénalité d'imbalance si activée
-    max_trades = max(m['n_trades_val'] for m in fold_metrics)
-    min_trades = max(min(m['n_trades_val'] for m in fold_metrics), 1e-8)
-    imbalance_penalty = 1 + math.log(max_trades / min_trades)
+    use_imbalance_penalty = config.get('use_imbalance_penalty', False) if config else False
+    use_std_penalty = config.get('use_std_penalty', False) if config else False
+
+    penalty = 1.0
+    imbalance_penalty = 1.0
+    std_penalty = 1.0
 
     if use_imbalance_penalty:
-        pnl_norm_objective = avg_pnl * (1 / imbalance_penalty)
-        ecart_train_val = ecart_global * imbalance_penalty
-    else:
-        pnl_norm_objective = avg_pnl
-        ecart_train_val = ecart_global
-    print(f"pnl_norm_objective:{pnl_norm_objective} ")
+        n_trades_val_list = [m['n_trades_val'] for m in fold_metrics]
+        max_trades = max(n_trades_val_list)
+        min_trades = max(min(n_trades_val_list), 1e-8)
+        imbalance_penalty = 1 + math.log(max_trades / min_trades)
+        penalty *= imbalance_penalty
+
+    if use_std_penalty:
+        n_trades_val_list = [m['n_trades_val'] for m in fold_metrics]
+        std_trades = np.std(n_trades_val_list)
+        mean_trades = np.mean(n_trades_val_list)
+        cv_trades = std_trades / (mean_trades + 1e-8)
+        std_penalty = 1 + cv_trades
+        penalty *= std_penalty
+
+    pnl_norm_objective = avg_pnl / penalty
+    ecart_train_val = ecart_global
+
+    trial.set_user_attr('pnl_norm_objective', pnl_norm_objective)
+    trial.set_user_attr('avg_pnl', avg_pnl)
+    trial.set_user_attr('imbalance_penalty', imbalance_penalty)
+    trial.set_user_attr('std_penalty', std_penalty)
+    trial.set_user_attr('ecart_train_val', ecart_train_val)
+
+    # ✅ LOG condensé : valeurs actuelles vs meilleur trial (si dispo)
+    print("\n--- Résumé Trial Actuel vs Meilleur Trial ---")
+    try:
+        best = trial.study.best_trial  # Provoque une erreur si aucun trial terminé
+        print(
+            f"pnl_norm_objective : {pnl_norm_objective:.4f} | best : {best.user_attrs.get('pnl_norm_objective', 'n/a'):.4f}")
+        print(f"avg_pnl            : {avg_pnl:.4f} | best : {best.user_attrs.get('avg_pnl', 'n/a'):.4f}")
+        print(f"penalty total      : {penalty:.4f} | best : "
+              f"{best.user_attrs.get('imbalance_penalty', 1.0) * best.user_attrs.get('std_penalty', 1.0):.4f}")
+        print(
+            f"imbalance_penalty  : {imbalance_penalty:.4f} | best : {best.user_attrs.get('imbalance_penalty', 'n/a'):.4f}")
+        print(f"std_penalty        : {std_penalty:.4f} | best : {best.user_attrs.get('std_penalty', 'n/a'):.4f}")
+        print(
+            f"ecart_train_val    : {ecart_train_val:.4f} | best : {best.user_attrs.get('ecart_train_val', 'n/a'):.4f}")
+    except ValueError:
+        print("⚠️ Aucun trial terminé, affichage du trial en cours uniquement.")
+        print(f"pnl_norm_objective : {pnl_norm_objective:.4f}")
+        print(f"avg_pnl            : {avg_pnl:.4f}")
+        print(f"penalty total      : {penalty:.4f}")
+        print(f"imbalance_penalty  : {imbalance_penalty:.4f}")
+        print(f"std_penalty        : {std_penalty:.4f}")
+        print(f"ecart_train_val    : {ecart_train_val:.4f}")
+    print("------------------------------------------------")
 
     return {
         'pnl_norm_objective': pnl_norm_objective,
@@ -3987,7 +4185,8 @@ def calculate_normalized_pnl_objectives(
         'raw_metrics': {
             'avg_pnl': avg_pnl,
             'ecart_global': ecart_global,
-            'imbalance_penalty': imbalance_penalty
+            'imbalance_penalty': imbalance_penalty,
+            'std_penalty': std_penalty
         }
     }
 
@@ -4019,7 +4218,7 @@ def process_RFE_filteringg(params=None, other_params=None, selected_columns=None
     w_p = other_params['w_p']
     w_n = other_params['w_n']
 
-    def custom_profit_scorer(y_true, y_pred_proba, other_params, normalize=False,config=None,custom=None):
+    def custom_profit_scorer(y_true, y_pred_proba, other_params, normalize=False, config=None, custom=None):
         """
         Calcule le profit en fonction des prédictions de probabilités.
 
@@ -4283,7 +4482,6 @@ def create_custom_importance_plot(shap_df, dataset_name, save_dir):
     plt.close()
 
 
-
 def add_session_id(df, time_periods_dict):
     """
     Ajoute une colonne session_ID basée sur deltaTimestampOpeningSession1min
@@ -4416,7 +4614,6 @@ import xgboost as xgb
 from typing import Dict, List, Any, Tuple
 
 
-
 def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
     """Calcule la matrice de confusion sur GPU"""
     # Conversion en CuPy si nécessaire
@@ -4435,28 +4632,28 @@ def compute_confusion_matrix_cupy(y_true_gpu, y_pred_gpu):
 
 
 def calculate_fold_stats(labels: object, set_name: object, config: object) -> object:
-   """Calcule les statistiques du fold sur GPU ou CPU"""
-   if config['device_'] == 'cuda':
-       if not isinstance(labels, cp.ndarray):
-           labels = cp.asarray(labels)
-       xp = cp
-   else:
-       if not isinstance(labels, np.ndarray):
-           labels = np.asarray(labels)
-       xp = np
+    """Calcule les statistiques du fold sur GPU ou CPU"""
+    if config['device_'] == 'cuda':
+        if not isinstance(labels, cp.ndarray):
+            labels = cp.asarray(labels)
+        xp = cp
+    else:
+        if not isinstance(labels, np.ndarray):
+            labels = np.asarray(labels)
+        xp = np
 
-   decisions = xp.sum(labels != 99)
-   success = xp.sum(labels == 1)
-   failures = xp.sum(labels == 0)
-   success_rate = xp.where(decisions > 0, success / decisions, xp.float32(0.0))
+    decisions = xp.sum(labels != 99)
+    success = xp.sum(labels == 1)
+    failures = xp.sum(labels == 0)
+    success_rate = xp.where(decisions > 0, success / decisions, xp.float32(0.0))
 
-   return {
-       f"{set_name}_n_trades": decisions,
-       f"{set_name}_n_class_1": success,
-       f"{set_name}_n_class_0": failures,
-       f"{set_name}_class_ratio": success_rate,
-       f"{set_name}_success_rate": success_rate
-   }
+    return {
+        f"{set_name}_n_trades": decisions,
+        f"{set_name}_n_class_1": success,
+        f"{set_name}_n_class_0": failures,
+        f"{set_name}_class_ratio": success_rate,
+        f"{set_name}_success_rate": success_rate
+    }
 
 
 def calculate_winrate_gpu(tp_val, fp_val):
@@ -4472,6 +4669,7 @@ def calculate_winrate_gpu(tp_val, fp_val):
     winrate = cp.where(mask, tp_val / tp_fp_sum, cp.float32(0.0))
 
     return winrate
+
 
 def setup_other_params(trial, weight_param, config, other_params=None):
     """Configure le dictionnaire des métriques en fonction des paramètres Optuna"""
@@ -4513,7 +4711,6 @@ def setup_other_params(trial, weight_param, config, other_params=None):
     return other_params
 
 
-
 def setup_model_params_optuna(trial, config, random_state_seed_):
     """Configure les paramètres du modèle pour l'entraînement"""
     # Initialisation des variables
@@ -4553,8 +4750,8 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                                                     modele_param_optuna_range['colsample_bynode']['min'],
                                                     modele_param_optuna_range['colsample_bynode']['max']),
             'min_split_loss': trial.suggest_float('min_split_loss',
-                                         modele_param_optuna_range['min_split_loss']['min'],
-                                         modele_param_optuna_range['min_split_loss']['max']),
+                                                  modele_param_optuna_range['min_split_loss']['min'],
+                                                  modele_param_optuna_range['min_split_loss']['max']),
             'reg_alpha': trial.suggest_float('reg_alpha',
                                              modele_param_optuna_range['reg_alpha']['min'],
                                              modele_param_optuna_range['reg_alpha']['max'],
@@ -4566,11 +4763,11 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
             'random_state': random_state_seed_,
             'tree_method': 'hist',
             'device': device,
-            #'boosting_type': boosting_type,
+            # 'boosting_type': boosting_type,
         }
-        #num_boost_round = trial.suggest_int('num_boost_round',
-         #                                   modele_param_optuna_range['num_boost_round']['min'],
-          #                                  modele_param_optuna_range['num_boost_round']['max'])
+        # num_boost_round = trial.suggest_int('num_boost_round',
+        #                                   modele_param_optuna_range['num_boost_round']['min'],
+        #                                  modele_param_optuna_range['num_boost_round']['max'])
 
     elif model_type == modelType.LGBM:
         params = {
@@ -4646,7 +4843,6 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                 modele_param_optuna_range['bagging_freq']['min'],
                 modele_param_optuna_range['bagging_freq']['max']
             ),
-
 
             # Paramètres fixes
             'boosting_type': boosting_type,
@@ -4787,16 +4983,17 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
         }
 
 
+
     elif model_type == modelType.SVC:
         params = {
             # Paramètre de régularisation - contrôle le compromis entre la marge et les erreurs
             'C': trial.suggest_float(
+
                 'C',
                 modele_param_optuna_range['C']['min'],
                 modele_param_optuna_range['C']['max'],
                 log=modele_param_optuna_range['C'].get('log', True)
             ),
-
             # Paramètre gamma pour les noyaux 'rbf', 'poly' et 'sigmoid'
             'gamma': trial.suggest_float(
                 'gamma',
@@ -4804,61 +5001,44 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                 modele_param_optuna_range['gamma']['max'],
                 log=modele_param_optuna_range['gamma'].get('log', True)
             ),
-
+            # Choix du noyau - crucial pour la flexibilité du modèle
+            'kernel': trial.suggest_categorical(
+                'kernel',
+                modele_param_optuna_range['kernel']
+            ),
             # Degré du polynôme pour le noyau 'poly'
             'degree': trial.suggest_int(
                 'degree',
                 modele_param_optuna_range['degree']['min'],
                 modele_param_optuna_range['degree']['max']
             ),
-
             # Coefficient pour les noyaux 'poly' et 'sigmoid'
             'coef0': trial.suggest_float(
                 'coef0',
                 modele_param_optuna_range['coef0']['min'],
                 modele_param_optuna_range['coef0']['max']
             ),
-
-            # # Tolérance pour le critère d'arrêt
-            # 'tol': trial.suggest_float(
-            #     'tol',
-            #     modele_param_optuna_range['tol']['min'],
-            #     modele_param_optuna_range['tol']['max'],
-            #     log=modele_param_optuna_range['tol'].get('log', True)
-            # ),
-
-            # Taille du cache pour le noyau (en MB)
-            # 'cache_size': trial.suggest_categorical(
-            #     'cache_size',
-            #     modele_param_optuna_range['cache_size']
-            # ),
-
-            # Stratégie un-contre-un ou un-contre-tous pour la classification multiclasse
-            # 'decision_function_shape': trial.suggest_categorical(
-            #     'decision_function_shape',
-            #     modele_param_optuna_range['decision_function_shape']
-            # ),
-
-            # # Shrinking heuristic
-            # 'shrinking': trial.suggest_categorical(
-            #     'shrinking',
-            #     modele_param_optuna_range['shrinking']
-            # ),
-
+            # Tolérance pour le critère d'arrêt - impacte la précision des frontières
+            'tol': trial.suggest_float(
+                'tol',
+                modele_param_optuna_range['tol']['min'],
+                modele_param_optuna_range['tol']['max'],
+                log=modele_param_optuna_range['tol'].get('log', True)
+            ),
+            # Shrinking heuristic - peut accélérer l'entraînement
+            'shrinking': trial.suggest_categorical(
+                'shrinking',
+                modele_param_optuna_range['shrinking']
+            ),
             # Stratégie de gestion des classes déséquilibrées
             'class_weight': trial.suggest_categorical(
                 'class_weight',
                 modele_param_optuna_range['class_weight']
             ),
-
             # Paramètres fixes
             'random_state': random_state_seed_,
             'verbose': 0,  # Réduire les logs
-
-            # Ces paramètres seront définis dans la fonction train_and_evaluate_svc_model
-            # depuis la configuration
-            # 'kernel': config.get('svc_kernel', 'rbf'),
-            # 'probability': config.get('svc_probability', False)
+            'probability': True,  # Pour permettre la calibration des probabilités si nécessaire
         }
     elif model_type == modelType.CATBOOST:
         params = {
@@ -4896,7 +5076,6 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
         raise ValueError(f"Type de modèle non supporté ou paramètres non initialisés: {model_type}")
 
     return params
-
 
 
 def validate_fold_indices(train_pos, val_pos):
@@ -4970,8 +5149,7 @@ def prepare_fold_data(X_train, y_train_label, train_pos, val_pos):
     return fold_data
 
 
-
-def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,config):
+def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv, config):
     """
     Calcule les résultats finaux de la validation croisée.
 
@@ -4983,7 +5161,7 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
     """
     try:
         # Conversion des métriques en numpy
-        final_metrics = {key: convert_metrics_to_numpy_safe(value,config)
+        final_metrics = {key: convert_metrics_to_numpy_safe(value, config)
                          for key, value in metrics_dict.items()
                          if key.startswith('total_')}
 
@@ -5074,17 +5252,17 @@ def cleanup_gpu_memory(data):
 
 
 def convert_metrics_to_numpy_safe(value, config):
-   """Convertit en toute sécurité les métriques GPU/CPU en numpy"""
-   try:
-       if config['device_'] == 'cuda':
-           if isinstance(value, cp.ndarray):
-               return value.get()
-           if isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], cp.ndarray):
-               return [v.get() if isinstance(v, cp.ndarray) else v for v in value]
-       return value
-   except Exception as e:
-       print(f"Erreur lors de la conversion: {str(e)}")
-       return value
+    """Convertit en toute sécurité les métriques GPU/CPU en numpy"""
+    try:
+        if config['device_'] == 'cuda':
+            if isinstance(value, cp.ndarray):
+                return value.get()
+            if isinstance(value, (list, tuple)) and len(value) > 0 and isinstance(value[0], cp.ndarray):
+                return [v.get() if isinstance(v, cp.ndarray) else v for v in value]
+        return value
+    except Exception as e:
+        print(f"Erreur lors de la conversion: {str(e)}")
+        return value
 
 
 def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats, config):
@@ -5119,11 +5297,13 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['train_trades_samples_perct'][fold_num] = fold_results['fold_stats']['train_trades_samples_perct']
         arrays['tp_train'][fold_num] = fold_results['train_metrics']['tp']
         arrays['fp_train'][fold_num] = fold_results['train_metrics']['fp']
-        arrays['train_bestVal_custom_metric_pnl'][fold_num] = fold_results['train_metrics']['train_bestVal_custom_metric_pnl']
+        arrays['train_bestVal_custom_metric_pnl'][fold_num] = fold_results['train_metrics'][
+            'train_bestVal_custom_metric_pnl']
 
-        arrays['class0_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(0, 0)
-        arrays['class1_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(1, 0)
-
+        arrays['class0_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(
+            0, 0)
+        arrays['class1_raw_data_train_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['train'].get(
+            1, 0)
 
         class0_train = arrays['class0_raw_data_train_by_fold'][fold_num]
         class1_train = arrays['class1_raw_data_train_by_fold'][fold_num]
@@ -5144,16 +5324,20 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['val_trades_samples_perct'][fold_num] = fold_results['fold_stats']['val_trades_samples_perct']
         arrays['tp_val'][fold_num] = fold_results['eval_metrics']['tp']
         arrays['fp_val'][fold_num] = fold_results['eval_metrics']['fp']
-        arrays['val_bestVal_custom_metric_pnl'][fold_num] = fold_results['eval_metrics']['val_bestVal_custom_metric_pnl']
-        arrays['class0_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(0, 0)
-        arrays['class1_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(1, 0)
-
+        arrays['val_bestVal_custom_metric_pnl'][fold_num] = fold_results['eval_metrics'][
+            'val_bestVal_custom_metric_pnl']
+        arrays['class0_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(0,
+                                                                                                                    0)
+        arrays['class1_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(1,
+                                                                                                                    0)
 
         class0_val = arrays['class0_raw_data_val_by_fold'][fold_num]
         class1_val = arrays['class1_raw_data_val_by_fold'][fold_num]
 
-        arrays['perctDiff_winrateRatio_train_val'][fold_num] = fold_results['fold_stats']['perctDiff_winrateRatio_train_val']
-        arrays['perctDiff_ratioTradeSample_train_val'][fold_num] = fold_results['fold_stats']['perctDiff_ratioTradeSample_train_val']
+        arrays['perctDiff_winrateRatio_train_val'][fold_num] = fold_results['fold_stats'][
+            'perctDiff_winrateRatio_train_val']
+        arrays['perctDiff_ratioTradeSample_train_val'][fold_num] = fold_results['fold_stats'][
+            'perctDiff_ratioTradeSample_train_val']
         # Calcul du winrate pour la validation pour les raw data
         if (class0_val + class1_val) > 0:
             winrate_val = class1_val / (class0_val + class1_val)
@@ -5182,7 +5366,6 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         raise
 
 
-
 # Fonction pour calculer et récupérer les métriques
 def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_split_tscv, is_log_enabled,
                     df_init_candles):
@@ -5198,7 +5381,7 @@ def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_s
     for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
         fold_raw_data = prepare_fold_data(X_train, y_train_label, train_pos, val_pos)
 
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv,y_pnl_data_train_cv,y_pnl_data_val_cv, \
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv, \
             = prepare_dataSplit_cv_train_val(
             config, data, train_pos, val_pos)
 
@@ -5218,9 +5401,12 @@ def get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_s
     raw_metrics_cache["raw_metrics_byFold"] = raw_metrics_byFold
     return raw_metrics_byFold
 
+
 raw_metrics_cache = {}
 
-def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_pnl_data_train=None,df_init_candles=None,trial=None, params=None,
+
+def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_pnl_data_train=None,
+                         df_init_candles=None, trial=None, params_optuna=None,
                          other_params=None, cv=None, nb_split_tscv=None,
                          model=None, is_log_enabled=False, config=None, **kwargs):
     """
@@ -5231,16 +5417,17 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_
         kwargs: Paramètres spécifiques au framework (num_boost_round pour XGBoost, etc.)
     """
     try:
-        high_corr_columns_used4pca=other_params['high_corr_columns_used4pca']
+        high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
         colomnsList_with_vif_stat_without_pca_ = other_params['colomnsList_with_vif_stat_without_pca_']
-        print(f"\n📊 Nombre total de features (VIF + stats + PCA si activé) : {len(X_train.columns)}")
+        print(f"\n📊 Nombre total de features (colonnes VIF et stats + (optionnel) colonnes choisies pour PCA si activé) : {len(X_train.columns)}")
         print(f"   → {list(X_train.columns)}\n")
 
         print(
             f"🧩 Nombre de features HORS PCA (colomnsList_with_vif_stat_without_pca_) : {len(colomnsList_with_vif_stat_without_pca_)}")
         print(f"   → {colomnsList_with_vif_stat_without_pca_}\n")
 
-        print(f"  et nombre de features utilsé pour le PCA (high_corr_columns_used4pca) : {len(high_corr_columns_used4pca)}")
+        print(
+            f"  et nombre de features utilsé pour le PCA (high_corr_columns_used4pca) : {len(high_corr_columns_used4pca)}")
         print(f"   → {high_corr_columns_used4pca}\n")
 
         # Vérification finale
@@ -5248,87 +5435,83 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_
         print(f"✅ Total déclaré = {len(declared_cols)} colonnes (HORS PCA + AVEC COL FOR PCA)")
 
         # Vérifications communes
-        #validate_inputs(X_train, y_train_label)
+        # validate_inputs(X_train, y_train_label)
 
         # Initialisation des métriques et arrays
-        metrics_dict = initialize_metrics_dict(nb_split_tscv,config)
+        metrics_dict = initialize_metrics_dict(nb_split_tscv, config)
 
         # Préparation données GPU - Interface commune
-        data = prepare_data(X_train, y_train_label,y_pnl_data_train=y_pnl_data_train,config=config)
-
+        data_4cv = prepare_data(X_train, y_train_label, y_pnl_data_train=y_pnl_data_train, config=config)
+        other_params['data_4cv']=data_4cv
         # Sélection du processor de fold selon le framework
         fold_processor = select_fold_processor(model)
-        arrays = initialize_arrays(nb_split_tscv,config,len(X_train))
+        arrays = initialize_arrays(nb_split_tscv, config, len(X_train))
         # Mise à jour des métriques et statistiques
         all_fold_stats = {}
 
         # Utilisation d'une variable globale
 
-        raw_metrics_byFold = get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data, nb_split_tscv, is_log_enabled, df_init_candles)
-
+        raw_metrics_byFold = get_raw_metrics(cv, X_train, X_train_full, y_train_label, config, data_4cv, nb_split_tscv,
+                                             is_log_enabled, df_init_candles)
 
         for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
             # Validation des indices
+            # print(f"train_pos: {train_pos}")
+            # print(f"val_pos: {val_pos}")
             validate_fold_indices(train_pos, val_pos)
 
             # Préparation des données du fold
             fold_raw_data = prepare_fold_data(X_train, y_train_label, train_pos, val_pos)
 
             # Log des informations du fold
-            #if is_log_enabled:
-             #   log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
+            # if is_log_enabled:
+            #   log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
 
             # Traitement du fold avec le processor approprié
             fold_results = fold_processor(
-
-                X_train_full=X_train_full,
-                df_init_candles=df_init_candles,
                 train_pos=train_pos,
                 val_pos=val_pos,
-                params=params,
-                data=data,
+                params_optuna=params_optuna,
+                data_4cv=data_4cv,
                 other_params=other_params,
                 is_log_enabled=is_log_enabled,
                 config=config,
-                nb_split_tscv=nb_split_tscv,
-                fold_raw_data=fold_raw_data,
                 fold_num=fold_num,
-                **kwargs  # Déplacement sur une nouvelle ligne
             )
-
-            update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats,config)
+            fold_results['fold_raw_data']=fold_raw_data
+            update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_fold_stats, config)
         # Calcul des résultats finaux
         results = calculate_final_results(
-            metrics_dict, arrays, all_fold_stats, nb_split_tscv,config)
+            metrics_dict, arrays, all_fold_stats, nb_split_tscv, config)
 
-        #model_lastFold = fold_results['current_model']
+        # model_lastFold = fold_results['current_model']
         # Sauvegarder l'état du modèle sous forme de chaîne
-      #  model_lastFold_string = model_lastFold.model_to_string()
-       # trial.set_user_attr('model_lastFold_string', model_lastFold_string)
+        #  model_lastFold_string = model_lastFold.model_to_string()
+        # trial.set_user_attr('model_lastFold_string', model_lastFold_string)
 
         # Sauvegarder les paramètres séparément
-#        model_lastFold_params = model_lastFold.params
- #       trial.set_user_attr('model_lastFold_params', model_lastFold_params)
+        #        model_lastFold_params = model_lastFold.params
+        #       trial.set_user_attr('model_lastFold_params', model_lastFold_params)
 
- #       print("results[model_lastFold]: ",model_lastFold)
-#        print("results['model_lastFold]: ",model_lastFold.params)
+        #       print("results[model_lastFold]: ",model_lastFold)
+        #        print("results['model_lastFold]: ",model_lastFold.params)
 
         if config['device_'] == 'cuda':
             print(f"\nMémoire GPU finale: {cp.get_default_memory_pool().used_bytes() / 1024 ** 2:.2f} MB")
         else:
             print("\nMode CPU - pas de tracking mémoire GPU")
 
-        return results,raw_metrics_byFold
+        return results, raw_metrics_byFold
 
     except Exception as e:
         handle_exception(e)
         raise
     finally:
-        if config['device_'] != 'cpu' and data is not None:
-            cleanup_gpu_memory(data)
+        if config['device_'] != 'cpu' and data_4cv is not None:
+            cleanup_gpu_memory(data_4cv)
 
 
-def prepare_data(X_train=None, y_train_label=None,y_pnl_data_train=None, config=None):
+def prepare_data(X_train=None, y_train_label=None, y_pnl_data_train=None, config=None):
     """Prépare les données pour l'entraînement sur CPU ou GPU.
 
     Args:
@@ -5340,32 +5523,99 @@ def prepare_data(X_train=None, y_train_label=None,y_pnl_data_train=None, config=
         dict: Dictionnaire contenant les données préparées avec les clés
              'X_train_no99_fullRange' et 'y_train_no99_fullRange'
     """
-    #print(type(X_train))
+    # print(type(X_train))
 
     if config['device_'] == 'cpu':
-        X_processed = X_train#.values
-        y_processed = y_train_label#.values
-        trade_pnl_data_processed=y_pnl_data_train#.values
+        X_processed = X_train  # .values
+        y_processed = y_train_label  # .values
+        trade_pnl_data_processed = y_pnl_data_train  # .values
 
     else:
         X_processed = cp.asarray(X_train.values, dtype=cp.float32)
         # Vérifie le type de y_train_label avant conversion
         y_values = y_train_label.values if isinstance(y_train_label, pd.Series) else y_train_label
         y_processed = cp.asarray(y_values, dtype=cp.int32)
-        y_valuesPnl= y_pnl_data_train.values if isinstance(y_pnl_data_train, pd.Series) else y_pnl_data_train
+        y_valuesPnl = y_pnl_data_train.values if isinstance(y_pnl_data_train, pd.Series) else y_pnl_data_train
         trade_pnl_data_processed = cp.asarray(y_valuesPnl, dtype=cp.int32)
 
-
-    #print(type(X_processed))
-    #print("OOOOOO")
+    # print(type(X_processed))
+    # print("OOOOOO")
     return {
         'X_train_no99_fullRange': X_processed,
         'y_train_no99_fullRange': y_processed,
         'X_train_no99_fullRange_pd': X_train,
         'y_train_no99_fullRange_pd': y_train_label,
-        'y_pnl_data_train_no99_fullRange':trade_pnl_data_processed,
-        'y_train_trade_pnl_no99_fullRange_pd':y_pnl_data_train,
+        'y_pnl_data_train_no99_fullRange': trade_pnl_data_processed,
+        'y_train_trade_pnl_no99_fullRange_pd': y_pnl_data_train,
     }
+
+
+
+
+def apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv):
+    """
+    Applique le scaling et éventuellement la PCA sur les données déjà splitées.
+
+    Args:
+        X_train_cv (DataFrame): Données d'entraînement (features uniquement)
+        X_val_cv (DataFrame): Données de validation (features uniquement)
+        other_params (dict): Doit contenir les clés :
+            - 'high_corr_columns_used4pca'
+            - 'colomnsList_with_vif_stat_without_pca_'
+        config (dict): Configuration globale du modèle
+
+    Returns:
+        tuple: (X_train_cv, X_val_cv) après scaling + PCA
+    """
+
+    # 🔍 Récupération des colonnes
+    high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
+    columns_without_pca = other_params['colomnsList_with_vif_stat_without_pca_']
+
+    all_train_cols = set(X_train_cv.columns)
+    declared_cols = set(high_corr_columns_used4pca).union(columns_without_pca)
+    if all_train_cols != declared_cols:
+        raise ValueError(
+            "❌ Les colonnes déclarées (PCA + hors PCA) ne correspondent pas exactement "
+            "aux colonnes de X_train_cv. Vérifier la config."
+        )
+
+    # ⚙️ Scaling
+    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
+    if chosen_scaler != scalerChoice.SCALER_DISABLE:
+        print(f"\n⚙️  Scaler activé : {chosen_scaler}")
+        X_train_cv, X_val_cv, scaler = apply_scaling(
+            X_train_cv,
+            X_val_cv,
+            save_path=None,
+            chosen_scaler=chosen_scaler
+        )
+    else:
+        print("\n⏭️  Scaler désactivé (SCALER_DISABLE)")
+
+    # 🎯 PCA (si applicable)
+    if high_corr_columns_used4pca:
+        nb_pca = config.get('nb_pca', 1)
+        from sklearn.decomposition import PCA
+        pca_model = PCA(n_components=nb_pca)
+
+        pca_model.fit(X_train_cv[high_corr_columns_used4pca])
+        pca_train = pca_model.transform(X_train_cv[high_corr_columns_used4pca])
+        pca_val = pca_model.transform(X_val_cv[high_corr_columns_used4pca])
+        pca_cols = [f'pca_{i + 1}' for i in range(nb_pca)]
+
+        for i, col_name in enumerate(pca_cols):
+            X_train_cv[col_name] = pca_train[:, i]
+            X_val_cv[col_name] = pca_val[:, i]
+
+        X_train_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
+        X_val_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
+    else:
+        print("\n⏭️  Aucune colonne spécifiée pour la PCA (liste vide)")
+
+    # print(X_train_cv.head(20))
+    # print(X_val_cv.head(20))
+    return X_train_cv, X_val_cv,scaler,pca_model
 
 
 def select_fold_processor(model: None):
@@ -5382,136 +5632,103 @@ def select_fold_processor(model: None):
         raise ValueError(f"Framework non supporté: {model}")
     return processors[model]
 
+def process_cv_fold_xgboost(
+    fold_num=0,
+    train_pos=None,
+    val_pos=None,
+    params_optuna=None,
+    data_4cv=None,
+    other_params=None,
+    is_log_enabled=False,
+    config=None,
+    log_evaluation=0
+):
+    print("______ process_cv_fold_xgboost______")
+    try:
+        # Vérif que data est dispo
+        if data_4cv is None:
+            raise ValueError("❌ 'data' est None dans process_cv_fold_xgboost")
 
-def apply_scalingAndOrPCA(other_params, config, data, train_pos, val_pos):
-    """
-    Prépare les données de train et validation à partir d'une split position.
-    Applique le scaling (et potentiellement la PCA).
+        # 1️⃣ Split des données train/val
+        if train_pos is None and val_pos is None:
+            # ➕ Données déjà préparées (pas de cross-validation)
+            required_keys = [
+                "X_train", "X_test",
+                "y_train_label", "y_test_label",
+                "y_pnl_data_train", "y_pnl_data_test"
+            ]
+            for key in required_keys:
+                if key not in data_4cv:
+                    raise KeyError(f"❌ Clé manquante dans data : {key}")
 
-    Args:
-        other_params (dict): paramètres divers, incluant :
-            - 'high_corr_columns_used4pca': liste de features sur lesquelles appliquer la PCA
-            - 'colomnsList_with_vif_stat_without_pca_': liste de features finales hors PCA
-        config (dict): configuration globale (dont le scaler choisi, etc.)
-        data (DataFrame): dataset complet
-        train_pos (tuple): position du split train (start, end)
-        val_pos (tuple): position du split val (start, end)
+            X_train_cv = data_4cv["X_train"]
+            X_val_cv = data_4cv["X_test"]
+            Y_train_cv = data_4cv["y_train_label"]
+            y_val_cv = data_4cv["y_test_label"]
+            y_pnl_data_train_cv = data_4cv["y_pnl_data_train"]
+            y_pnl_data_val_cv = data_4cv["y_pnl_data_test"]
+        else:
+            # 📆 Split custom basé sur train_pos/val_pos (CV temporelle)
+            (X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd,y_val_cv,
+             y_pnl_data_train_cv,y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
+                 config, data_4cv, train_pos, val_pos)
 
-    Returns:
-        tuple: (X_train_cv, X_train_cv_pd, Y_train_cv,
-                X_val_cv,   X_val_cv_pd,   y_val_cv,
-                y_pnl_data_train_cv,
-                y_pnl_data_val_cv)
-        après application éventuelle du scaler et de la PCA.
-    """
+        # 2️⃣ Scaling/PCA
+        X_train_cv, X_val_cv,scaler,pca_model= apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
 
-    # 1️⃣ Split des données train/val
-    (X_train_cv,
-     X_train_cv_pd,
-     Y_train_cv,
-     X_val_cv,
-     X_val_cv_pd,
-     y_val_cv,
-     y_pnl_data_train_cv,
-     y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
-        config, data, train_pos, val_pos
-    )
+        # 3️⃣ Stats
+        fold_stats_current = {
+            **calculate_fold_stats(Y_train_cv, "train", config),
+            **calculate_fold_stats(y_val_cv, "val", config)
+        }
 
-    # Récupération des colonnes à PCA et des colonnes hors PCA
-    high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
-    colomnsList_with_vif_stat_without_pca_ = other_params['colomnsList_with_vif_stat_without_pca_']
-
-    # Vérification de la cohérence des listes de colonnes
-    # --------------------------------------------------------------------------
-    # S'assurer que l’union des colonnes hors PCA + colonnes PCA
-    # couvre toutes les colonnes de X_train_cv (pas de manque, pas de doublon).
-    all_train_cols = set(X_train_cv.columns)
-    declared_cols = set(high_corr_columns_used4pca).union(colomnsList_with_vif_stat_without_pca_)
-    if all_train_cols != declared_cols:
-        raise ValueError(
-            "❌ Les colonnes déclarées (PCA + hors PCA) ne correspondent pas exactement "
-            "aux colonnes de X_train_cv. Vérifier la config."
+        # 4️⃣ Entraînement & évaluation
+        fold_results = train_and_evaluate_xgb_model(
+            X_train_cv=X_train_cv,
+            X_val_cv=X_val_cv,
+            Y_train_cv=Y_train_cv,
+            y_val_cv=y_val_cv,
+            y_pnl_data_train_cv=y_pnl_data_train_cv,
+            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
+            params_optuna=params_optuna,
+            other_params=other_params,
+            config=config,
+            fold_num=fold_num,
+            fold_stats_current=fold_stats_current,
+            train_pos=train_pos,
+            val_pos=val_pos,
+            log_evaluation=log_evaluation,
         )
-    # --------------------------------------------------------------------------
 
-    # 2️⃣ Application du scaler (si défini)
-    # On va scaler à minima toutes les colonnes qui seront utilisées par le modèle,
-    # donc l’union des colonnes hors PCA + colonnes PCA.
-    chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
-    scaler = None
-    if chosen_scaler != scalerChoice.SCALER_DISABLE:
-        print(f"\n⚙️  Scaler activé : {chosen_scaler}")
-        # Applique le scaling sur toutes les features
-        X_train_cv, X_val_cv, scaler, scaler_params = apply_scaling(
-            X_train_cv,
-            X_val_cv,
-            save_path=None,        # Ex: si on veut sauver le scaler sur disque
-            chosen_scaler=chosen_scaler
-        )
-    else:
-        print("\n⏭️  Scaler désactivé (SCALER_DISABLE)")
+        if (val_pos is None or train_pos is None): #pas de cv on travail sur un df entier
+            fold_results["x_train_vifStatPCA_trainFinal_noCV"]=X_train_cv
+            fold_results["scaler"]=scaler
+            fold_results["pca_model"]=pca_model
 
-    # 3️⃣ Application de la PCA (si des colonnes sont spécifiées)
-    # On n’applique la PCA *que* sur les colonnes high_corr_columns_used4pca,
-    # déjà scalées. Ensuite, on remplace ces colonnes par les composantes PCA.
-    if high_corr_columns_used4pca:
-        # Nombre de composantes PCA à conserver
-        nb_pca = config.get('nb_pca', 1)  # défaut : 1 composante
-        from sklearn.decomposition import PCA
-        pca_model = PCA(n_components=nb_pca)
+        return fold_results
 
-        # Fit la PCA sur le train (colonnes ciblées)
-        pca_model.fit(X_train_cv[high_corr_columns_used4pca])
-
-        # Transforme train
-        pca_train = pca_model.transform(X_train_cv[high_corr_columns_used4pca])
-        # Transforme val
-        pca_val = pca_model.transform(X_val_cv[high_corr_columns_used4pca])
-
-        # Construction des noms de colonnes (pca_1, pca_2, etc.)
-        pca_cols = [f'pca_{i+1}' for i in range(nb_pca)]
-
-        # Insertion des nouvelles colonnes PCA dans X_train_cv / X_val_cv
-        for i, col_name in enumerate(pca_cols):
-            X_train_cv[col_name] = pca_train[:, i]
-            X_val_cv[col_name]   = pca_val[:, i]
-
-        # Suppression des colonnes d’origine à forte corrélation
-        X_train_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
-        X_val_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
-
-    else:
-        print("\n⏭️  Aucune colonne spécifiée pour la PCA (high_corr_columns_used4pca est vide)")
-
-
-
-
-    # 4️⃣ Retour des données prêtes pour le modèle
-    return (
-        X_train_cv,        # DataFrame final (scaled + PCA) pour le train
-        X_train_cv_pd,     # (optionnel) version pd "brute" si besoin
-        Y_train_cv,
-        X_val_cv,          # DataFrame final (scaled + PCA) pour la validation
-        X_val_cv_pd,       # (optionnel) version pd "brute" si besoin
-        y_val_cv,
-        y_pnl_data_train_cv,
-        y_pnl_data_val_cv
-    )
-
-
-
-def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
-                             data=None, other_params=None,
-                             is_log_enabled=False, config=None,nb_split_tscv=0):
+    except Exception as e:
+        print("\n❌ Erreur dans process_cv_fold_xgboost :")
+        print(f"Type: {type(e).__name__}")
+        print(f"Message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+def process_cv_fold_lightgbm(fold_num=0, train_pos=None, val_pos=None, params_optuna=None,
+                             data_4cv=None, other_params=None,
+                             is_log_enabled=False, config=None, nb_split_tscv=0):
     """
     Process a cross-validation fold for LightGBM training and evaluation.
     This version delegates training and evaluation steps to train_and_evaluate_lightgbm_model,
     which returns the full set of metrics and debug_info.
     """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, \
-            X_val_cv, X_val_cv_pd, y_val_cv, \
-            y_pnl_data_train_cv, y_pnl_data_val_cv = apply_scalingAndOrPCA(other_params,config, data, train_pos, val_pos)
+
+        # 1Split des données train/val
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+
+        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
 
         # Juste les noms de colonnes
         print("\n===== DÉMARRAGE DE LA FONCTION : train_and_evaluate_lightgbm_model =====")
@@ -5521,8 +5738,8 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
 
         # Calculate initial fold statistics
         fold_stats_current = {
-            **calculate_fold_stats(Y_train_cv, "train",config),
-            **calculate_fold_stats(y_val_cv, "val",config)
+            **calculate_fold_stats(Y_train_cv, "train", config),
+            **calculate_fold_stats(y_val_cv, "val", config)
         }
 
         fold_results = train_and_evaluate_lightgbm_model(
@@ -5532,11 +5749,10 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
             y_val_cv=y_val_cv,
             y_pnl_data_train_cv=y_pnl_data_train_cv,
             y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
-            params=params,
+            params_optuna=params_optuna,
             other_params=other_params,
             config=config,
             fold_num=fold_num,
-            fold_raw_data=fold_raw_data,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
@@ -5553,20 +5769,20 @@ def process_cv_fold_lightgbm(df_init_candles=None, X_train_full=None, fold_num=0
         print(f"Message: {str(e)}")
         raise
 
-
-
-def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
-                             data=None, other_params=None,
-                             is_log_enabled=False, config=None,nb_split_tscv=0):
+def process_cv_fold_randomforest_model(fold_num=0, train_pos=None, val_pos=None, params_optuna=None,
+                                       data_4cv=None, other_params=None,
+                                       is_log_enabled=False, config=None, nb_split_tscv=0,log_evaluation=0):
     """
        Process a cross-validation fold for random forest training and evaluation.
        This version delegates training and evaluation steps to train_and_evaluate_randomforest_model,
        which returns the full set of metrics and debug_info.
        """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, \
-            X_val_cv, X_val_cv_pd, y_val_cv, \
-            y_pnl_data_train_cv, y_pnl_data_val_cv = apply_scalingAndOrPCA(other_params,config, data, train_pos, val_pos)
+        # 1Split des données train/val
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+
+        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -5581,11 +5797,10 @@ def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, 
             y_val_cv=y_val_cv,
             y_pnl_data_train_cv=y_pnl_data_train_cv,
             y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
-            params=params,
+            params_optuna=params_optuna,
             other_params=other_params,
             config=config,
             fold_num=fold_num,
-            fold_raw_data=fold_raw_data,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
@@ -5600,67 +5815,22 @@ def process_cv_fold_randomforest_model(df_init_candles=None, X_train_full=None, 
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
         raise
-def process_cv_fold_xgboost(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,train_pos=None, val_pos=None, params=None,
-                          data=None, other_params=None,
-                          is_log_enabled=False, config=None, nb_split_tscv=0):
-    """
-    Process a cross-validation fold for XGBoost training and evaluation.
-    This version delegates training and evaluation steps to train_and_evaluate_xgb_model,
-    which returns the full set of metrics and debug_info.
-    """
-    try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, \
-            X_val_cv, X_val_cv_pd, y_val_cv, \
-            y_pnl_data_train_cv, y_pnl_data_val_cv = apply_scalingAndOrPCA(other_params,config, data, train_pos, val_pos)
 
-        # Calculate initial fold statistics
-        fold_stats_current = {
-            **calculate_fold_stats(Y_train_cv, "train", config),
-            **calculate_fold_stats(y_val_cv, "val", config)
-        }
-
-        fold_results = train_and_evaluate_xgb_model(
-            X_train_cv=X_train_cv,
-            X_val_cv=X_val_cv,
-            Y_train_cv=Y_train_cv,
-            y_val_cv=y_val_cv,
-            y_pnl_data_train_cv=y_pnl_data_train_cv,
-            y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
-            params=params,
-            other_params=other_params,
-            config=config,
-            fold_num=fold_num,
-            fold_raw_data=fold_raw_data,
-            fold_stats_current=fold_stats_current,
-            train_pos=train_pos,
-            val_pos=val_pos,
-            log_evaluation=0 if not is_log_enabled else 10,
-        )
-
-        # Retourner le résultat tel quel
-        return fold_results
-
-    except Exception as e:
-        print(f"\nErreur dans process_cv_fold xgboost:")
-        print(f"Type: {type(e).__name__}")
-        print(f"Message: {str(e)}")
-        traceback.print_exc()  # Affiche la trace complète de l'erreur
-        raise
-
-
-def process_cv_fold_svc_model(df_init_candles=None, X_train_full=None, fold_num=0, fold_raw_data=None,
-                             train_pos=None, val_pos=None, params=None,
-                             data=None, other_params=None,
-                             is_log_enabled=False, config=None, nb_split_tscv=0):
+def process_cv_fold_svc_model(fold_num=0,
+                              train_pos=None, val_pos=None, params_optuna=None,
+                              data_4cv=None, other_params=None,
+                              is_log_enabled=False, config=None, nb_split_tscv=0):
     """
     Process a cross-validation fold for SVC (Support Vector Classifier) training and evaluation.
     This version delegates training and evaluation steps to train_and_evaluate_svc_model,
     which returns the full set of metrics and debug_info.
     """
     try:
-        X_train_cv, X_train_cv_pd, Y_train_cv, \
-            X_val_cv, X_val_cv_pd, y_val_cv, \
-            y_pnl_data_train_cv, y_pnl_data_val_cv = apply_scalingAndOrPCA(other_params,config, data, train_pos, val_pos)
+        # 1Split des données train/val
+        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
+            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+
+        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
 
         # Calculate initial fold statistics
         fold_stats_current = {
@@ -5675,11 +5845,9 @@ def process_cv_fold_svc_model(df_init_candles=None, X_train_full=None, fold_num=
             y_val_cv=y_val_cv,
             y_pnl_data_train_cv=y_pnl_data_train_cv,
             y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv,
-            params=params,
-            other_params=other_params,
+            params_optuna=params_optuna,
             config=config,
             fold_num=fold_num,
-            fold_raw_data=fold_raw_data,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
@@ -5708,7 +5876,7 @@ def validate_inputs(X_train, y_train_label):
     print(f"Index y_train_label: {y_train_label.index.min()} à {y_train_label.index.max()}")
 
 
-def initialize_arrays(nb_split_tscv, config,len):
+def initialize_arrays(nb_split_tscv, config, len):
     """
     Initialise les tableaux nécessaires pour stocker les métriques
     de la cross-validation, en GPU ou CPU suivant config['device_'].
@@ -5734,26 +5902,26 @@ def initialize_arrays(nb_split_tscv, config,len):
     # Création des tableaux de zéros
     return {
         # Validation
-        'winrates_val':     xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'nb_trades_val':    xp.zeros(nb_split_tscv, dtype=int_dtype),
-        'nb_samples_val':   xp.zeros(nb_split_tscv, dtype=int_dtype),
-        'tp_val':           xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'fp_val':           xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'scores_val':       xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'class0_raw_data_val_by_fold':       xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'winrates_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'nb_trades_val': xp.zeros(nb_split_tscv, dtype=int_dtype),
+        'nb_samples_val': xp.zeros(nb_split_tscv, dtype=int_dtype),
+        'tp_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'fp_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'scores_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'class0_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'class1_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'winrate_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'val_pred_proba_log_odds': [None] * nb_split_tscv,
         'val_trades_samples_perct': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'val_bestVal_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
 
-            # Entraînement
-        'winrates_train':   xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'nb_trades_train':  xp.zeros(nb_split_tscv, dtype=int_dtype),
+        # Entraînement
+        'winrates_train': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'nb_trades_train': xp.zeros(nb_split_tscv, dtype=int_dtype),
         'nb_samples_train': xp.zeros(nb_split_tscv, dtype=int_dtype),
-        'tp_train':         xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'fp_train':         xp.zeros(nb_split_tscv, dtype=xp.float32),
-        'scores_train':     xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'tp_train': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'fp_train': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'scores_train': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'class0_raw_data_train_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'class1_raw_data_train_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'winrate_raw_data_train_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
@@ -5764,7 +5932,6 @@ def initialize_arrays(nb_split_tscv, config,len):
         'perctDiff_winrateRatio_train_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'perctDiff_ratioTradeSample_train_val': xp.zeros(nb_split_tscv, dtype=xp.float32)
     }
-
 
 
 def initialize_metrics_dict(nb_folds, config):
@@ -5803,7 +5970,6 @@ def initialize_metrics_dict(nb_folds, config):
         'total_tn_val': xp.array(0, dtype=xp.float32),
         'total_fn_val': xp.array(0, dtype=xp.float32),
 
-
         # Totaux entraînement
         'total_tp_train': xp.array(0, dtype=xp.float32),
         'total_fp_train': xp.array(0, dtype=xp.float32),
@@ -5837,18 +6003,17 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
             val_tn = xp.asarray(eval_metrics['tn'], dtype=xp.float32)
             val_fn = xp.asarray(eval_metrics['fn'], dtype=xp.float32)
 
-
-            #metrics_dict['tp_val_by_fold'][fold_idx] = val_tp
-            #metrics_dict['fp_val_by_fold'][fold_idx] = val_fp
-            #metrics_dict['tn_val_by_fold'][fold_idx] = val_tn
-            #metrics_dict['fn_val_by_fold'][fold_idx] = val_fn
+            # metrics_dict['tp_val_by_fold'][fold_idx] = val_tp
+            # metrics_dict['fp_val_by_fold'][fold_idx] = val_fp
+            # metrics_dict['tn_val_by_fold'][fold_idx] = val_tn
+            # metrics_dict['fn_val_by_fold'][fold_idx] = val_fn
 
             total_trades = val_tp + val_fp
             winrate = compute_winrate_safe(val_tp, total_trades, config)
 
-            #metrics_dict['winrates_val_by_fold'][fold_idx] = winrate
-            #metrics_dict['nb_trades_val_by_fold'][fold_idx] = total_trades
-            #metrics_dict['nb_samples_val_by_fold'][fold_idx] = total_trades+val_tn+val_fn
+            # metrics_dict['winrates_val_by_fold'][fold_idx] = winrate
+            # metrics_dict['nb_trades_val_by_fold'][fold_idx] = total_trades
+            # metrics_dict['nb_samples_val_by_fold'][fold_idx] = total_trades+val_tn+val_fn
 
             metrics_dict['total_tp_val'] += val_tp
             metrics_dict['total_fp_val'] += val_fp
@@ -5866,10 +6031,10 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
             train_tn = xp.asarray(train_metrics['tn'], dtype=xp.float32)
             train_fn = xp.asarray(train_metrics['fn'], dtype=xp.float32)
 
-            #metrics_dict['tp_train_by_fold'][fold_idx] = train_tp
-            #metrics_dict['fp_train_by_fold'][fold_idx] = train_fp
-            #metrics_dict['tn_train_by_fold'][fold_idx] = train_tn
-            #metrics_dict['fn_train_by_fold'][fold_idx] = train_fn
+            # metrics_dict['tp_train_by_fold'][fold_idx] = train_tp
+            # metrics_dict['fp_train_by_fold'][fold_idx] = train_fp
+            # metrics_dict['tn_train_by_fold'][fold_idx] = train_tn
+            # metrics_dict['fn_train_by_fold'][fold_idx] = train_fn
 
             metrics_dict['total_tp_train'] += train_tp
             metrics_dict['total_fp_train'] += train_fp
@@ -5887,10 +6052,9 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
         raise
 
 
-
 def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range, selected_columns,
-                        results_directory, config,bestResult_dict):
-    best_trial_with_2_obj=best_trial.number + 1
+                        results_directory, config, bestResult_dict):
+    best_trial_with_2_obj = best_trial.number + 1
     # Récupération des valeurs depuis trial.user_attrs
     total_tp_val = trial.user_attrs['total_tp_val']
     total_fp_val = trial.user_attrs['total_fp_val']
@@ -5916,19 +6080,18 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
     selected_feature_names = trial.user_attrs['selected_feature_names']
     rfe_param_value = trial.user_attrs['use_of_rfe_in_optuna']
 
-
     trial.set_user_attr('win_rate', win_rate)
     weight_split = trial.user_attrs['weight_split']
     nb_split_weight = trial.user_attrs['nb_split_weight']
     pnl_norm_objective = trial.user_attrs['pnl_norm_objective']
-    #ecart_train_val = trial.user_attrs['ecart_train_val']
-    #print(f"   ##Essai actuel: ")
-    #print(
+    # ecart_train_val = trial.user_attrs['ecart_train_val']
+    # print(f"   ##Essai actuel: ")
+    # print(
     #   f"    =>Objective 1, pnl_norm_objective : {pnl_norm_objective} avec weight_split {weight_split} nb_split_weight {nb_split_weight}")
 
-    #print(
+    # print(
     #   f"     -score_adjustedStd_val : {score_adjustedStd_val:.2f} avec Moyenne des pnl des {nb_split_tscv} iterations : {mean_cv_score:.2f}, std_dev_score : {std_dev_score}, std_penalty_factor={std_penalty_factor}")
-    #print(f"    =>Objective 2, pnl per trade: train {train_pnl_perTrades} // Val {val_pnl_perTrades} "
+    # print(f"    =>Objective 2, pnl per trade: train {train_pnl_perTrades} // Val {val_pnl_perTrades} "
     #     f"donc diff val-train PNL per trade {pnl_perTrade_diff}\n"
     #     f"     ecart_train_val:{ecart_train_val}")
 
@@ -6020,7 +6183,8 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
                     except Exception as copy_error:
                         print(f"Échec de la copie de secours: {str(copy_error)}")
                         return False
-    def save_lightgbm_model(best_trial,model, save_dir):
+
+    def save_lightgbm_model(best_trial, model, save_dir):
         """
         Sauvegarde un modèle LightGBM dans un fichier.
         Si le fichier final_model.json existe déjà, il est supprimé avant d'être recréé.
@@ -6029,7 +6193,7 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
         :param save_dir: Répertoire de sauvegarde.
         :return: Chemin complet du fichier sauvegardé.
         """
-        best_trial_number=best_trial.number + 1
+        best_trial_number = best_trial.number + 1
         # Créer le répertoire si nécessaire
         os.makedirs(save_dir, exist_ok=True)
 
@@ -6054,6 +6218,7 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
             raise
 
         return model_file_path
+
     def save_trial_results(trial, result_dict_trialOptuna, config=None,
                            modele_param_optuna_range=None, weight_param=None, selected_columns=None,
                            save_dir="optuna_results",
@@ -6164,24 +6329,25 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
         result_file="optuna_results.json"
     )
 
-    #best_modellastFold_string =bestResult_dict['best_modellastFold_string']
-    #best_modellastFold_params =bestResult_dict['best_modellastFold_params']
+    # best_modellastFold_string =bestResult_dict['best_modellastFold_string']
+    # best_modellastFold_params =bestResult_dict['best_modellastFold_params']
 
     # Recharger le modèle
     import lightgbm as lgb
-    #best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+    # best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
 
     # Assigner les paramètres récupérés au modèle
-    #if best_modellastFold_params:
-     #   best_modellastFold.params.update(best_modellastFold_params)
+    # if best_modellastFold_params:
+    #   best_modellastFold.params.update(best_modellastFold_params)
 
     # Vérification
     # print("report_trial_optuna best_modellastFold]: ", best_modellastFold)
     # print("report_trial_optuna best_modellastFold.params: ", best_modellastFold.params)
 
-    #save_lightgbm_model(best_trial,best_modellastFold, save_dir)
+    # save_lightgbm_model(best_trial,best_modellastFold, save_dir)
 
     print(f"####{trial.number + 1}/{n_trials_optuna} Optuna results and model saved successfully.####")
+
 
 def validate_and_update_params(trial_params, other_params, params_optuna):
     """
@@ -6196,10 +6362,10 @@ def validate_and_update_params(trial_params, other_params, params_optuna):
     """
     from termcolor import colored
 
-    # Afficher les valeurs initiales
-    print("--- Avant mise à jour ---")
-    print("other_params:", other_params)
-    print("params_optuna:", params_optuna)
+    # # Afficher les valeurs initiales
+    # print("--- Avant mise à jour ---")
+    # print("other_params:", other_params)
+    # print("params_optuna:", params_optuna)
 
     updated_in_model_weight = []
     updated_in_params_optuna = []
@@ -6333,7 +6499,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
             if previous_best_trial_number != best_trial.number:
                 print(f"Le meilleur essai a changé !")
                 print(f"Ancien : {previous_best_trial_number}, Nouveau : {best_trial.number}")
-                is_newBestTrial=True
+                is_newBestTrial = True
                 # Mettre à jour l'attribut utilisateur
                 study.set_user_attr("previous_best_trial_number", best_trial.number)
 
@@ -6346,48 +6512,46 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
             else:
                 raise e
 
-
     other_params = best_trial.user_attrs.get('other_params', None)
     params_optuna = best_trial.user_attrs.get('params_optuna', None)
 
     validate_and_update_params(best_trial.params, other_params, params_optuna)
-    print("other_params", other_params)
-    print("params_optuna", params_optuna)
+    # print("other_params", other_params)
+    # print("params_optuna", params_optuna)
     # Create the result dictionary
 
-
     # Récupérer le modèle sauvegardé
-    #best_modellastFold_string = trial.user_attrs.get('model_lastFold_string', None)
-    #best_modellastFold_params = trial.user_attrs.get('model_lastFold_params', None)
+    # best_modellastFold_string = trial.user_attrs.get('model_lastFold_string', None)
+    # best_modellastFold_params = trial.user_attrs.get('model_lastFold_params', None)
 
     # Recharger le modèle
     import lightgbm as lgb
-    #best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
+    # best_modellastFold = lgb.Booster(model_str=best_modellastFold_string)
 
     # Assigner les paramètres récupérés au modèle
     # if best_modellastFold_params:
     #   best_modellastFold.params.update(best_modellastFold_params)
 
     # Vérification
-    #print("in callback_optuna best_model best_modellastFold]: ", best_modellastFold)
-    #print("in callback_optuna best_model best_modellastFold.params: ", best_modellastFold.params)
-
+    # print("in callback_optuna best_model best_modellastFold]: ", best_modellastFold)
+    # print("in callback_optuna best_model best_modellastFold.params: ", best_modellastFold.params)
 
     bestResult_dict = {
         #   "best_modellastFold_string":best_modellastFold_string,
-        #"best_modellastFold_params": best_modellastFold_params,
-        "params_optuna":params_optuna,
-        "other_params":other_params,
+        # "best_modellastFold_params": best_modellastFold_params,
+        "params_optuna": params_optuna,
+        "other_params": other_params,
         "best_optunaTrial_number": best_trial.number + 1,
         "best_pnl_val": best_trial.user_attrs.get('best_pnl_val', None),
         "best_pnl_perTrade_diff": best_trial.user_attrs.get('pnl_perTrade_diff', None),
         "best_params": best_trial.params,
         'selected_feature_names': best_trial.user_attrs.get('selected_feature_names', None),
         'use_of_rfe_in_optuna': best_trial.user_attrs.get('use_of_rfe_in_optuna', None),
-        'perctDiff_winrateRatio_train_val':best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None),
-        'ecart_train_val': best_trial.user_attrs.get('ecart_train_val', None), # for pareto analysis. We compute a specific metric including trade ratio for weithing the impact
+        'perctDiff_winrateRatio_train_val': best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None),
+        'ecart_train_val': best_trial.user_attrs.get('ecart_train_val', None),
+        # for pareto analysis. We compute a specific metric including trade ratio for weithing the impact
         'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None
-       # 'ecart_train_val': best_trial.values[1] if len(best_trial.values) > 1 else None
+        # 'ecart_train_val': best_trial.values[1] if len(best_trial.values) > 1 else None
     }
     study.set_user_attr('bestResult_dict', bestResult_dict)
     if bestResult_dict["perctDiff_winrateRatio_train_val"] is None:
@@ -6397,7 +6561,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
 
     nb_trades_val_by_fold_ = best_trial.user_attrs.get('nb_trades_val_by_fold', None)
     nb_samples_val_by_fold_ = best_trial.user_attrs.get('nb_samples_val_by_fold', None)
-    scores_ens_val_list_=best_trial.user_attrs.get('scores_ens_val_list', None)
+    scores_ens_val_list_ = best_trial.user_attrs.get('scores_ens_val_list', None)
     scores_ens_val_list_formatted_ = [f"{x:.2f}" for x in scores_ens_val_list_] if scores_ens_val_list_ else None
 
     # Ajout pour l'entraînement
@@ -6452,7 +6616,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     # Récupération des données pour val
     winrate_val_list = best_trial.user_attrs.get('winrate_raw_data_val_by_fold', None)
     winrate_val_list_formatted = [f"{x:.2f}" for x in winrate_val_list] if winrate_val_list else None
-    raw_metrics_byFold=best_trial.user_attrs.get('raw_metrics_byFold', None),
+    raw_metrics_byFold = best_trial.user_attrs.get('raw_metrics_byFold', None),
     if raw_metrics_byFold is None:
         raise ValueError("raw_metrics_byFold is None")
 
@@ -6479,9 +6643,8 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
 
         'winrate_raw_data_val_by_fold': best_trial.user_attrs.get('winrate_raw_data_val_by_fold', None),
         'ratio_raw_class_1_0_val ': ratio_raw_class_1_0_val,
-        'winrate_val_list_formatted':  winrate_val_list_formatted,
+        'winrate_val_list_formatted': winrate_val_list_formatted,
         'val_pred_proba_log_odds': best_trial.user_attrs.get('val_pred_proba_log_odds', None),
-
 
         # Training metrics
         'total_tp_train': best_trial.user_attrs.get('total_tp_train', None),  # Ajouté pour l'entraînement
@@ -6498,12 +6661,12 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         'nb_samples_train_by_fold': nb_samples_train_by_fold_,  # Ajouté pour l'entraînement
         'train_trades_samples_perct': best_trial.user_attrs.get('train_trades_samples_perct', None),
         'scores_ens_train_list_formatted': scores_ens_train_list_formatted_,
-        'winrates_train_by_fold' : best_trial.user_attrs.get('winrates_train_by_fold', None),
+        'winrates_train_by_fold': best_trial.user_attrs.get('winrates_train_by_fold', None),
 
-        'class0_raw_data_train_by_fold':best_trial.user_attrs.get('class0_raw_data_train_by_fold', None),
+        'class0_raw_data_train_by_fold': best_trial.user_attrs.get('class0_raw_data_train_by_fold', None),
         'class1_raw_data_train_by_fold': best_trial.user_attrs.get('class1_raw_data_train_by_fold', None),
         'ratio_raw_class_1_0_train': ratio_raw_class_1_0_train,
-        'winrate_train_list_formatted':winrate_train_list_formatted,
+        'winrate_train_list_formatted': winrate_train_list_formatted,
         'train_pred_proba_log_odds': best_trial.user_attrs.get('train_pred_proba_log_odds', None),
 
         # Other
@@ -6512,22 +6675,17 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         'perctDiff_ratioTradeSample_train_val': best_trial.user_attrs.get('perctDiff_ratioTradeSample_train_val', None)
 
     }
-    #scores_ens_val_list_formatted = [f"{x:.2f}" for x in metrics['scores_ens_val_list']]
+    # scores_ens_val_list_formatted = [f"{x:.2f}" for x in metrics['scores_ens_val_list']]
     # Vérification des valeurs None
     keys_with_none = [key for key, value in metrics.items() if value is None]
 
     if keys_with_none:
         raise ValueError(f"Les clés suivantes ont une valeur 'None' : {keys_with_none}")
 
-
-
-
     # Calcul des métriques
     selected_feature_names = best_trial.user_attrs.get('selected_feature_names', None)
     # Rapport
     modele_param_optuna_range = get_model_param_range(config['model_type'])
-
-
 
     method_names_pareto = {
         optuna_doubleMetrics.DISABLE: "DISABLE",
@@ -6553,7 +6711,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     # Vérification que les deux listes ne sont pas None et ont le même nombre de folds
     if train_pred_proba_log_odds is not None and val_pred_proba_log_odds is not None:
         if len(train_pred_proba_log_odds) == len(val_pred_proba_log_odds):
-            #print(f"Nombre de folds: {len(train_pred_proba_log_odds)}")
+            # print(f"Nombre de folds: {len(train_pred_proba_log_odds)}")
 
             # Initialiser des listes pour stocker les minima et maxima de chaque fold pour train et val
             train_min_values = []
@@ -6604,11 +6762,11 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
           f"Methode=> Optuna: '{method_name_pareto} | CV: '{method_name_cv} |  Objective loss Fct : {config.get('custom_objective_lossFct', None)} | \n"
           f"use_imbalance_penalty: {'Activé' if use_imbalance_penalty else 'Désactivé'}' |"
           f"scaler_choice: {config.get('scaler_choice', 0)} | model:{config.get('model_type', 0)} |"
-          f"auto_filtering_mode: { config.get('auto_filtering_mode', 0)} ##{Style.RESET_ALL}")
+          f"auto_filtering_mode: {config.get('auto_filtering_mode', 0)} ##{Style.RESET_ALL}")
     if config['use_optuna_constraints_func'] == True:
 
-        #nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
-        #winrates_val_by_fold = trial.user_attrs.get('winrates_val_by_fold', None)
+        # nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
+        # winrates_val_by_fold = trial.user_attrs.get('winrates_val_by_fold', None)
         contraints_list = calculate_constraints_optuna(trial=trial, config=config)
         # constraints_reached_check = all(c == 0 for c in contraints_list)
         # print("contraints_list: ",contraints_list)
@@ -6620,7 +6778,7 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
             print(Fore.GREEN + f"\u2713 All constraints respected:\n"
                                f"    - ratioWinrate_train_val <= {config['config_constraint_ratioWinrate_train_val']} (max: {max(best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', []))}) - {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)})\n"
                                f"    - min_trades >= {config['config_constraint_min_trades_threshold_by_Fold']} (min: {min(best_trial.user_attrs.get('nb_trades_val_by_fold', []))}) - {best_trial.user_attrs.get('nb_trades_val_by_fold', None)})\n"
-                               f"    - winrate >= {config['config_constraint_winrates_val_by_fold']} (min: {min(best_trial.user_attrs.get('winrates_val_by_fold', []))}) - {best_trial.user_attrs.get('winrates_val_by_fold', None)})\n"+ Style.RESET_ALL)
+                               f"    - winrate >= {config['config_constraint_winrates_val_by_fold']} (min: {min(best_trial.user_attrs.get('winrates_val_by_fold', []))}) - {best_trial.user_attrs.get('winrates_val_by_fold', None)})\n" + Style.RESET_ALL)
 
         else:
             print(Fore.RED + "\u2717 Some constraints not respected:" + Style.RESET_ALL)
@@ -6658,8 +6816,8 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
                 "winrates_val_by_fold",
                 check_type='min'
             ))
-    #print(f" perctDiff_winrateRatio_train_val: {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)}")
-    #print(f" perctDiff_ratioTradeSample_train_val: {best_trial.user_attrs.get('perctDiff_ratioTradeSample_train_val', None)}")
+    # print(f" perctDiff_winrateRatio_train_val: {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)}")
+    # print(f" perctDiff_ratioTradeSample_train_val: {best_trial.user_attrs.get('perctDiff_ratioTradeSample_train_val', None)}")
 
     print(f"    =>Objective 1: pnl_norm_objective -> {bestResult_dict['pnl_norm_objective']:.4f} "
           f"avec weight_split: {metrics['weight_split']} nb_split_weight {metrics['nb_split_weight']}")
@@ -6676,11 +6834,11 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     print(f"     -NB Class0 train                : {metrics['class0_raw_data_train_by_fold']}")
     print(f"     -NB Class1 train                : {metrics['class1_raw_data_train_by_fold']}")
     print(f"     -% Winrate initiale sur train   : {metrics['winrate_train_list_formatted']}")
-    #print(f"     -Ratio class 1/0  train        : {metrics['ratio_raw_class_1_0_train']}")
+    # print(f"     -Ratio class 1/0  train        : {metrics['ratio_raw_class_1_0_train']}")
     print(f"\n     -NB Class0 val                : {metrics['class0_raw_data_val_by_fold']}")
     print(f"     -NB Class1 val                  : {metrics['class1_raw_data_val_by_fold']}")
     print(f"     -% Winrate initiale sur val     : {metrics['winrate_val_list_formatted']}")
-   # print(f"     -Ratio class 1/0  val              : {metrics['ratio_raw_class_1_0_val']:.2f}%")
+    # print(f"     -Ratio class 1/0  val              : {metrics['ratio_raw_class_1_0_val']:.2f}%")
     metrics_list = raw_metrics_byFold[0]
     print(f" *Ensemble Train: ")
     print(f"     -Fold Start: {[metrics['train_metrics']['start_time_train'] for metrics in metrics_list]}")
@@ -6688,7 +6846,6 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     print(f"     -Slope     : {[metrics['train_metrics']['slope_cv_train'] for metrics in metrics_list]}")
     print(f"     -r2        : {[metrics['train_metrics']['r2_slope_cv_train'] for metrics in metrics_list]}")
     print(f"     -Counter Mv: {[metrics['train_metrics']['counter_moves_train'] for metrics in metrics_list]}")
-
 
     print(f"     -Train Log Odds Min: {train_min_values} => Probabilité: {train_prob_min}")
     print(f"     -Train Log Odds Max: {train_max_values} => Probabilité: {train_prob_max}")
@@ -6747,8 +6904,6 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         print(
             f"Vérification réussie: Somme des métriques = {metrics['scores_ens_val_list']}, cumulative_pnl_val = {metrics['scores_ens_val_list']}")
 
-
-
     # Calcul du pourcentage avec gestion de la division par 0
 
     print(
@@ -6756,16 +6911,15 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         f"dont {metrics['total_tp_train'] + metrics['total_fp_train']} trades pris")
     print(f"\n    =>Hyperparamètres du meilleur score trouvé à date: {bestResult_dict['best_params']}")
 
-    if is_newBestTrial==True:
+    if is_newBestTrial == True:
         report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range, selected_feature_names,
-                        results_directory, config,bestResult_dict)
+                            results_directory, config, bestResult_dict)
 
     study_optuna.set_user_attr('bestResult_dict', bestResult_dict)
 
     # Vérification de l'option use_pnl_theoric
-    #if metrics['cummulative_pnl_val'] > 8000 and contraints_reached:
+    # if metrics['cummulative_pnl_val'] > 8000 and contraints_reached:
     #    raise ValueError("INFO : cummulative_pnl_val > 12000")
-
 
 
 @njit
@@ -6880,37 +7034,6 @@ def calculate_naked_poc_distances(df: pd.DataFrame) -> tuple[pd.Series, pd.Serie
     return pd.Series(dist_above, index=df.index), pd.Series(dist_below, index=df.index)
 
 
-def calculate_vif(df):
-    """
-    Calcule le Variance Inflation Factor (VIF) pour chaque feature d'un DataFrame.
-    Utilisé comme première méthode de filtrage des features.
-
-    Args:
-        df (pd.DataFrame): DataFrame contenant uniquement les colonnes numériques à analyser
-
-    Returns:
-        pd.DataFrame: DataFrame contenant les features et leurs valeurs VIF correspondantes
-    """
-    df_numeric = df.select_dtypes(include=[np.number])
-
-    # Supprimer les colonnes constantes qui causeraient une division par zéro dans le calcul VIF
-    df_numeric = df_numeric.loc[:, df_numeric.apply(pd.Series.nunique) != 1]
-
-    vif_data = pd.DataFrame()
-    vif_data["Feature"] = df_numeric.columns
-
-    vif_values = []
-    for i in range(df_numeric.shape[1]):
-        try:
-            vif = variance_inflation_factor(df_numeric.values, i)
-        except (np.linalg.LinAlgError, ValueError):
-            vif = np.nan
-        vif_values.append(vif)
-
-    vif_data["VIF"] = vif_values
-    return vif_data
-
-
 import numpy as np
 import pandas as pd
 from numpy.linalg import LinAlgError
@@ -7019,32 +7142,65 @@ def compute_vif_fast(df, threshold):
     )
 
     # Nettoyage des valeurs manquantes dans l'historique des VIF
-    vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
-    for col in vif_columns:
+    vif_history_columns = [col for col in vif_full.columns if col.startswith('VIF')]
+    for col in vif_history_columns:
         vif_full[col] = vif_full[col].astype(object)
 
     for feature in vif_full['Feature']:
         feature_mask = vif_full['Feature'] == feature
-        for idx, col in enumerate(vif_columns):
+        for idx, col in enumerate(vif_history_columns):
             if pd.isna(vif_full.loc[feature_mask, col]).values[0]:
                 vif_full.loc[feature_mask, col] = 'n.a'
 
     # Réorganiser les colonnes pour un affichage cohérent
-    vif_columns_sorted = sorted(vif_columns, key=lambda x: int(x[3:]), reverse=True)
+    vif_columns_sorted = sorted(vif_history_columns, key=lambda x: int(x[3:]), reverse=True)
     vif_full = vif_full[['Feature'] + vif_columns_sorted + ['StatusVif']]
 
     # Appliquer un format scientifique aux colonnes VIF
-    vif_columns = [col for col in vif_full.columns if col.startswith('VIF')]
-    for col in vif_columns:
+    for col in vif_history_columns:
         vif_full[col] = vif_full[col].apply(
             lambda x: f"{x:.2e}" if isinstance(x, (int, float)) and not pd.isna(x) else x)
 
+    # Compter les features conservées et supprimées
+    features_conservees = sum(vif_full['StatusVif'] == 'Conservé')
+    features_supprimees = sum(vif_full['StatusVif'] == 'Non conservé')
+    total_features = features_conservees + features_supprimees
+
+    print(f"Nombre de features conservées: {features_conservees}")
+    print(f"Nombre de features supprimées: {features_supprimees}")
+    print(f"Nombre total de features analysées: {total_features}\n")
+
     return vif_full
 
+def calculate_vif(df):
+    """
+    Calcule le Variance Inflation Factor (VIF) pour chaque feature d'un DataFrame.
+    Utilisé comme première méthode de filtrage des features.
 
+    Args:
+        df (pd.DataFrame): DataFrame contenant uniquement les colonnes numériques à analyser
 
+    Returns:
+        pd.DataFrame: DataFrame contenant les features et leurs valeurs VIF correspondantes
+    """
+    df_numeric = df.select_dtypes(include=[np.number])
 
+    # Supprimer les colonnes constantes qui causeraient une division par zéro dans le calcul VIF
+    df_numeric = df_numeric.loc[:, df_numeric.apply(pd.Series.nunique) != 1]
 
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = df_numeric.columns
+
+    vif_values = []
+    for i in range(df_numeric.shape[1]):
+        try:
+            vif = variance_inflation_factor(df_numeric.values, i)
+        except (np.linalg.LinAlgError, ValueError):
+            vif = np.nan
+        vif_values.append(vif)
+
+    vif_data["VIF"] = vif_values
+    return vif_data
 
 
 def compute_vif_and_remove_multicollinearity(df, threshold):
@@ -7184,8 +7340,8 @@ def compute_and_keep_correled(merged_X_Y):
 
     return corr_df
 
-from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 ###############################################################################
 # Fonction mRMR - Minimum Redundancy Maximum Relevance
@@ -7194,6 +7350,7 @@ import numpy as np
 from sklearn.feature_selection import mutual_info_classif
 from tqdm import tqdm
 import time
+
 
 def compute_mRMR_filtering(X, Y, config):
     """
@@ -7383,12 +7540,12 @@ def compute_mRMR_filtering(X, Y, config):
     return selected, mrmr_scores
 
 
-
-
 ###############################################################################
 # Calcule les scores de Fisher (ANOVA F-Test)
 ###############################################################################
 from sklearn.feature_selection import f_classif
+
+
 def fisher_score_feature_selection(X: pd.DataFrame, Y: pd.Series, name: str, config: dict) -> pd.DataFrame:
     """
     Calcule les scores de Fisher (ANOVA F-Test) pour classer les features selon leur importance
@@ -7522,7 +7679,7 @@ def compute_vif_optimized(df, threshold):
     return pd.concat(vif_dfs, axis=1)
 
 
-def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_components=2,
+def apply_pca_on_scaledData_and_high_corr_features(X, feature_list, corr_threshold=0.6, n_components=2,
                                     plot_correlation=True, pca_prefix="diffPriceClosePoc_PCA_"):
     """
     Vérifie la présence des colonnes, identifie les variables fortement corrélées et applique la PCA.
@@ -7605,7 +7762,7 @@ def apply_pca_on_high_corr_features(X, feature_list, corr_threshold=0.6, n_compo
     # Optionnel : Supprimer les anciennes colonnes après la PCA
     X.drop(columns=high_corr_columns_used4pca, inplace=True)
 
-    return X, high_corr_columns_used4pca,pca  # Retourne X modifié
+    return X, high_corr_columns_used4pca, pca  # Retourne X modifié
 
 
 def calculate_statistical_power_job(X, y, feature_list=None,
@@ -7903,9 +8060,9 @@ def calculate_statistical_power_job(X, y, feature_list=None,
 # Fonction Gestion de la selection des features
 ###############################################################################
 def compute_display_statistic(X=None, Y=None, name="Dataset",
-                                         config=None,
-                                         compute_feature_stat=False,
-                                         is_compute_vif=False):
+                              config=None,
+                              compute_feature_stat=False,
+                              is_compute_vif=False):
     """
     Analyse complète des features d'un DataFrame avec options de filtrage.
 
@@ -7936,27 +8093,31 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         import seaborn as sns
         import matplotlib.pyplot as plt
         from sklearn.decomposition import PCA
-        if config['nb_pca']>0:
+        if config['nb_pca'] > 0:
             # Liste des colonnes à analyser pour la PCA
             pca_columns = [
-                'overlap_ratio_VA_11P_21P','poc_diff_11P_21P','poc_diff_ratio_6P_11P',
-                'poc_diff_6P_21P','poc_diff_ratio_11P_21P','poc_diff_6P_16P','ratio_delta_vol_VA11P','overlap_ratio_VA_6P_11P','poc_diff_6P_11P'
-              #  ,'ratio_vol_VolCont_ZoneA_xTicksContZone','ratio_vol_VolCont_ZoneB_xTicksContZone','ratio_vol_VolCont_ZoneC_xTicksContZone',
+                'overlap_ratio_VA_11P_21P', 'poc_diff_11P_21P', 'poc_diff_ratio_6P_11P',
+                'poc_diff_6P_21P', 'poc_diff_ratio_11P_21P', 'poc_diff_6P_16P', 'ratio_delta_vol_VA11P',
+                'overlap_ratio_VA_6P_11P', 'poc_diff_6P_11P'
+                #  ,'ratio_vol_VolCont_ZoneA_xTicksContZone','ratio_vol_VolCont_ZoneB_xTicksContZone','ratio_vol_VolCont_ZoneC_xTicksContZone',
                 #           'ratio_delta_VolCont_ZoneA_xTicksContZone','ratio_delta_VolCont_ZoneB_xTicksContZone','ratio_delta_VolCont_ZoneC_xTicksContZone',
             ]
             # pca_columns = list(X.columns)
-            #pca_columns=[]
+            # pca_columns=[]
             # Pour les mettre dans pca_columns
             if pca_columns:
                 pca_columns = pca_columns
-                X, high_corr_columns_used4pca,pca_object = apply_pca_on_high_corr_features(X, pca_columns, corr_threshold=0.75, n_components=2,
-                                                                plot_correlation=False, pca_prefix="pca_")
+                X, high_corr_columns_used4pca, pca_object = apply_pca_on_scaledData_and_high_corr_features(X, pca_columns,
+                                                                                            corr_threshold=0.75,
+                                                                                            n_components=2,
+                                                                                            plot_correlation=False,
+                                                                                            pca_prefix="pca_")
 
     # Chargement des paramètres
     vif_threshold = config.get('vif_threshold', 0)
     retained_only_vif = config.get('retained_only_vif', 0)
     method_powerAnaly = config.get('method_powerAnaly', 0)
-    n_simulations_monte=config.get('n_simulations_monte', 0)
+    n_simulations_monte = config.get('n_simulations_monte', 0)
     powAnaly_threshold = config.get('powAnaly_threshold', 0.8)
     corr_threshold = config.get('corr_threshold', 0)
     mi_threshold = config.get('mi_threshold', 0)
@@ -7981,7 +8142,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
     # print("Type de deltaTimestampOpeningSession1min:", type(X['deltaTimestampOpeningSession1min'].iloc[0]))
     # print("Min:", X['deltaTimestampOpeningSession1min'].min())
     # print("Max:", X['deltaTimestampOpeningSession1min'].max())
-
 
     # 1) Création du DataFrame d'analyse basique
     analysis_df = pd.DataFrame()
@@ -8032,10 +8192,10 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
                 retained_columns = vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'].tolist()
                 if retained_columns:
                     if retained_only_vif:
-                       X_afterVIF = X[retained_columns]
+                        X_afterVIF = X[retained_columns]
 
                     else:
-                        X_afterVIF = X#  permet d'afficher toutes ls valeurs meme les redonndantes
+                        X_afterVIF = X  # permet d'afficher toutes ls valeurs meme les redonndantes
                     X_afterVIF = X[retained_columns]
 
                 else:
@@ -8056,9 +8216,10 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
     # 3) Si compute_feature_stat=True, on calcule TOUTES les stats (Corr, MI, mRMR, Fisher)
     if compute_feature_stat:
         # 3.0) Analyse de puissance statistique
-        power_results = calculate_statistical_power_job(X_afterVIF, Y, target_power=powAnaly_threshold, n_simulations_monte=n_simulations_monte,
-                                                    sample_fraction=0.8, verbose=True,
-                                                    method_powerAnaly=method_powerAnaly)
+        power_results = calculate_statistical_power_job(X_afterVIF, Y, target_power=powAnaly_threshold,
+                                                        n_simulations_monte=n_simulations_monte,
+                                                        sample_fraction=0.8, verbose=True,
+                                                        method_powerAnaly=method_powerAnaly)
 
         # Sélectionner les colonnes à garder selon la méthode
         cols_to_keep = ['Feature']
@@ -8087,13 +8248,11 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
         # Afficher les colonnes 'Feature' et 'powStat' pour vérification
 
-
         # 3.1) Corrélation
         merged_dfVIF_target = pd.concat([X_afterVIF, Y], axis=1)
         merged_dfVIF_target.columns = list(X_afterVIF.columns) + ['target']
         corr_df = compute_and_keep_correled(merged_dfVIF_target)
         analysis_df = pd.merge(analysis_df, corr_df, on='Feature', how='left')
-
 
         # 3.2) Mutual Information (MI)
         if Y.nunique() <= 20 or Y.dtype == 'object' or Y.dtype == 'category' or np.issubdtype(Y.dtype, np.integer):
@@ -8119,13 +8278,13 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
         # On peut décider d'un 'Status' final → Par exemple, on conserve toutes les colonnes
         # ou bien on applique un filtrage selon un critère global.
-        #analysis_df['Status'] = True
+        # analysis_df['Status'] = True
         retained_columns = X_afterVIF.columns.tolist()
 
     else:
         # 4) Mode NO_FILTERING : aucun calcul
         print("✋ compute_feature_stat=False → Aucune statistique (CORR, MI, mRMR, Fisher) n'est calculée.")
-        #analysis_df['Status'] = True  # tout est "conservé"
+        # analysis_df['Status'] = True  # tout est "conservé"
         retained_columns = None
 
     ############################################################################
@@ -8139,7 +8298,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
     # Préparation des colonnes pour l'affichage
     if is_compute_vif:
         base_columns = ['Feature', 'Range_scaled']
-    else :
+    else:
         base_columns = ['Feature', 'Range']
 
     # if has_status:
@@ -8164,7 +8323,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         base_columns.append('is_stat')
 
     # On check s'il existe une colonne 'powStat'
-    power_column= []
+    power_column = []
     if 'powStat' in analysis_df.columns:
         power_column = ['powStat']
     # On check s'il existe des colonnes de corrélation
@@ -8197,7 +8356,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
     # Construction de la liste finale des colonnes à afficher - NOUVEL ORDRE
     # Nouvel ordre: Feature, (Status), Corr, MI, mRMR, Fisher, NaN+stats, VIF
-    analysis_df_columns = base_columns + power_column+correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols
+    analysis_df_columns = base_columns + power_column + correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols
 
     # Vérification pour éviter KeyError si certaines colonnes n'existent pas
     analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
@@ -8221,7 +8380,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         base_format.append("{:<6}")  # is_vif
         base_format.append("{:<6}")  # is_stat
 
-    #power_column
+    # power_column
     power_format = ["{:12}"] if power_column else []
 
     # Corrélation
@@ -8246,7 +8405,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
     full_format = (
             base_format
-            +power_format
+            + power_format
             + correlation_format
             + mi_format
             + mrmr_format
@@ -8275,13 +8434,14 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
     excluded_columns_CorrCol = config.get('excluded_columns_CorrCol', [])
     excluded_columns_category = config.get('excluded_columns_category', [])
 
-
     # 13) Créer la colonne `is_vif` : True si la feature est "Conservé" par VIF, False sinon
     # Création de la colonne is_vif indépendamment de StatusVif
     if is_compute_vif:
         # Alternative: se baser sur le résultat de vif_full directement
         conserved_features = set(vif_full[vif_full['StatusVif'] == 'Conservé']['Feature'].tolist())
-        print(conserved_features)
+        taille = len(conserved_features)
+        print(f"La taille de l'ensemble est : {taille}")
+        print("feature au statut VIF conservé: ",conserved_features)
         analysis_df['is_vif'] = analysis_df['Feature'].apply(lambda x: x in conserved_features)
 
     # S'assurer que is_vif est incluse dans l'affichage
@@ -8292,17 +8452,13 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             base_columns.append('is_vif')
             exit(78)
 
-
     # IMPORTANT: Inclure StatusVif avant de filtrer
-    #status_vif_col = ['StatusVif'] if 'StatusVif' in analysis_df.columns else []
-    analysis_df_columns = base_columns + power_column + correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols #+ status_vif_col
-
+    # status_vif_col = ['StatusVif'] if 'StatusVif' in analysis_df.columns else []
+    analysis_df_columns = base_columns + power_column + correlation_columns + mi_column + mrmr_col + fisher_cols + nan_columns + vif_cols  # + status_vif_col
 
     # Filtrer les colonnes UNE SEULE FOIS
     analysis_df_columns = [col for col in analysis_df_columns if col in analysis_df.columns]
     analysis_df = analysis_df[analysis_df_columns]
-
-
 
     # 14) Créer la colonne `is_stat` : True si la feature valide au moins un seuil statistique
     if (compute_feature_stat):
@@ -8324,7 +8480,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         indépendamment du statut VIF.
         """
 
-
         # Gardons une trace des tests effectués
         conditions_tested = []
 
@@ -8333,7 +8488,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             lr_val = abs(row["lr_target"])
             conditions_tested.append(f"lr_target={lr_val}, seuil={corr_threshold}, résultat={lr_val > corr_threshold}")
             if lr_val > corr_threshold:
-                #print(f"Condition passée: lr_target={lr_val} > {corr_threshold}")
+                # print(f"Condition passée: lr_target={lr_val} > {corr_threshold}")
                 return True
 
         if "nlr_target" in row and isinstance(row["nlr_target"], (int, float)):
@@ -8341,7 +8496,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             conditions_tested.append(
                 f"nlr_target={nlr_val}, seuil={corr_threshold}, résultat={nlr_val > corr_threshold}")
             if nlr_val > corr_threshold:
-                #print(f"Condition passée: nlr_target={nlr_val} > {corr_threshold}")
+                # print(f"Condition passée: nlr_target={nlr_val} > {corr_threshold}")
                 return True
 
         # mrmr_score
@@ -8349,7 +8504,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             mrmr_val = row["mrmr_score"]
             conditions_tested.append(f"mrmr_score={mrmr_val}, seuil={mrmr_thresh}, résultat={mrmr_val > mrmr_thresh}")
             if mrmr_val > mrmr_thresh:
-                #print(f"Condition passée: mrmr_score={mrmr_val} > {mrmr_thresh}")
+                # print(f"Condition passée: mrmr_score={mrmr_val} > {mrmr_thresh}")
                 return True
 
         # mi
@@ -8357,7 +8512,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             mi_val = row["mi"]
             conditions_tested.append(f"mi={mi_val}, seuil={mi_thresh}, résultat={mi_val > mi_thresh}")
             if mi_val > mi_thresh:
-                #print(f"Condition passée: mi={mi_val} > {mi_thresh}")
+                # print(f"Condition passée: mi={mi_val} > {mi_thresh}")
                 return True
 
         # Fisher_Score
@@ -8366,7 +8521,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             conditions_tested.append(
                 f"Fisher_Score={fisher_val}, seuil={fisher_thresh}, résultat={fisher_val > fisher_thresh}")
             if fisher_val > fisher_thresh:
-                #print(f"Condition passée: Fisher_Score={fisher_val} > {fisher_thresh}")
+                # print(f"Condition passée: Fisher_Score={fisher_val} > {fisher_thresh}")
                 return True
 
         # p-value
@@ -8374,17 +8529,18 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             pval = row["p-value"]
             conditions_tested.append(f"p-value={pval}, seuil={pval_thresh}, résultat={pval <= pval_thresh}")
             if pval <= pval_thresh:
-                #print(f"Condition passée: p-value={pval} <= {pval_thresh}")
+                # print(f"Condition passée: p-value={pval} <= {pval_thresh}")
                 return True
 
         # Si aucune condition n'est passée, affichons toutes les vérifications effectuées
-        #print(f"Aucune condition passée pour cette ligne. Tests effectués: {conditions_tested}")
-        #print(
+        # print(f"Aucune condition passée pour cette ligne. Tests effectués: {conditions_tested}")
+        # print(
         #    f"Valeurs de la ligne: {dict((k, v) for k, v in row.items() if k in ['lr_target', 'nlr_target', 'mrmr_score', 'mi', 'Fisher_Score', 'p-value'])}")
         return False
 
     if (compute_feature_stat):
         analysis_df["is_stat"] = analysis_df.apply(passes_stat_thresholds, axis=1)
+
     ############# fin de is_vif et is_stat #################
 
     ############# debut du tri par groupe #################
@@ -8465,7 +8621,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             output_values.append(row['Range_scaled'])
         else:
             output_values.append(row['Range'])
-
 
         output_colors.append('')
 
@@ -8551,7 +8706,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
                 output_values.append('n.a')
                 output_colors.append('')
 
-
         # 5) MI (Mutual Information)
         if 'mi' in analysis_df.columns:
             mi_val = row.get('mi', 'n.a')
@@ -8562,7 +8716,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             elif 'is_vif' in analysis_df.columns:
                 output_values.append('n.a')
                 output_colors.append('')
-
 
         # 6) mrmr_score
         if 'mrmr_score' in analysis_df.columns:
@@ -8576,7 +8729,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             elif 'is_vif' in analysis_df.columns:
                 output_values.append('n.a')
                 output_colors.append('')
-
 
         # ───────────────────────────────────────────────────────────
         # 7) Fisher columns : Fisher_Score et p-value
@@ -8662,7 +8814,6 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
             output_values.append('n.a')
             output_colors.append('')
 
-
         # 10) Couleur de ligne selon exclusions
         row_color = ''
         # # Si la feature est Status = False
@@ -8724,7 +8875,10 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
 
         # Extract the feature names from the DataFrame
         selected_features = df_feature_vifAndStat_selected['Feature'].tolist()
-        print(X[selected_features])
+
+        print(f"Features Vif, Stat avec PCA_ : \n X[selected_features]: \n {X[selected_features]} \nde longeur {len(X[selected_features])}")
+        global x_train_vifStatPCA_initDataSet_DEBUG_global
+        x_train_vifStatPCA_initDataSet_DEBUG_global=X[selected_features]
         # Retourner un dictionnaire contenant les colonnes retenues et les informations sur la PCA
 
         return {
@@ -8944,7 +9098,7 @@ def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
             json.dump(scaler_params, f, indent=4)
         print(f"\nParamètres sauvegardés dans: {full_path}")
 
-    return X_train_scaled, X_test_scaled, scaler, scaler_params
+    return X_train_scaled, X_test_scaled, scaler
 
 
 def save_features_with_sessions(df, custom_sections, file_path):
@@ -9061,59 +9215,6 @@ def load_features_and_sections(file_path):
     except Exception as e:
         print(f"Error: {e}")
         raise e
-
-
-def compare_dataframes_train_test(X_train, X_test):
-    """
-    Compare les colonnes entre X_train et X_test.
-
-    Parameters:
-    -----------
-    X_train : pandas.DataFrame
-        Training dataset déjà sélectionné
-    X_test : pandas.DataFrame
-        Test dataset déjà sélectionné
-
-    Returns:
-    --------
-    tuple
-        (bool, str) - (True si colonnes identiques, message avec détails)
-    """
-    try:
-        # Obtention des listes de colonnes
-        train_cols = list(X_train.columns)
-        test_cols = list(X_test.columns)
-
-        # Vérification de l'égalité des colonnes
-        columns_match = set(train_cols) == set(test_cols)
-
-        if columns_match:
-            # Si les colonnes sont identiques
-            message = f"Nombre de colonnes dans X_train et X_test = {len(train_cols)}\n"
-            message += "Colonnes : \n" + ", ".join(train_cols)
-        else:
-            # Si les colonnes sont différentes
-            message = f"Nombre de colonnes dans X_train = {len(train_cols)}\n"
-            message += f"Nombre de colonnes dans X_test = {len(test_cols)}\n"
-            message += "\nColonnes dans X_train : \n" + ", ".join(train_cols)
-            message += "\nColonnes dans X_test : \n" + ", ".join(test_cols)
-
-            # Détail des différences
-            train_only = set(train_cols) - set(test_cols)
-            test_only = set(test_cols) - set(train_cols)
-
-            if train_only:
-                message += f"\nColonnes uniquement dans X_train: {', '.join(train_only)}"
-            if test_only:
-                message += f"\nColonnes uniquement dans X_test: {', '.join(test_only)}"
-
-        print(message)
-        return columns_match, message
-
-    except Exception as e:
-        error_message = f"Erreur lors de la comparaison: {str(e)}"
-        print(error_message)
-        return False, error_message
 
 
 
@@ -9236,6 +9337,7 @@ class nonAnchore_dWalkForwardCV_afterPrevTrain(BaseCrossValidator):
 
             start += current_train_size
 
+
 class nonAnchore_dWalkForwardCV_afterPrevVal(BaseCrossValidator):
     """
     Validation croisée Non-Anchored Walk-Forward avec ratio stable.
@@ -9315,7 +9417,8 @@ def calculate_time_difference(start_date_str, end_date_str):
     return diff
 
 
-def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_method=None, nb_split_tscv=None, config=None):
+def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_method=None, nb_split_tscv=None,
+                    config=None):
     # D'abord, vérifier si la colonne existe dans df_init_features
     if 'timeStampOpening' not in df_init_features.columns:
         raise ValueError("La colonne 'timeStampOpening' est absente de df_init_features.")
@@ -9332,8 +9435,8 @@ def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_
         r = config.get('non_acnhored_val_ratio', 1)
 
         cv = nonAnchore_dWalkForwardCV_afterPrevTrain(
-        n_splits=nb_split_tscv,
-        val_ratio=r)
+            n_splits=nb_split_tscv,
+            val_ratio=r)
         return cv
     elif cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
         # Ensuite, appliquer la logique en fonction de cv_method
@@ -9378,6 +9481,7 @@ def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_
     else:
         raise ValueError(f"Unknown cv_method: {cv_method}")
 
+
 def check_variable(value, name):
     """
     Vérifie si une variable contient des valeurs invalides.
@@ -9399,21 +9503,14 @@ def check_variable(value, name):
             raise ValueError(f"La variable '{name}' est infinie: {value}")
         if value is None:
             raise ValueError(f"La variable '{name}' est None et doit être définie.")
+
+
 def calculate_constraints_optuna(trial=None, config=None, debug=False):
     """
-    Calcule les contraintes pour un modèle d'optimisation en utilisant trial et config,
-    avec gestion de CuPy ou NumPy selon la configuration. Affiche les contraintes si debug est activé.
-
-    Args:
-        trial: Instance Optuna trial pour récupérer les user_attrs.
-        config (dict): Configuration contenant les seuils de contraintes.
-        debug (bool): Si True, affiche les contraintes pour le débogage.
-
-    Returns:
-        list: Contraintes calculées, toujours retournées sous forme de liste de floats.
+    Calcule les contraintes pour un modèle d'optimisation en utilisant trial et config.
+    Si un seuil est 'inf', on n'ajoute pas la contrainte dans la liste (on ne la vérifie pas).
     """
-    # Déterminer si on utilise CuPy ou NumPy
-    use_cuda = config is not None and config.get('device_') == 'cuda'
+    use_cuda = (config is not None and config.get('device_') == 'cuda')
     if use_cuda:
         import cupy as cp
         xp = cp
@@ -9421,12 +9518,12 @@ def calculate_constraints_optuna(trial=None, config=None, debug=False):
         import numpy as np
         xp = np
 
-    # Récupération des valeurs depuis trial
+    # Récup. des attributs dans le trial
     perctDiff_winrateRatio_train_val = trial.user_attrs.get('perctDiff_winrateRatio_train_val', float('inf'))
     nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
     winrates_val_by_fold = trial.user_attrs.get('winrates_val_by_fold', None)
 
-    # Vérification des données récupérées
+    # Vérif
     def validate_variable(var, name):
         if var is None or (isinstance(var, (list, tuple)) and any(v is None or v == float('inf') for v in var)):
             raise ValueError(f"La variable '{name}' contient des valeurs invalides: {var}")
@@ -9435,51 +9532,60 @@ def calculate_constraints_optuna(trial=None, config=None, debug=False):
     validate_variable(nb_trades_val_by_fold_list, "nb_trades_val_by_fold_list")
     validate_variable(winrates_val_by_fold, "winrates_val_by_fold")
 
-    # Récupération des seuils depuis config
-    config_constraint_min_trades_threshold_by_Fold = config.get('config_constraint_min_trades_threshold_by_Fold', float('inf'))
-    config_constraint_ratioWinrate_train_val = config.get('config_constraint_ratioWinrate_train_val', float('inf'))
-    config_constraint_winrates_val_by_fold = config.get('config_constraint_winrates_val_by_fold', float('inf'))
+    # Récupération des seuils
+    cfg_ratio = config.get('config_constraint_ratioWinrate_train_val', float('inf'))
+    cfg_min_trades = config.get('config_constraint_min_trades_threshold_by_Fold', float('inf'))
+    cfg_min_winrates = config.get('config_constraint_winrates_val_by_fold', float('inf'))
+    cfg_max_std_trades = config.get('config_constraint_max_std_trades', float('inf'))
 
-    # Calcul des contraintes avec backend
-    # Ces calculs renvoient des tenseurs 0-D (scalaires encapsulés dans un tableau)
-    #print(perctDiff_winrateRatio_train_val)
-    min_perctDiff_winrate_train_val= max(perctDiff_winrateRatio_train_val) if perctDiff_winrateRatio_train_val else float('inf')
-    is_perctDiff_winrate_train_val = xp.maximum(0, min_perctDiff_winrate_train_val - config_constraint_ratioWinrate_train_val)
-
-    min_trades = min(nb_trades_val_by_fold_list) if nb_trades_val_by_fold_list else float('inf')
-    is_constraint_min_trades = xp.maximum(0, config_constraint_min_trades_threshold_by_Fold - min_trades)
-
-    min_winrate = min(winrates_val_by_fold) if winrates_val_by_fold else float('inf')
-    is_constraint_winrates = xp.maximum(0, config_constraint_winrates_val_by_fold - min_winrate)
-
-    # Convertir en scalaires Python
-    # Si on est sur GPU, on utilise .item() après un .get()
-    # Si on est sur CPU (NumPy), .item() suffit.
+    # Fonctions utilitaires
     def to_float(x):
-        if use_cuda:
-            return float(x.get().item()) if hasattr(x, 'get') else float(x)
-        else:
-            return float(x.item()) if hasattr(x, 'item') else float(x)
+        if hasattr(x, 'get'):  # cupy
+            return float(x.get().item())
+        if hasattr(x, 'item'):  # numpy
+            return float(x.item())
+        return float(x)
 
-    is_perctDiff_winrate_train_val = to_float(is_perctDiff_winrate_train_val)
-    is_constraint_min_trades = to_float(is_constraint_min_trades)
-    is_constraint_winrates = to_float(is_constraint_winrates)
+    def safe_max(array_like):
+        return max(array_like) if array_like else float('inf')
 
-    # Créer la liste finale des contraintes (de simples floats)
-    constraints = [is_perctDiff_winrate_train_val, is_constraint_min_trades, is_constraint_winrates]
+    def safe_min(array_like):
+        return min(array_like) if array_like else float('inf')
 
-    # Affichage des contraintes pour le débogage
+    constraints = []
+
+    # --- 1) Contrainte de ratio Winrate train/val ---
+    # Si le seuil n'est pas inf, on l'applique
+    if cfg_ratio != float('inf'):
+        val_ = safe_max(perctDiff_winrateRatio_train_val)
+        c = xp.maximum(0, val_ - cfg_ratio)
+        constraints.append(to_float(c))
+
+    # --- 2) Contrainte min trades par fold ---
+    if cfg_min_trades != float('inf'):
+        min_trades = safe_min(nb_trades_val_by_fold_list)
+        c = xp.maximum(0, cfg_min_trades - min_trades)
+        constraints.append(to_float(c))
+
+    # --- 3) Contrainte min winrate par fold ---
+    if cfg_min_winrates != float('inf'):
+        min_winrate = safe_min(winrates_val_by_fold)
+        c = xp.maximum(0, cfg_min_winrates - min_winrate)
+        constraints.append(to_float(c))
+
+    # --- 4) Contrainte sur std trades ---
+    if cfg_max_std_trades != float('inf'):
+        arr_trades = xp.array(nb_trades_val_by_fold_list)
+        std_trades = xp.std(arr_trades)
+        c = xp.maximum(0, std_trades - cfg_max_std_trades)
+        constraints.append(to_float(c))
+
     if debug:
         print("\n--- DEBUG: Contraintes Calculées ---")
-        print(f"constraint_ecart: {is_perctDiff_winrate_train_val}")
-        print(f"constraint_min_trades: {is_constraint_min_trades}")
-        print(f"constraint_winrates: {is_constraint_winrates}")
-        print(f"Constraints (final): {constraints}")
-        print("----------------------------------\n")
+        print(f"Liste finale des contraintes (longueur {len(constraints)}) : {constraints}")
+        print("------------------------------------\n")
 
-    # Retourne toujours une liste Python (compatible avec Optuna)
     return constraints
-
 
 
 def analyze_thresholds(
@@ -9551,7 +9657,7 @@ def analyze_thresholds(
     valid_thresholds = [
         (threshold, profit, winrate, trades)
         for threshold, profit, winrate, trades in zip(thresholds, profits, winrates, trade_counts)
-        #if winrate >= min_winrate and trades >= min_trades
+        # if winrate >= min_winrate and trades >= min_trades
     ]
 
     # Display results
@@ -9561,6 +9667,8 @@ def analyze_thresholds(
               f"Win Rate: {winrate:.3f}%, Trades: {trades}")
 
     # Visualization
+
+
 """"
     plt.figure(figsize=(12, 6))
 
@@ -9708,7 +9816,6 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
     val_trades_samples_perct = to_numpy_if_needed(cv_results['val_trades_samples_perct'])
     val_bestVal_custom_metric_pnl = to_numpy_if_needed(cv_results['val_bestVal_custom_metric_pnl'])
 
-
     winrates_train_by_fold = to_numpy_if_needed(cv_results['winrates_train_by_fold'])
     nb_trades_train_by_fold = to_numpy_if_needed(cv_results['nb_trades_train_by_fold'])
     nb_samples_train_by_fold = to_numpy_if_needed(cv_results['nb_samples_train_by_fold'])
@@ -9722,9 +9829,8 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
     train_trades_samples_perct = to_numpy_if_needed(cv_results['train_trades_samples_perct'])
     train_bestVal_custom_metric_pnl = to_numpy_if_needed(cv_results['train_bestVal_custom_metric_pnl'])
 
-
     perctDiff_winrateRatio_train_val = to_numpy_if_needed(cv_results['perctDiff_winrateRatio_train_val'])
-    perctDiff_ratioTradeSample_train_val= to_numpy_if_needed(cv_results['perctDiff_ratioTradeSample_train_val'])
+    perctDiff_ratioTradeSample_train_val = to_numpy_if_needed(cv_results['perctDiff_ratioTradeSample_train_val'])
 
     # --- 5) Conversion des fold_stats ---
     # On convertit chaque champ Cupy -> float si nécessaire
@@ -9767,12 +9873,12 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'nb_samples_val_by_fold': nb_samples_val_by_fold,
         'tp_val_by_fold': tp_val_by_fold,
         'fp_val_by_fold': fp_val_by_fold,
-        'val_pred_proba_log_odds':val_pred_proba_log_odds,
+        'val_pred_proba_log_odds': val_pred_proba_log_odds,
         'class0_raw_data_val_by_fold': class0_raw_data_val_by_fold,
         'class1_raw_data_val_by_fold': class1_raw_data_val_by_fold,
         'winrate_raw_data_val_by_fold': winrate_raw_data_val_by_fold,
         'val_trades_samples_perct': val_trades_samples_perct,
-        'val_bestVal_custom_metric_pnl':val_bestVal_custom_metric_pnl,
+        'val_bestVal_custom_metric_pnl': val_bestVal_custom_metric_pnl,
 
         'winrates_train_by_fold': winrates_train_by_fold,
         'nb_trades_train_by_fold': nb_trades_train_by_fold,
@@ -9789,10 +9895,11 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'train_trades_samples_perct': train_trades_samples_perct,
 
         'perctDiff_winrateRatio_train_val': perctDiff_winrateRatio_train_val,
-        'perctDiff_ratioTradeSample_train_val':perctDiff_ratioTradeSample_train_val,
+        'perctDiff_ratioTradeSample_train_val': perctDiff_ratioTradeSample_train_val,
         'fold_stats': fold_stats,
         'metrics': metrics_converted
     }
+
 
 def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
     """
@@ -9810,10 +9917,10 @@ def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
         None: Affiche les résultats directement.
     """
     # Calcul du PnL
-    #pnl = tp * config['profit_per_tp'] + fp * config['loss_per_fp']
+    # pnl = tp * config['profit_per_tp'] + fp * config['loss_per_fp']
 
     print(f"tp:{tp} | tp:{fp}")
-    #pnl=tp * config['profit_per_tp'] + fp * config['loss_per_fp']
+    # pnl=tp * config['profit_per_tp'] + fp * config['loss_per_fp']
 
     # Calcul des statistiques pour log-odds
     log_odds_min = np.min(pred_proba_log_odds)
@@ -9831,7 +9938,7 @@ def reporting_model_performance(pred_proba_log_odds, tp, fp, fn, tn, config):
     total_trades = tp + fp
     print(f"   - Trades testés : {total_trades} trades pour {total_samples} échantillons")
     print(f"   - Confusion Matrix : TP: {tp}, FP: {fp}, FN: {fn}, TN: {tn}")
-    #print(f"   - PnL sur X_test : {pnl:.2f}")
+    # print(f"   - PnL sur X_test : {pnl:.2f}")
     trade_percentage = (total_trades / total_samples) * 100
     print(f"   - % (trades testés / échantillons testés) : {trade_percentage:.2f}%")
 
@@ -9868,8 +9975,10 @@ def remplace_0_nan_reg_slope_p_2d(session_starts, reg_slopes_2d, windows):
 
     return out
 
+
 import numpy as np
 import pandas as pd
+
 
 def process_reg_slope_replacement(df, session_starts, windows_list, reg_feature_prefix="reg_slope_"):
     """
@@ -9996,6 +10105,7 @@ def calculate_slopes_and_r2_numba(close_values, session_starts, window):
 
     return slopes, r2s, stds
 
+
 def check_lower_higher_bound_consistency(X_train, X_test, max_values_to_show=5):
     """
     Vérifie si les valeurs de X_test sont en dehors des bornes observées dans X_train.
@@ -10078,8 +10188,8 @@ def check_lower_higher_bound_consistency(X_train, X_test, max_values_to_show=5):
             error_messages.extend(feature_messages)
 
     # Lever une exception si un problème est détecté
-    #if is_coherence_ranges_problem:
-     #   raise ValueError("\n".join(error_messages) + "\nUn problème de valeurs hors bornes ou de distribution détecté")
+    # if is_coherence_ranges_problem:
+    #   raise ValueError("\n".join(error_messages) + "\nUn problème de valeurs hors bornes ou de distribution détecté")
 
     return is_coherence_ranges_problem
 
@@ -10103,7 +10213,7 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
         config (dict): Configuration additionnelle
 
     Returns:
-        tuple: (X_train, X_test, y_train_label, y_test_label, scaler, scaler_params)
+        tuple: (X_train, X_test, y_train_label, y_test_label, scaler)
     """
     import os
     import numpy as np
@@ -10111,7 +10221,7 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
     if config is None:
         config = {}
 
-    #print(f"\n-- Scaler {chosen_scaler} actif ---\n")
+    # print(f"\n-- Scaler {chosen_scaler} actif ---\n")
 
     # Sauvegarde des données originales pour réinsertion potentielle
     X_train_original = X_train.copy()
@@ -10130,7 +10240,7 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
                 print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
 
     # Application du scaling
-    X_train_scaled, X_test_scaled, scaler, scaler_params = apply_scaling(
+    X_train_scaled, X_test_scaled, scaler = apply_scaling(
         X_train,
         X_test,
         save_path=save_scaler_dir,
@@ -10167,17 +10277,18 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
         raise ValueError(f"Mismatch des tailles après scaling: "
                          f"X_test ({len(X_test_result)}) et y_test_label ({len(y_test_label_result)})")
 
-    return X_train_result, X_test_result, y_train_label_result, y_test_label_result, scaler, scaler_params
+    return X_train_result, X_test_result, y_train_label_result, y_test_label_result, scaler
+
 
 @njit
 def _calculate_atr_numba(
-    high: np.ndarray,
-    low: np.ndarray,
-    close: np.ndarray,
-    session_starts: np.ndarray,
-    period: int,
-    avg_type_code: int,
-    fill_value: float
+        high: np.ndarray,
+        low: np.ndarray,
+        close: np.ndarray,
+        session_starts: np.ndarray,
+        period: int,
+        avg_type_code: int,
+        fill_value: float
 ) -> np.ndarray:
     """
     Version compilée Numba pour calculer l'ATR par session, sans chevauchement.
@@ -10229,7 +10340,7 @@ def _calculate_atr_numba(
     # On stocke la dernière "period" TR dans un buffer (pour SMA/WMA)
     # Cela évite l'overhead d'une deque ou list en Python
     buffer_tr = np.zeros(period, dtype=np.float64)
-    buf_idx = 0   # Position courante dans le buffer
+    buf_idx = 0  # Position courante dans le buffer
     count_in_window = 0
 
     # Variables pour EMA
@@ -10336,6 +10447,7 @@ def _calculate_atr_numba(
 
     return atr_array
 
+
 def calculate_atr(df, period=6, avg_type='sma', fill_value=0.0):
     """
     Calcule l'ATR (Average True Range) par session en utilisant Numba
@@ -10392,8 +10504,6 @@ def calculate_atr(df, period=6, avg_type='sma', fill_value=0.0):
     # Reconstruire une série sur l'index original
     atr_series = pd.Series(atr_array, index=df.index, name='atr')
     return atr_series
-
-
 
 
 @njit
@@ -10596,7 +10706,7 @@ def calculate_percent_bb(df, period=14, std_dev=2, fill_value=0, return_array=Fa
 
     # Appeler la fonction Numba principale
     # Calculez %B et inspectez les valeurs brutes
-    raw_percent_b = calculate_percent_bb_numba(high, low, close, session_starts, period, std_dev, fill_value=fill_value )
+    raw_percent_b = calculate_percent_bb_numba(high, low, close, session_starts, period, std_dev, fill_value=fill_value)
     # print("Statistiques des valeurs brutes de %B:")
     # print(f"Min: {np.min(raw_percent_b)}, Max: {np.max(raw_percent_b)}")
     # print(f"Moyenne: {np.mean(raw_percent_b)}, Écart-type: {np.std(raw_percent_b)}")
@@ -10609,6 +10719,7 @@ def calculate_percent_bb(df, period=14, std_dev=2, fill_value=0, return_array=Fa
     # Sinon, créer un DataFrame pour le résultat
     result = pd.DataFrame({'percent_b': raw_percent_b}, index=df.index)
     return result
+
 
 @njit
 def calculate_close_to_sma_ratio_numba(close, session_starts, window, diffDivBy0, DEFAULT_DIV_BY0, valueX, fill_value):
@@ -10895,3 +11006,7 @@ def calculate_rogers_satchell_numba(high_values, low_values, open_values, close_
         vol[result_idx] = np.sqrt(mean_rs)
 
     return vol
+
+
+def setup_model_weight_optuna():
+    return None

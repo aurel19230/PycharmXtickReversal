@@ -8,11 +8,10 @@ def train_and_evaluate_svc_model(
         y_val_cv=None,
         y_pnl_data_train_cv=None,
         y_pnl_data_val_cv_OrTest=None,
-        params=None,
+        params_optuna=None,
         model_weight_optuna=None,
         config=None,
         fold_num=0,
-        fold_raw_data=None,
         fold_stats_current=None,
         train_pos=None,
         val_pos=None,
@@ -32,16 +31,16 @@ def train_and_evaluate_svc_model(
     #print(f"Temps de calcul des poids: {weights_time:.4f} secondes")
 
     # Assurer que les paramètres par défaut sont définis
-    if params is None:
+    if params_optuna is None:
         params = {}
 
     # Récupérer l'option de probabilité depuis la configuration
     svc_probability = config.get('svc_probability', False)
-    params['probability'] = svc_probability
+    params_optuna['probability'] = svc_probability
 
     # Récupérer le type de noyau depuis la configuration
     svc_kernel = config.get('svc_kernel', 'rbf')
-    params['kernel'] = svc_kernel
+    params_optuna['kernel'] = svc_kernel
 
     # Mesure du temps d'entraînement
     start_time_train = time.time()
@@ -271,7 +270,6 @@ def train_and_evaluate_svc_model(
 
     return {
         'current_model': current_model,
-        'fold_raw_data': fold_raw_data,
         'y_train_predProba': y_train_predProba,
         'eval_metrics': val_metrics,
         'train_metrics': train_metrics,
