@@ -20,6 +20,7 @@ def train_and_evaluate_svc_model(
     from sklearn.svm import SVC
     import numpy as np
     import time
+    from sklearn.metrics import brier_score_loss
 
     # Mesure du temps total de la fonction
     start_time_total = time.time()
@@ -32,27 +33,29 @@ def train_and_evaluate_svc_model(
 
     # Assurer que les paramètres par défaut sont définis
     if params_optuna is None:
-        params = {}
+        raise ValueError(
+            "params_optuna ne peut pas être None. Veuillez fournir un dictionnaire de paramètres pour le modèle SVC.")
 
-    # Récupérer l'option de probabilité depuis la configuration
-    svc_probability = config.get('svc_probability', False)
-    params_optuna['probability'] = svc_probability
+    # # Récupérer l'option de probabilité depuis la configuration
+    # svc_probability = config.get('svc_probability', False)
+    # params_optuna['probability'] = svc_probability
+    #
+    # # Récupérer le type de noyau depuis la configuration
+    # svc_kernel = config.get('svc_kernel', 'rbf')
+    # params_optuna['kernel'] = svc_kernel
 
-    # Récupérer le type de noyau depuis la configuration
-    svc_kernel = config.get('svc_kernel', 'rbf')
-    params_optuna['kernel'] = svc_kernel
-
+    #print(params_optuna)
     # Mesure du temps d'entraînement
     start_time_train = time.time()
     # Entraînement du modèle SVC
-    current_model = SVC(**params)
+    current_model = SVC(**params_optuna)
     current_model.fit(X_train_cv, y_train_cv, sample_weight=sample_weights_train)
     train_time = time.time() - start_time_train
     print(f"Temps d'entraînement du modèle: {train_time:.4f} secondes")
 
     # Prédictions et métriques pour la validation
     start_time_val_pred = time.time()
-
+    svc_probability=config['svc_probability']
     # Selon l'option de probabilité, récupérer les prédictions différemment
     if svc_probability:
         val_pred_proba = current_model.predict_proba(X_val_cv)[:, 1]
@@ -186,6 +189,14 @@ def train_and_evaluate_svc_model(
     best_iteration = None
     best_idx = None
 
+    # 📉 Brier Score brut
+    brier = brier_score_loss(y_val_cv, val_pred_proba)
+
+    # 📊 Brier Score baseline
+    baseline_pred = np.full_like(y_val_cv, y_val_cv.mean(), dtype=np.float64)
+    baseline_brier = brier_score_loss(y_val_cv, baseline_pred)
+    relative_brier = brier / baseline_brier if baseline_brier > 0 else brier
+
     # Construction des métriques
     start_time_metrics_build = time.time()
     val_metrics = {
@@ -195,7 +206,9 @@ def train_and_evaluate_svc_model(
         'fn': fn_val,
         'total_samples': len(y_val_cv),
         'val_bestVal_custom_metric_pnl': val_pnl,
-        'best_iteration': best_iteration
+        'best_iteration': best_iteration,
+        'brier':brier,
+        'relative_brier':relative_brier,
     }
 
     train_metrics = {
@@ -249,8 +262,8 @@ def train_and_evaluate_svc_model(
 
     # Informations de debug avec les temps d'exécution
     debug_info = {
-        'model_params': params,
-        'kernel': svc_kernel,
+        'model_params': params_optuna,
+        #'kernel': params_optuna['svc_kernel'],
         'threshold': model_weight_optuna.get('threshold', 0.5) if svc_probability else None,
         'using_probabilities': svc_probability,
         'support_vectors_info': support_vectors_info,

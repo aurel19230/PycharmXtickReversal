@@ -6,7 +6,10 @@ from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_sco
     average_precision_score, matthews_corrcoef, precision_recall_curve, precision_score
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, MaxAbsScaler
-
+# Put this at the top of your script or in a utility file
+import matplotlib.cbook
+if not hasattr(matplotlib.cbook, '_Stack') and hasattr(matplotlib.cbook, 'Stack'):
+    matplotlib.cbook._Stack = matplotlib.cbook.Stack
 
 import time
 from enum import Enum
@@ -732,6 +735,10 @@ def analyze_shap_values(model, X, y, dataset_name, create_dependence_plots=False
     dependence_dir = os.path.join(save_dir, 'dependence_plot')
     os.makedirs(dependence_dir, exist_ok=True)
 
+    print('save_dir:',save_dir)
+    print('dependence_dir:',dependence_dir)
+
+
     print(f"\n=== Analyse SHAP pour {dataset_name} ===")
     print(f"Dimensions des données: {X.shape}")
 
@@ -868,17 +875,18 @@ def compare_feature_importance(shap_values_train, shap_values_test, X_train, X_t
                                save_dir='./shap_dependencies_results/', top_n=20):
     """
     Compare l'importance des features entre l'ensemble d'entraînement et de test.
+    Si X_test est None, affiche uniquement les importances de l'ensemble d'entraînement.
 
     Parameters:
     -----------
     shap_values_train : numpy.ndarray
         Valeurs SHAP pour l'ensemble d'entraînement
-    shap_values_test : numpy.ndarray
-        Valeurs SHAP pour l'ensemble de test
+    shap_values_test : numpy.ndarray ou None
+        Valeurs SHAP pour l'ensemble de test, peut être None si pas de test
     X_train : pandas.DataFrame
         DataFrame contenant les features d'entraînement
-    X_test : pandas.DataFrame
-        DataFrame contenant les features de test
+    X_test : pandas.DataFrame ou None
+        DataFrame contenant les features de test, peut être None si pas de test
     save_dir : str, optional
         Répertoire où sauvegarder le graphique (par défaut './shap_dependencies_results/')
     top_n : int, optional
@@ -887,42 +895,72 @@ def compare_feature_importance(shap_values_train, shap_values_test, X_train, X_t
     Returns:
     --------
     pandas.DataFrame
-        DataFrame contenant les importances des features et leurs différences
+        DataFrame contenant les importances des features et leurs différences si X_test est disponible,
+        sinon uniquement les importances de l'ensemble d'entraînement
     """
     # Créer le répertoire de sauvegarde s'il n'existe pas
     os.makedirs(save_dir, exist_ok=True)
 
-    # Vérifier que les colonnes sont identiques dans X_train et X_test
-    if not all(X_train.columns == X_test.columns):
-        raise ValueError("Les colonnes de X_train et X_test doivent être identiques.")
-
     importance_train = np.abs(shap_values_train).mean(0)
-    importance_test = np.abs(shap_values_test).mean(0)
 
-    importance_df = pd.DataFrame({
-        'Feature': X_train.columns,
-        'Importance_Train': importance_train,
-        'Importance_Test': importance_test
-    })
+    if X_test is not None and shap_values_test is not None:
+        # Vérifier que les colonnes sont identiques dans X_train et X_test
+        if not all(X_train.columns == X_test.columns):
+            raise ValueError("Les colonnes de X_train et X_test doivent être identiques.")
 
-    importance_df['Difference'] = importance_df['Importance_Train'] - importance_df['Importance_Test']
-    importance_df = importance_df.sort_values('Difference', key=abs, ascending=False)
+        # Calcul des importances pour l'ensemble de test
+        importance_test = np.abs(shap_values_test).mean(0)
 
-    # Sélectionner les top_n features pour la visualisation
-    top_features = importance_df.head(top_n)
+        # Création du DataFrame avec les deux ensembles
+        importance_df = pd.DataFrame({
+            'Feature': X_train.columns,
+            'Importance_Train': importance_train,
+            'Importance_Test': importance_test
+        })
 
-    plt.figure(figsize=(12, 8))
-    # sns.barplot(x='Difference', y='Feature', data=top_features, palette='coolwarm')
-    sns.barplot(x='Difference', y='Feature', hue='Feature', data=top_features, palette='coolwarm', legend=False)
-    plt.title(f"Top {top_n} Differences in Feature Importance (Train - Test)")
-    plt.xlabel("Difference in Importance")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'feature_importance_difference.png'))
-    plt.close()
+        # Calcul de la différence
+        importance_df['Difference'] = importance_df['Importance_Train'] - importance_df['Importance_Test']
+        importance_df = importance_df.sort_values('Difference', key=abs, ascending=False)
 
-    print(f"Graphique de différence d'importance des features sauvegardé dans {save_dir}")
-    print("\nTop differences in feature importance:")
-    print(importance_df.head(10))
+        # Sélectionner les top_n features pour la visualisation de différence
+        top_features = importance_df.head(top_n)
+
+        plt.figure(figsize=(12, 8))
+        sns.barplot(x='Difference', y='Feature', hue='Feature', data=top_features, palette='coolwarm', legend=False)
+        plt.title(f"Top {top_n} Differences in Feature Importance (Train - Test)")
+        plt.xlabel("Difference in Importance")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'feature_importance_difference.png'))
+        plt.close()
+
+        print(f"Graphique de différence d'importance des features sauvegardé dans {save_dir}")
+        print("\nTop differences in feature importance:")
+        print(importance_df.head(10))
+    else:
+        # Si X_test est None, on crée un DataFrame uniquement avec les importances d'entraînement
+        importance_df = pd.DataFrame({
+            'Feature': X_train.columns,
+            'Importance_Train': importance_train
+        })
+
+        # Tri par importance décroissante
+        importance_df = importance_df.sort_values('Importance_Train', ascending=False)
+
+        # Sélectionner les top_n features pour la visualisation
+        top_features = importance_df.head(top_n)
+
+        plt.figure(figsize=(12, 8))
+        sns.barplot(x='Importance_Train', y='Feature', hue='Feature', data=top_features, palette='viridis',
+                    legend=False)
+        plt.title(f"Top {top_n} Feature Importance (Training Set Only)")
+        plt.xlabel("Feature Importance")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'feature_importance_train_only.png'))
+        plt.close()
+
+        print(f"Graphique d'importance des features d'entraînement sauvegardé dans {save_dir}")
+        print("\nTop feature importance (training set only):")
+        print(importance_df.head(10))
 
     return importance_df
 
@@ -1199,7 +1237,7 @@ def compare_mean_shap_values(shap_values_train, shap_values_test, X_train, save_
 def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label,
                        save_dir='./shap_dependencies_results/'):
     """Fonction principale pour l'analyse SHAP."""
-
+    shap_comparison=None
     # Analyse SHAP sur l'ensemble d'entraînement et de test
     shap_values_train, shap_explanation_train, resulat_train_shap_feature_importance = analyze_shap_values(final_model,
                                                                                                            X_train,
@@ -1208,25 +1246,30 @@ def main_shap_analysis(final_model, X_train, y_train_label, X_test, y_test_label
                                                                                                            create_dependence_plots=True,
                                                                                                            max_dependence_plots=40,
                                                                                                            save_dir=save_dir)
-    shap_values_test, shap_explanation_test, resulat_test_shap_feature_importance = analyze_shap_values(final_model,
-                                                                                                        X_test,
-                                                                                                        y_test_label,
-                                                                                                        "Test_Set",
-                                                                                                        create_dependence_plots=True,
-                                                                                                        max_dependence_plots=40,
-                                                                                                        save_dir=save_dir)
+
+    if X_test is not None:
+        shap_values_test, shap_explanation_test, resulat_test_shap_feature_importance = analyze_shap_values(final_model,
+                                                                                                            X_test,
+                                                                                                            y_test_label,
+                                                                                                            "Test_Set",
+                                                                                                            create_dependence_plots=True,
+                                                                                                            max_dependence_plots=40,
+                                                                                                            save_dir=save_dir)
+    else:
+        shap_values_test, shap_explanation_test, resulat_test_shap_feature_importance = None, None, None
 
     # Comparaison des importances de features et des distributions SHAP
     importance_df = compare_feature_importance(shap_values_train, shap_values_test, X_train, X_test, save_dir=save_dir)
-    compare_shap_distributions(
-        shap_values_train=shap_values_train, shap_explanation_train=shap_explanation_train,
-        shap_values_test=shap_values_test, shap_explanation_test=shap_explanation_test,
-        X_train=X_train, y_train_label=y_train_label, X_test=X_test, y_test_label=y_test_label,
-        top_n=40, save_dir=save_dir)
+    if X_test is not None:
+        compare_shap_distributions(
+            shap_values_train=shap_values_train, shap_explanation_train=shap_explanation_train,
+            shap_values_test=shap_values_test, shap_explanation_test=shap_explanation_test,
+            X_train=X_train, y_train_label=y_train_label, X_test=X_test, y_test_label=y_test_label,
+            top_n=40, save_dir=save_dir)
 
-    # Comparaison des valeurs SHAP moyennes
-    shap_comparison = compare_mean_shap_values(
-        shap_values_train=shap_values_train, shap_values_test=shap_values_test, X_train=X_train, save_dir=save_dir)
+        # Comparaison des valeurs SHAP moyennes
+        shap_comparison = compare_mean_shap_values(
+            shap_values_train=shap_values_train, shap_values_test=shap_values_test, X_train=X_train, save_dir=save_dir)
 
     return importance_df, shap_comparison, shap_values_train, shap_values_test, resulat_test_shap_feature_importance
 
@@ -2520,14 +2563,14 @@ def init_dataSet(df_init_features=None, nanvalue_to_newval=None, config=None, CU
     print(f"\n🔍 Colonnes utilisées pour le PCA (corrélées entre elles) : {len(high_corr_columns_used4pca)} colonnes")
     print(high_corr_columns_used4pca)
 
-    min_val = X_train_clean_noInfNan['bull_imbalance_low_3'].min()
-    max_val = X_train_clean_noInfNan['bull_imbalance_low_3'].max()
-
-    print(f"Min: {min_val}, Max: {max_val}")
-    min_val = X_train['bull_imbalance_low_3'].min()
-    max_val = X_train['bull_imbalance_low_3'].max()
-
-    print(f"Min: {min_val}, Max: {max_val}")
+    # min_val = X_train_clean_noInfNan['bull_imbalance_low_3'].min()
+    # max_val = X_train_clean_noInfNan['bull_imbalance_low_3'].max()
+    #
+    # print(f"Min: {min_val}, Max: {max_val}")
+    # min_val = X_train['bull_imbalance_low_3'].min()
+    # max_val = X_train['bull_imbalance_low_3'].max()
+    #
+    # print(f"Min: {min_val}, Max: {max_val}")
 
     def check_equality(a, b, name_a, name_b):
         if isinstance(a, pd.DataFrame) or isinstance(a, pd.Series):
@@ -2949,7 +2992,7 @@ def best_modellastFold_analyse(X_test=None, y_test_label=None,
 
     other_params_best = bestResult_dict["other_params"]
     y_pred_proba_afterSig, pred_proba_log_odds, predictions_converted, (
-        tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+        tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics_XgbOrLightGbm(
         model=best_modellastFold,
         X_data=X_test,
         y_true=y_test_label,
@@ -2970,6 +3013,407 @@ def best_modellastFold_analyse(X_test=None, y_test_label=None,
                        color="blue")
     """
 
+from sklearn.linear_model import LogisticRegression
+from sklearn.isotonic import IsotonicRegression
+from sklearn.calibration import calibration_curve
+from scipy.special import expit  # Sigmoid = expit(log_odds)
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import brier_score_loss
+from sklearn.isotonic import IsotonicRegression
+from scipy.special import expit
+import netcal
+print(os.listdir(netcal.__path__[0]))
+
+
+def log_stats(name, data, bins=30):
+    print(f"\n📊 Statistiques pour {name}:")
+    print(f"  Min       : {np.min(data):.6f}")
+    print(f"  Max       : {np.max(data):.6f}")
+    print(f"  Moyenne   : {np.mean(data):.6f}")
+    print(f"  Écart-type: {np.std(data):.6f}")
+
+    counts, edges = np.histogram(data, bins=bins)
+    for i in range(len(counts)):
+        print(f"  Bin {i+1} ({edges[i]:.3f} - {edges[i+1]:.3f}) : {counts[i]}")
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import brier_score_loss
+from sklearn.isotonic import IsotonicRegression
+from scipy.special import expit
+
+
+def compare_calibration_methods(model, X_valid, y_valid, config=None, other_params=None, score_bestIdx=0, save_dir=None,
+                                display=True):
+    """
+    Calibre un modèle avec différentes méthodes et affiche les résultats
+    sur des graphiques séparés pour une meilleure lisibilité.
+
+    Args:
+        model: Le modèle à calibrer
+        X_valid: Les données de validation (features)
+        y_valid: Les labels de validation (cibles)
+        config: Configuration du modèle
+        other_params: Paramètres additionnels
+        score_bestIdx: Indice de la meilleure itération
+        save_dir (str, optional): Répertoire où sauvegarder la figure. Si None, la figure n'est pas sauvegardée.
+        display (bool, optional): Si True, affiche la figure. Par défaut True.
+
+    Returns:
+        dict: Dictionnaire contenant les probabilités et modèles de calibration
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+    from sklearn.metrics import brier_score_loss
+    from sklearn.calibration import calibration_curve
+
+    if config['model_type'] == modelType.XGB:
+        import xgboost as xgb
+        X_data = xgb.DMatrix(X_valid)
+    else:
+        X_data = X_valid  # LightGBM accepte le format natif
+
+    # Appel de la fonction commune pour récupérer les probas et log-odds
+    proba_raw, log_odds, _, _, _ = predict_and_compute_metrics_XgbOrLightGbm(
+        model=model,
+        X_data=X_data,
+        y_true=y_valid,
+        best_iteration=score_bestIdx + 1, threshold=other_params['threshold'],
+        config=config
+    )
+
+    # 2) Platt scaling (sigmoid calibration) implemented manually
+    from sklearn.linear_model import LogisticRegression
+    platt_model = LogisticRegression(C=1.0)
+    platt_model.fit(log_odds.reshape(-1, 1), y_valid)
+    proba_platt = platt_model.predict_proba(log_odds.reshape(-1, 1))[:, 1]
+
+    # 3) Isotonic Regression applied directly
+    from sklearn.isotonic import IsotonicRegression
+    iso_model = IsotonicRegression(out_of_bounds='clip')
+    iso_model.fit(proba_raw, y_valid)
+    proba_iso = iso_model.predict(proba_raw)
+
+    # 4) Beta Calibration
+    from functools import partial
+    beta_model = BetaCalibrationCustom(method="ab")  # "ab", "abm", or "am"
+    beta_model.fit(proba_raw, y_valid)
+    proba_beta = beta_model.predict(proba_raw)
+
+    # Brier scores
+    brier_raw = brier_score_loss(y_valid, proba_raw)
+    brier_platt = brier_score_loss(y_valid, proba_platt)
+    brier_iso = brier_score_loss(y_valid, proba_iso)
+    brier_beta = brier_score_loss(y_valid, proba_beta)
+
+    print("\n🎯 Brier scores :")
+    print(f"  - Avant calibration  : {brier_raw:.5f}")
+    print(f"  - Platt scaling      : {brier_platt:.5f}")
+    print(f"  - Isotonic           : {brier_iso:.5f}")
+    print(f"  - Beta calibration   : {brier_beta:.5f}")
+
+    # Log stats
+    log_stats("Log-odds", log_odds, bins=30)
+    log_stats("Proba brute (sigmoidée)", proba_raw, bins=30)
+    log_stats("Platt scaling", proba_platt, bins=30)
+    log_stats("Isotonic", proba_iso, bins=30)
+    log_stats("Beta calibration", proba_beta, bins=30)
+
+    # Création d'une figure adaptée à un écran large (3440x1440)
+    fig = plt.figure(figsize=(34, 18))  # Ajusté pour écran large
+
+    # Configuration des sous-figures en grille
+    gs = plt.GridSpec(3, 4, figure=fig)  # Grille 3x4 pour 12 graphiques
+
+    # 1. Distribution des log-odds
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.hist(log_odds, bins=30, color='slateblue', alpha=0.7)
+    ax1.set_title("Distribution log-odds", fontsize=14)
+    ax1.set_xlabel("Valeur", fontsize=12)
+    ax1.set_ylabel("Fréquence", fontsize=12)
+    ax1.grid(True)
+
+    # 2. Distribution des probas brutes (1 seule fois)
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.hist(proba_raw, bins=30, color='steelblue', alpha=0.7)
+    ax2.set_title("Proba brute (sigmoid)", fontsize=14)
+    ax2.set_xlabel("Probabilité", fontsize=12)
+    ax2.set_ylabel("Fréquence", fontsize=12)
+    ax2.grid(True)
+
+    # 3. Distribution probabilités Platt
+    ax3 = fig.add_subplot(gs[0, 2])
+    ax3.hist(proba_platt, bins=30, color='darkorange', alpha=0.7)
+    ax3.set_title("Distribution Platt scaling", fontsize=14)
+    ax3.set_xlabel("Probabilité", fontsize=12)
+    ax3.set_ylabel("Fréquence", fontsize=12)
+    ax3.grid(True)
+
+    # 4. Distribution probabilités Isotonic
+    ax4 = fig.add_subplot(gs[0, 3])
+    ax4.hist(proba_iso, bins=30, color='forestgreen', alpha=0.7)
+    ax4.set_title("Distribution Isotonic", fontsize=14)
+    ax4.set_xlabel("Probabilité", fontsize=12)
+    ax4.set_ylabel("Fréquence", fontsize=12)
+    ax4.grid(True)
+
+    # 5. Distribution probabilités Beta
+    ax5 = fig.add_subplot(gs[1, 0])
+    ax5.hist(proba_beta, bins=30, color='crimson', alpha=0.7)
+    ax5.set_title("Distribution Beta calibration", fontsize=14)
+    ax5.set_xlabel("Probabilité", fontsize=12)
+    ax5.set_ylabel("Fréquence", fontsize=12)
+    ax5.grid(True)
+
+    # Créer un grid de points x pour les courbes de calibration
+    x_grid = np.linspace(0, 1, 100)
+
+    # Platt scaling curve
+    platt_a, platt_b = platt_model.coef_[0][0], platt_model.intercept_[0]
+    platt_curve = 1 / (1 + np.exp(-(platt_a * x_grid + platt_b)))
+
+    # Isotonic regression curve
+    iso_curve = iso_model.predict(x_grid)
+
+    # Beta calibration curve
+    beta_curve = beta_model.predict(x_grid)
+
+    # 6. Courbe de calibration Platt
+    ax6 = fig.add_subplot(gs[1, 1])
+    ax6.plot([0, 1], [0, 1], '--', color='gray', label='Parfaite calibration')
+    ax6.plot(x_grid, platt_curve, color='darkorange', label=f'Platt (Brier: {brier_platt:.4f})')
+    ax6.set_title("Courbe de calibration - Platt", fontsize=14)
+    ax6.set_xlabel("Probabilité brute", fontsize=12)
+    ax6.set_ylabel("Probabilité calibrée", fontsize=12)
+    ax6.legend()
+    ax6.grid(True)
+
+    # 7. Courbe de calibration Isotonic
+    ax7 = fig.add_subplot(gs[1, 2])
+    ax7.plot([0, 1], [0, 1], '--', color='gray', label='Parfaite calibration')
+    ax7.plot(x_grid, iso_curve, color='forestgreen', label=f'Isotonic (Brier: {brier_iso:.4f})')
+    ax7.set_title("Courbe de calibration - Isotonic", fontsize=14)
+    ax7.set_xlabel("Probabilité brute", fontsize=12)
+    ax7.set_ylabel("Probabilité calibrée", fontsize=12)
+    ax7.legend()
+    ax7.grid(True)
+
+    # 8. Courbe de calibration Beta
+    ax8 = fig.add_subplot(gs[1, 3])
+    ax8.plot([0, 1], [0, 1], '--', color='gray', label='Parfaite calibration')
+    ax8.plot(x_grid, beta_curve, color='crimson', label=f'Beta (Brier: {brier_beta:.4f})')
+    ax8.set_title("Courbe de calibration - Beta", fontsize=14)
+    ax8.set_xlabel("Probabilité brute", fontsize=12)
+    ax8.set_ylabel("Probabilité calibrée", fontsize=12)
+    ax8.legend()
+    ax8.grid(True)
+
+    # Reliability diagrams (calibration curves) - Un par méthode
+    prob_true_raw, prob_pred_raw = calibration_curve(y_valid, proba_raw, n_bins=20)
+    prob_true_platt, prob_pred_platt = calibration_curve(y_valid, proba_platt, n_bins=20)
+    prob_true_iso, prob_pred_iso = calibration_curve(y_valid, proba_iso, n_bins=20)
+    prob_true_beta, prob_pred_beta = calibration_curve(y_valid, proba_beta, n_bins=20)
+
+    # 9. Reliability Diagram - Brute
+    ax9 = fig.add_subplot(gs[2, 0])
+    ax9.plot([0, 1], [0, 1], '--', color='gray')
+    ax9.plot(prob_pred_raw, prob_true_raw, 's-', color='steelblue', label='Brute')
+    ax9.set_title('Reliability Diagram - Brute', fontsize=14)
+    ax9.set_xlabel('Proba moyenne prédite par bin', fontsize=12)
+    ax9.set_ylabel('Fraction de positifs', fontsize=12)
+    ax9.legend()
+    ax9.grid(True)
+
+    # 10. Reliability Diagram - Platt
+    ax10 = fig.add_subplot(gs[2, 1])
+    ax10.plot([0, 1], [0, 1], '--', color='gray')
+    ax10.plot(prob_pred_platt, prob_true_platt, 'o-', color='darkorange', label='Platt')
+    ax10.set_title('Reliability Diagram - Platt', fontsize=14)
+    ax10.set_xlabel('Proba moyenne prédite par bin', fontsize=12)
+    ax10.set_ylabel('Fraction de positifs', fontsize=12)
+    ax10.legend()
+    ax10.grid(True)
+
+    # 11. Reliability Diagram - Isotonic
+    ax11 = fig.add_subplot(gs[2, 2])
+    ax11.plot([0, 1], [0, 1], '--', color='gray')
+    ax11.plot(prob_pred_iso, prob_true_iso, '^-', color='forestgreen', label='Isotonic')
+    ax11.set_title('Reliability Diagram - Isotonic', fontsize=14)
+    ax11.set_xlabel('Proba moyenne prédite par bin', fontsize=12)
+    ax11.set_ylabel('Fraction de positifs', fontsize=12)
+    ax11.legend()
+    ax11.grid(True)
+
+    # 12. Reliability Diagram - Beta
+    ax12 = fig.add_subplot(gs[2, 3])
+    ax12.plot([0, 1], [0, 1], '--', color='gray')
+    ax12.plot(prob_pred_beta, prob_true_beta, 'v-', color='crimson', label='Beta')
+    ax12.set_title('Reliability Diagram - Beta', fontsize=14)
+    ax12.set_xlabel('Proba moyenne prédite par bin', fontsize=12)
+    ax12.set_ylabel('Fraction de positifs', fontsize=12)
+    ax12.legend()
+    ax12.grid(True)
+
+    # Ajout d'un titre global
+    fig.suptitle('Comparaison des méthodes de calibration', fontsize=18)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Ajustement pour le titre global
+
+    # Sauvegarde de la figure si un répertoire est spécifié
+    if save_dir:
+        # Création du répertoire s'il n'existe pas
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Création du nom de fichier
+        filename = f"calibration_comparison.png"
+        filepath = os.path.join(save_dir, filename)
+
+        # Sauvegarde de la figure avec une bonne résolution
+        fig.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"\n📥 Figure sauvegardée : {filepath}")
+
+        # Sauvegarde des métriques dans un fichier texte
+        metrics_filename = f"calibration_metrics.txt"
+        metrics_filepath = os.path.join(save_dir, metrics_filename)
+
+        with open(metrics_filepath, 'w') as f:
+            f.write(" Brier scores :\n")
+            f.write(f"  - Avant calibration  : {brier_raw:.5f}\n")
+            f.write(f"  - Platt scaling      : {brier_platt:.5f}\n")
+            f.write(f"  - Isotonic           : {brier_iso:.5f}\n")
+            f.write(f"  - Beta calibration   : {brier_beta:.5f}\n")
+
+        print(f"📝 Métriques sauvegardées : {metrics_filepath}")
+
+    # Affichage de la figure selon le paramètre display
+    if display:
+        plt.show()
+
+    return {
+        "proba_raw": proba_raw,
+        "proba_platt": proba_platt,
+        "proba_iso": proba_iso,
+        "proba_beta": proba_beta,
+        "log_odds": log_odds,
+        "brier_scores": {
+            "raw": brier_raw,
+            "platt": brier_platt,
+            "isotonic": brier_iso,
+            "beta": brier_beta
+        },
+        "calibrators": {
+            "platt_model": platt_model,
+            "iso_model": iso_model,
+            "beta_model": beta_model
+        }
+    }
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.isotonic import IsotonicRegression
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
+from scipy.special import expit
+
+def calibrate_and_plot_dual(
+    log_odds,
+    y_true,
+    device="cpu",
+    n_bins=10
+):
+    """
+    Calibre les probabilités avec Platt et Isotonic, compare les courbes de calibration,
+    affiche les Brier scores et les distributions, et donne le nombre de points par bin.
+
+    Returns:
+        dict: dictionnaire contenant les proba calibrées et les scores.
+    """
+
+    # GPU → CPU si nécessaire
+    if device != "cpu":
+        import cupy as cp
+        log_odds = cp.asnumpy(log_odds)
+        y_true = cp.asnumpy(y_true)
+
+    # Probabilités brutes
+    proba_raw = expit(log_odds)
+
+    # Calibration : Platt
+    calibrator_platt = LogisticRegression(solver='lbfgs')
+    calibrator_platt.fit(proba_raw.reshape(-1, 1), y_true)
+    proba_cal_platt = calibrator_platt.predict_proba(proba_raw.reshape(-1, 1))[:, 1]
+
+    # Calibration : Isotonic
+    calibrator_iso = IsotonicRegression(out_of_bounds='clip')
+    calibrator_iso.fit(proba_raw, y_true)
+    proba_cal_iso = calibrator_iso.predict(proba_raw)
+
+    # Brier scores
+    brier_raw = brier_score_loss(y_true, proba_raw)
+    brier_platt = brier_score_loss(y_true, proba_cal_platt)
+    brier_iso = brier_score_loss(y_true, proba_cal_iso)
+
+    # Courbes de calibration
+    raw_true, raw_pred = calibration_curve(y_true, proba_raw, n_bins=n_bins)
+    platt_true, platt_pred = calibration_curve(y_true, proba_cal_platt, n_bins=n_bins)
+    iso_true, iso_pred = calibration_curve(y_true, proba_cal_iso, n_bins=n_bins)
+
+    # 📊 Nombre de points par bin (Platt)
+    print(f"\n📌 Répartition des points par bin (Platt - {n_bins} bins) :")
+    bins = np.linspace(0, 1, n_bins + 1)
+    bin_ids = np.digitize(proba_cal_platt, bins) - 1
+    for i in range(n_bins):
+        count = np.sum(bin_ids == i)
+        print(f"Bin {i + 1} ({bins[i]:.2f} - {bins[i + 1]:.2f}) : {count} points")
+
+    # 📊 Nombre de points par bin (Isotonic)
+    print(f"\n📌 Répartition des points par bin (Isotonic - {n_bins} bins) :")
+    bin_ids_iso = np.digitize(proba_cal_iso, bins) - 1
+    for i in range(n_bins):
+        count = np.sum(bin_ids_iso == i)
+        print(f"Bin {i + 1} ({bins[i]:.2f} - {bins[i + 1]:.2f}) : {count} points")
+
+    # 📈 Courbe de calibration
+    plt.figure(figsize=(10, 6))
+    plt.plot(raw_pred, raw_true, marker='o', label=f'Avant calibration\nBrier={brier_raw:.4f}')
+    plt.plot(platt_pred, platt_true, marker='s', label=f'Platt scaling\nBrier={brier_platt:.4f}')
+    plt.plot(iso_pred, iso_true, marker='^', label=f'Isotonic regression\nBrier={brier_iso:.4f}')
+    plt.plot([0, 1], [0, 1], '--', color='gray', label='Calibration parfaite')
+    plt.title(f"Courbe de calibration - Platt vs Isotonic")
+    plt.xlabel("Probabilité prédite")
+    plt.ylabel("Fréquence réelle (observée)")
+    plt.legend(loc='best')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # 📉 Histogrammes de distribution
+    plt.figure(figsize=(10, 5))
+    plt.hist(proba_raw, bins=30, alpha=0.5, label='Avant calibration')
+    plt.hist(proba_cal_platt, bins=30, alpha=0.6, label='Platt scaling')
+    plt.hist(proba_cal_iso, bins=30, alpha=0.6, label='Isotonic regression')
+    plt.title("Distribution des probabilités (avant / après calibration)")
+    plt.xlabel("Probabilité")
+    plt.ylabel("Nombre d'occurrences")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    return {
+        "proba_raw": proba_raw,
+        "proba_cal_platt": proba_cal_platt,
+        "proba_cal_iso": proba_cal_iso,
+        "brier_raw": brier_raw,
+        "brier_platt": brier_platt,
+        "brier_iso": brier_iso
+    }
 
 def reTrain_finalModel_analyse(
         X_train=None, X_train_full=None, X_test=None, X_test_full=None,
@@ -2980,7 +3424,6 @@ def reTrain_finalModel_analyse(
 
     print_notification('###### DEBUT: ENTRAINEMENT MODELE FINAL ##########', color="blue")
     results_directory = config.get('results_directory', None)
-    params_optuna = bestResult_dict["params_optuna"]
 
     # Vérification que bestResult_dict contient les bonnes clés
     results_directory = config.get('results_directory', None)
@@ -2990,7 +3433,6 @@ def reTrain_finalModel_analyse(
         raise ValueError("bestResult_dict ne peut pas être None")
     params_optuna = bestResult_dict["params_optuna"]
     other_params_best = bestResult_dict["other_params"]
-    optimal_optuna_threshold = other_params_best['threshold']
 
     custom_objective_lossFct = config.get('custom_objective_lossFct', None)
     print(custom_objective_lossFct)
@@ -3018,40 +3460,66 @@ def reTrain_finalModel_analyse(
     # Mise à jour des métriques et statistiques
     all_fold_stats = {}
 
-    # Utilisation d'une variable globale
-
-    # for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
-    #     # Validation des indices
-    #     validate_fold_indices(train_pos, val_pos)
-    #
-    #     # Préparation des données du fold
-    #     fold_raw_data = prepare_fold_data(X_train, y_train_label_, train_pos, val_pos)
-
-    # Log des informations du fold
-    # if is_log_enabled:
-    #   log_fold_info(fold_num, nb_split_tscv, X_train_full, fold_data)
     data_4cv={}
-
-
 
     train_pos=None
     val_pos=None
-    data_4cv["X_train"] = X_train
-    data_4cv["X_test"] = X_test
-    data_4cv["y_train_label"] = y_train_label_
-    data_4cv["y_test_label"] = y_test_label_
-    data_4cv["y_pnl_data_train"] = y_pnl_data_train
-    data_4cv["y_pnl_data_test"] = y_pnl_data_test
+    if (True):
+        data_4cv["X_train"] = X_train.copy()
+        data_4cv["y_train_label"] = y_train_label_.copy()
+        data_4cv["y_pnl_data_train"] = y_pnl_data_train.copy()
+
+
+        # data_4cv["X_test"] = X_test.copy()
+        # data_4cv["y_test_label"] = y_test_label_.copy()
+        # data_4cv["y_pnl_data_test"] = y_pnl_data_test.copy()
+
+        data_4cv["X_test"] =None
+        data_4cv["y_test_label"] =None
+        data_4cv["y_pnl_data_test"] =None
+    else:
+        # Déterminer l'indice de coupure pour 70%
+        split_index = int(0.7 * len(X_train))
+
+        # Split sans mélange (ordre préservé)
+        data_4cv["X_train"] = X_train.iloc[:split_index].copy()
+        data_4cv["X_test"] = X_train.iloc[split_index:].copy()
+
+        data_4cv["y_train_label"] = y_train_label_.iloc[:split_index].copy()
+        data_4cv["y_test_label"] = y_train_label_.iloc[split_index:].copy()
+
+        data_4cv["y_pnl_data_train"] = y_pnl_data_train.iloc[:split_index].copy()
+        data_4cv["y_pnl_data_test"] = y_pnl_data_train.iloc[split_index:].copy()
+
     if list(X_train.columns) != list(X_test.columns):
         raise ValueError("Les colonnes de X_train ne correspondent pas à celles de X_test (ordre ou contenu différent)")
 
-    # # Mapping pour compatibilité avec le traitement des folds
-    # data_4cv["X_train_cv"] = data_4cv["X_train"]
-    # data_4cv["X_val_cv"] = data_4cv["X_test"]
-    # data_4cv["Y_train_cv"] = data_4cv["y_train_label"]
-    # data_4cv["y_val_cv"] = data_4cv["y_test_label"]
-    # data_4cv["y_pnl_data_train_cv"] = data_4cv["y_pnl_data_train"]
-    # data_4cv["y_pnl_data_val_cv"] = data_4cv["y_pnl_data_test"]
+        # Création du répertoire si nécessaire
+    save_dir = os.path.join(results_directory, 'optuna_results')
+    os.makedirs(save_dir, exist_ok=True)
+
+    model_by_fold = bestResult_dict["model_by_fold"]
+    X_val_by_fold = bestResult_dict["X_val_by_fold"]
+
+    if model_by_fold is None:
+        raise ValueError("❌ ERREUR : model_by_fold est None")
+    if X_val_by_fold is None:
+        raise ValueError("❌ ERREUR : X_val_by_fold est None")
+
+    best_thresh_fold = bestResult_dict["best_thresh_fold"]
+    best_iteration_fold = bestResult_dict["best_iteration_fold"]
+
+    print(f"best_thresh_fold type: {type(best_thresh_fold)}")
+    print(f"best_thresh_fold value: {best_thresh_fold}")
+    print(f"best_iteration_fold type: {type(best_iteration_fold)}")
+    print(f"best_iteration_fold value: {best_iteration_fold}")
+    best_iteration_fold = np.array(best_iteration_fold)
+    print(f"🎯 Entraînement final → num_boost_round = {int(np.median(best_iteration_fold))} "
+          f"(médiane des best_iteration des {len(best_iteration_fold)} folds)")
+    other_params['num_boost_round_finalTrain'] = int(np.median(best_iteration_fold))
+    final_threshold_median = float(np.median(best_thresh_fold))
+    print(f"🎯 Seuil médian retenu après CV : {other_params['threshold']:.4f} "
+          f"(sur {len(best_thresh_fold)} folds)")
 
     # Traitement du fold avec le processor approprié
     try:
@@ -3072,32 +3540,242 @@ def reTrain_finalModel_analyse(
             is_log_enabled=is_log_enabled,
             config=config,
             fold_num=1,
-            log_evaluation=0)
-        # comparer
-        # scaler_init_dataSet=None,pca_object_init_dataSet=None):
-        # avec
+            log_evaluation=1)
+
         scaler_cv_train_test=fold_results["scaler"]
         pca_model_cv_train_test=fold_results["pca_model"]
-        # x_train_vifStatPCA_trainFinal_noCV=fold_results["x_train_vifStatPCA_trainFinal_noCV"]
-        # global x_train_vifStatPCA_initDataSet_DEBUG_global
-        # x_train_vifStatPCA_initDataSet_DEBUG_global
-        # result = compare_dataframes(
-        #     x_train_vifStatPCA_trainFinal_noCV,
-        #     x_train_vifStatPCA_initDataSet_DEBUG_global,
-        #     "x_train_vifStatPCA_trainFinal_noCV",
-        #     "x_train_vifStatPCA_initDataSet_DEBUG_global"
-        # )
-        #
-        # print("\nRésultat final:", "OK" if result else "PAS OK")
-        #
-        # exit(888)
+        x_train_vifStatPCA_trainFinal_noCV=fold_results["x_train_vifStatPCA_trainFinal_noCV"]
+        Y_train_trainFinal_noCV=fold_results["Y_train_trainFinal_noCV"]
         final_model=fold_results['current_model']
+        eval_metrics=fold_results["eval_metrics"]
+        print(fold_results["evals_result"])
+
+        # ------------------------------------------------------------------
+        # >> Vérification PnL sur le train final
+        # ------------------------------------------------------------------
+
+        # 0) Alias rapides ───────────────────────────────────────────────
+        X_train_final = x_train_vifStatPCA_trainFinal_noCV  # features
+        y_train_final = Y_train_trainFinal_noCV  # vraies classes
+        scaler = scaler_cv_train_test  # scaler
+        model_final = final_model  # booster
+        profit_tp = 175
+        loss_fp = -227
+        penalty_fn = other_params.get('penalty_per_fn', 0.0)  # 0 par défaut
+        num_round = other_params['num_boost_round_finalTrain']  # ← nombre d'arbres
+
+        calibrator = fold_results.get('calibrator')  # None si pas de calibration
+
+        print( X_train_final.columns.tolist())
+        # Exemple d'utilisation pour l'entraînement
+        train_results = evaluate_model(
+            X_data=X_train_final,
+            y_data=y_train_final,
+            model=model_final,
+            scaler=scaler,
+            calibrator=calibrator,
+            num_round=num_round,
+            config=config,
+            dataset_name="TRAIN",
+            profit_tp=profit_tp,
+            loss_fp=loss_fp,
+            penalty_fn=penalty_fn
+        )
+
+        # Enregistrer le seuil sweepé trouvé sur l'entraînement
+        best_thresh_train_full_sweep = train_results['best_threshold_sweep']
+
+        data_4cv["X_test"] = X_test.copy()
+        data_4cv["y_test_label"] = y_test_label_.copy()
+        data_4cv["y_pnl_data_test"] = y_pnl_data_test.copy()
+
+        # Exemple d'utilisation pour le test (en réutilisant le seuil de l'entraînement)
+        test_results = evaluate_model(
+            X_data=data_4cv["X_test"],
+            y_data=data_4cv["y_test_label"],
+            model=model_final,
+            scaler=scaler_cv_train_test,
+            calibrator=calibrator,
+            num_round=num_round,
+            config=config,
+            best_thresh_sweep=best_thresh_train_full_sweep,  # Utiliser le seuil trouvé sur l'entraînement
+            final_threshold_median=final_threshold_median,
+            dataset_name="TEST",
+            profit_tp=profit_tp,
+            loss_fp=loss_fp,
+            penalty_fn=penalty_fn
+        )
+
+        exit(32)
+
+
+        # 1) Scaling ─────────────────────────────────────────────────────
+        if scaler is not None:
+            X_scaled = (pd.DataFrame(scaler.transform(X_train_final.values),
+                                     columns=X_train_final.columns,
+                                     index=X_train_final.index)
+                        if isinstance(X_train_final, pd.DataFrame)
+                        else scaler.transform(X_train_final))
+        else:
+            X_scaled = X_train_final
+
+        import xgboost as xgb
+        dtrain_final = xgb.DMatrix(X_scaled)
+
+
+        # 2) Log-odds → proba (tous les arbres) ─────────────────────────
+        log_odds_train_full = model_final.predict(
+            dtrain_final,
+            iteration_range=(0, num_round),
+            output_margin=True
+        )
+
+
+        proba_train_full = (calibrator.predict(log_odds_train_full.reshape(-1, 1)).ravel()
+                      if calibrator is not None
+                      else 1.0 / (1.0 + np.exp(-log_odds_train_full)))
+
+        # 3) Sweep PnL global sur toutes les proba ────────────────────────
+        best_thresh_train_full_sweep, _, pnl_curve_full = sweep_threshold_pnl(
+            y_train_final, proba_train_full,
+            profit_tp=profit_tp, loss_fp=loss_fp,
+            penalty_fn=penalty_fn, n_steps=200
+        )
+
+        # ➡️ On ne modifie pas params_optuna si on veut comparer — mieux séparer
+        # Pour la prod réelle : tu peux décider si tu écrases ou pas le seuil.
+        # final_threshold = best_thresh_train_full  (optionnel)
+
+        # 4) Prédiction avec le seuil sweep final ─────────────────────────
+        y_pred_sweep = (proba_train_full >= best_thresh_train_full_sweep).astype(int)
+        tn, fp, fn, tp = compute_confusion_matrix_cpu(y_train_final, y_pred_sweep, config)
+
+        pnl_sweep = tp * profit_tp + fp * loss_fp + fn * penalty_fn
+        trades = tp + fp
+        samples = len(y_train_final)
+        winrate = 100 * tp / trades if trades else 0.0
+        trade_part = 100 * trades / samples if samples else 0.0
+
+        print(f"✅ Vérif entraînement final model → TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn} | "
+              f"Winrate: {winrate:.2f}% | PnL: {pnl_sweep:,.0f} | %Trades: {trade_part:.2f}%")
+        print(f"🔑 Seuil sweepé sur train complet = {best_thresh_train_full_sweep:.4f} "
+              f"| Max PnL observé (sweep) = {pnl_curve_full.max():,.0f} €")
+        # 5) Comparaison avec seuil médian CV (final_threshold) ─────────────
+        y_pred_median = (proba_train_full >= final_threshold_median).astype(int)
+        tn_median, fp_median, fn_median, tp_median = compute_confusion_matrix_cpu(y_train_final, y_pred_median, config)
+
+        pnl_median = tp_median * profit_tp + fp_median * loss_fp + fn_median * penalty_fn
+        trades_median = tp_median + fp_median
+        samples = len(y_train_final)
+        winrate_median = 100 * tp_median / trades_median if trades_median else 0.0
+        trade_part_median = 100 * trades_median / samples if samples else 0.0
+
+        print(f"✅ Vérif seuil médian CV → TP: {tp_median} | FP: {fp_median} | TN: {tn_median} | FN: {fn_median} | "
+              f"Winrate: {winrate_median:.2f}% | PnL: {pnl_median:,.0f} | %Trades: {trade_part_median:.2f}%")
+        print(f"🔑 Seuil médian CV utilisé = {final_threshold_median:.4f}")
+
+        # val_metrics = fold_results["eval_metrics"]
+        # tp = val_metrics['tp']
+        # fp = val_metrics['fp']
+        # tn = val_metrics['tn']
+        # fn = val_metrics['fn']
+        # # Calculs
+        #
+        # nb_trades=tp+fp
+        # total_samples = tp + fp+tn+fn
+        # trade_part = (nb_trades / total_samples) * 100 if total_samples > 0 else 0
+        # winrate = (tp / nb_trades) * 100 if nb_trades > 0 else 0
+        # pnl = (tp * 175) + (fp * -227)
+        # # Affichage
+        # print(
+        #     f"✅ Vérif entraînement final model → TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn} | Winrate: {winrate:.2f}% | PnL: {pnl:.2f} | %Trades: {trade_part:.2f}%")
+        print("Keys in fold_results:", fold_results.keys())
+        print("Keys in eval_metrics:", fold_results["eval_metrics"].keys())
+        # val_pred_proba_log_odds=fold_results["eval_metrics"]["val_pred_proba_log_odds"]
+        # y_val_cv=fold_results["eval_metrics"]["y_val_cv"]
+        #
+        # val_score_bestIdx=fold_results["val_score_bestIdx"]
+        # print("val_score_bestIdx: ",val_score_bestIdx)
+        # evals_result = fold_results["evals_result"] #valid_names=['train', 'eval'],
+        plot_train_eval_performance(fold_results,save_dir=save_dir, mode="train_only")
+
+        #print("val_pred_proba_log_odds: ",val_pred_proba_log_odds)
     except Exception as e:
         print("❌ Erreur dans process_cv_fold_xgboost :")
         print("Type:", type(e).__name__)
         print("Message:", str(e))
         traceback.print_exc()  # Affiche la stack complète 🔥
         raise  # Optionnel : fait remonter l’erreur au niveau supérieur
+
+    data_4cv["X_test"] = X_test.copy()
+    data_4cv["y_test_label"] = y_test_label_.copy()
+    data_4cv["y_pnl_data_test"] = y_pnl_data_test.copy()
+    X_val_cv_scaled_np = scaler_cv_train_test.transform(data_4cv["X_test"].values)
+    X_val_cv_scaled = pd.DataFrame(X_val_cv_scaled_np, columns=data_4cv["X_test"].columns, index=data_4cv["X_test"].index)
+    # wrapped_model = BoosterWrapper(final_model, model_type='lgbm')  # ou 'lgbm' si LightGBM
+
+    # log_odds = wrapped_model.predict( data_4cv["X_test"], output_margin=True)
+    # proba_raw = expit(log_odds)  # Or 1/(1+np.exp(-log_odds))
+    model_type = config['model_type']
+    if model_type == modelType.XGB:
+        import xgboost as xgb
+        dData = xgb.DMatrix(X_val_cv_scaled)
+    else:
+        dData=X_val_cv_scaled
+    # y_test_predProba, test_pred_proba_log_odds, test_pred, (tn_test, fp_test, fn_test, tp_test), Y_test_cv = \
+    #     predict_and_compute_metrics_XgbOrLightGbm(model=final_model, X_data=dData, y_true= data_4cv["y_test_label"],
+    #                                               best_iteration=val_score_bestIdx+1, threshold=other_params['threshold'],
+    #                                               config=config)
+    #
+    # total_profit, tp, fp = calculate_profitBased(
+    #     y_true_class_binaire=data_4cv["y_test_label"],
+    #     y_pred_threshold=test_pred,
+    #     y_pnl_data_array =data_4cv["y_pnl_data_test"] ,
+    #     other_params=other_params,
+    #     config=config
+    # )
+    # 5. Affichage
+    print(f"final_model: tp_train: {tp_test} | fp_test: {fp_test} | tn_test: {tn_test} | fn_test: {fn_test} {total_profit} {tp} {fp}")
+
+    res = sweep_threshold_pnl_real(
+        model=final_model,
+        X=X_val_cv_scaled,
+        y_true_class_binaire=data_4cv["y_test_label"],
+        y_pnl_data=data_4cv["y_pnl_data_test"],
+        config=config,
+        val_score_bestIdx=val_score_bestIdx,
+        other_params=other_params,
+        thresholds=np.arange(0.45, 0.61, 0.005)
+    )
+
+    # Affiche les 5 meilleurs seuils selon pnl_total
+    for r in res:
+        print(f"Seuil: {r['threshold']:.3f} | TP={r['TP']}, FP={r['FP']}, FN={r['FN']}, TN={r['TN']} "
+              f"| TP_gains={r['TP_gains']:.2f}, FP_losses={r['FP_losses']:.2f}, "
+              f"FN_missed={r['FN_missed']:.2f}, PnL={r['pnl_total']:.2f}")
+
+    if config['model_type'] == modelType.XGB:
+        results = compare_calibration_methods(
+            final_model,
+            X_val_cv_scaled,
+            y_val_cv,
+            config=config,
+            score_bestIdx=val_score_bestIdx,
+            other_params=other_params , # ← AJOUT OBLIGATOIRE
+        save_dir=save_dir
+        )
+    elif config['model_type'] == modelType.LGBM:
+        results = compare_calibration_methods(
+            final_model,
+            X_val_cv_scaled,
+            y_val_cv,
+            config=config,
+            score_bestIdx=val_score_bestIdx,
+            other_params=other_params,  # ← AJOUT ICI AUSSI
+        save_dir=save_dir
+
+        )
+
 
     data_4cv=other_params['data_4cv']
     cv=other_params["cv"]
@@ -3119,22 +3797,23 @@ def reTrain_finalModel_analyse(
         X_val_cv_scaled = pd.DataFrame(X_val_cv_scaled_np, columns=X_val_cv.columns, index=X_val_cv.index)
 
 
-        high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
-        columns_without_pca = other_params['colomnsList_with_vif_stat_without_pca_']
-        # 2. Appliquer la PCA aux données de validation scalées
-        pca_val = pca_model_cv_train_test.transform(X_val_cv[high_corr_columns_used4pca])
-        pca_cols = [f'pca_{i + 1}' for i in range(nb_pca)]
-        print("nb_pca: ",nb_pca)
-        print("Shape of pca_val:", pca_val.shape)
-        print(pca_cols)
-        print("Type of X_val_cv_scaled:", type(X_val_cv_scaled))
-        print("Est-ce un DataFrame?", isinstance(X_val_cv_scaled, pd.DataFrame))
-        for i, col_name in enumerate(pca_cols):
-            X_val_cv_scaled[col_name] = pca_val[:, i]
 
+        if (config['nb_pca']>0):
+            high_corr_columns_used4pca = other_params['high_corr_columns_used4pca']
+            columns_without_pca = other_params['colomnsList_with_vif_stat_without_pca_']
+            # 2. Appliquer la PCA aux données de validation scalées
+            pca_val = pca_model_cv_train_test.transform(X_val_cv[high_corr_columns_used4pca])
+            pca_cols = [f'pca_{i + 1}' for i in range(nb_pca)]
+            print("nb_pca: ",nb_pca)
+            print("Shape of pca_val:", pca_val.shape)
+            print(pca_cols)
+            print("Type of X_val_cv_scaled:", type(X_val_cv_scaled))
+            print("Est-ce un DataFrame?", isinstance(X_val_cv_scaled, pd.DataFrame))
+            for i, col_name in enumerate(pca_cols):
+                X_val_cv_scaled[col_name] = pca_val[:, i]
 
-        X_val_cv_scaled.drop(columns=high_corr_columns_used4pca, inplace=True)
-        print("high_corr_columns_used4pca: ",high_corr_columns_used4pca)
+            X_val_cv_scaled.drop(columns=high_corr_columns_used4pca, inplace=True)
+            print("high_corr_columns_used4pca: ",high_corr_columns_used4pca)
         # Juste les noms de colonnes
         print("\n===== DÉMARRAGE DE LA PREDICTION =====")
         print(f"X_val_cv   : {len(X_val_cv_scaled.columns)} colonnes -> {list(X_val_cv_scaled.columns)}")
@@ -3145,14 +3824,37 @@ def reTrain_finalModel_analyse(
         start_time_val, end_time_val, _ = get_val_cv_time_range(X_full=X_train_full, X=X_val_cv_pd)
         print("Validation dates: de", timestamp_to_date_utc_(start_time_val), "à", timestamp_to_date_utc_(end_time_val))
         # Prédictions et métriques
-        sample_weights_train, sample_weights_val = compute_sample_weights(Y_train_cv, y_val_cv)
+        #sample_weights_train, sample_weights_val = compute_sample_weights(Y_train_cv, y_val_cv)
+        if (config['model_type'] == modelType.XGB):
+            dval = xgb.DMatrix(X_val_cv_scaled, label=y_val_cv, #weight=sample_weights_val
+                               )
+            val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
+                predict_and_compute_metrics_XgbOrLightGbm(model=final_model, X_data=dval, y_true=y_val_cv,
+                                            best_iteration=final_model.best_iteration,
+                                            threshold=other_params['threshold'],
+                                            config=config)
+        elif (config['model_type'] == modelType.LGBM):
+            val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
+                predict_and_compute_metrics_XgbOrLightGbm(model=final_model, X_data=X_val_cv_scaled, y_true=y_val_cv,
+                                            best_iteration=final_model.best_iteration,
+                                            threshold=other_params['threshold'],
+                                            config=config)
+        elif (config['model_type'] == modelType.XGBRF or config['model_type'] == modelType.RF):
+            val_pred_proba, val_pred_proba_log_odds, val_pred, tn_val, fp_val, fn_val, tp_val, y_val_converted = predict_and_compute_metrics_RF(
+                model=final_model,
+                X_data=X_val_cv_scaled,
+                y_true=y_val_cv,
+                threshold=other_params['threshold'],
+                config=config
+            )
+        # elif (modelType.RF):
+        # elif (modelType.RF):
+        # elif (modelType.XGBRF):
+        # elisf(modelType.SVC):
 
-        dval = xgb.DMatrix(X_val_cv_scaled, label=y_val_cv, weight=sample_weights_val)
 
-        val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
-            predict_and_compute_metrics(model=final_model, X_data=dval, y_true=y_val_cv,
-                                        best_iteration=final_model.best_iteration, threshold=other_params['threshold'],
-                                        config=config)
+
+
         # Nombre total d'échantillons
         total_samples = tn_val + fp_val + fn_val + tp_val
 
@@ -3172,6 +3874,51 @@ def reTrain_finalModel_analyse(
         print(f"Nombre total de trades: {total_trades}")
         print(f"Winrate: {winrate_percent:.2f}%")
         print(f"Part des trades pris: {trade_rate_percent:.2f}%")
+
+
+
+
+
+    for i, (model, X_val) in enumerate(zip(model_by_fold, X_val_by_fold)):
+        status = f"Fold {i} : "
+        if model is None:
+            status += "❌ modèle manquant | "
+        else:
+            status += "✅ modèle OK | "
+
+        if X_val is None:
+            status += "⚠️ X_val = None"
+        elif isinstance(X_val, pd.DataFrame):
+            status += f"✅ X_val = {X_val.shape[0]}x{X_val.shape[1]}"
+        else:
+            status += f"❌ X_val = {type(X_val)}"
+
+        print(status)
+
+    # 0)  Entraînements déjà faits → list[Booster] + list[DataFrame]
+    shap_raw = build_shap_table(model_by_fold, X_val_by_fold)
+
+    # 1)  Ajout des métriques
+    metrics = add_stability_metrics(shap_raw, top_n=20, add_levene=False)
+
+    # 2)  Sélection (exemple : importance ≥1e‑3, cv ≤0.25, freq_top20 ≥3)
+    features_ok, df_selected = select_features(
+        metrics,
+        min_mean=1e-3,
+        max_cv=0.25,
+        min_freq_topN=3
+    )
+
+    print(f"{len(features_ok)} features retenues →", features_ok)
+
+    # 3)  Export complet + colonne « kept »
+    metrics["kept"] = metrics.index.isin(features_ok)
+    export_stability_csv(metrics, save_dir=save_dir)
+
+
+    main_shap_analysis(final_model, X_train=x_train_vifStatPCA_trainFinal_noCV, y_train_label=y_train_label_, X_test=None, y_test_label=None,
+                           save_dir=save_dir)
+
     exit(74)
     # config.update({
     #   'y_pnl_data_train_cv': y_train_label_,
@@ -3208,9 +3955,7 @@ def reTrain_finalModel_analyse(
     current_time = datetime.now()
     timestamp = current_time.strftime("%y%m%d_%H_%M_%S")  # Format: YYMMDD_HH_MM_SS
 
-    # Création du répertoire si nécessaire
-    save_dir = os.path.join(results_directory, 'optuna_results')
-    os.makedirs(save_dir, exist_ok=True)
+
 
     # Sauvegarde du modèle
     model_file = os.path.join(save_dir, f"final_training_model_{timestamp}.json")
@@ -3282,7 +4027,7 @@ def reTrain_finalModel_analyse(
         print("Les prédictions sont dans l'intervalle [0, 1] attendu pour une classification binaire.")
     """
     y_pred_proba_afterSig, pred_proba_log_odds, predictions_converted, (
-    tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics(
+    tn_xtest, fp_xtest, fn_xtest, tp_xtest), y_test_label_converted = predict_and_compute_metrics_XgbOrLightGbm(
         model=final_model,
         X_data=X_test,
         y_true=y_test_label_,
@@ -4082,14 +4827,16 @@ def calculate_global_ecart(
 
     return ecart_global
 
+
 def calculate_normalized_pnl_objectives(trial,
-        tp_train_list, fp_train_list,
-        tp_val_list, fp_val_list,
-        scores_train_list, scores_val_list,
-        fold_stats,
-        config=None,
-        use_trade_weighting_for_ecart=True
-):
+                                        tp_train_list, fp_train_list,
+                                        tp_val_list, fp_val_list,
+                                        scores_train_list, scores_val_list, winrates_val_by_fold,
+                                        brier_val_list=None,
+                                        relative_brier_val_list=None,
+                                        config=None,
+                                        use_trade_weighting_for_ecart=True
+                                        ):
     import math
     import numpy as np
 
@@ -4118,19 +4865,32 @@ def calculate_normalized_pnl_objectives(trial,
     total_pnl = sum(m['val_pnl'] for m in fold_metrics)
     avg_pnl = total_pnl / len(fold_metrics)
 
+    # On récupère l'écart global de winrate (train vs val)
     ecart_global = calculate_global_ecart(
         tp_train_list, fp_train_list,
         tp_val_list, fp_val_list,
         use_trade_weighting=use_trade_weighting_for_ecart
     )
 
+    # Récupération des flags depuis la config
     use_imbalance_penalty = config.get('use_imbalance_penalty', False) if config else False
     use_std_penalty = config.get('use_std_penalty', False) if config else False
+    use_brier_penalty = config.get('use_brier_penalty', False) if config else False
+    use_winrate_std_penalty = config.get('use_winrate_std_penalty', False) if config else False
+    use_negative_pnl_penalty = config.get('use_negative_pnl_penalty', False) if config else False
+
+    # 🔴 Le nouveau flag pour pénaliser l’écart Train/Val
+    use_winrate_ecart_penalty = config.get('use_winrate_ecart_penalty', False) if config else False
 
     penalty = 1.0
     imbalance_penalty = 1.0
     std_penalty = 1.0
+    brier_penalty = 1.0
+    winrate_std_penalty = 1.0
+    negative_pnl_penalty = 1.0
+    winrate_train_val_ecart_penalty = 1.0
 
+    # ------------------------ PÉNALITÉS DÉJÀ EN PLACE ------------------------
     if use_imbalance_penalty:
         n_trades_val_list = [m['n_trades_val'] for m in fold_metrics]
         max_trades = max(n_trades_val_list)
@@ -4146,29 +4906,97 @@ def calculate_normalized_pnl_objectives(trial,
         std_penalty = 1 + cv_trades
         penalty *= std_penalty
 
+    if use_winrate_std_penalty and winrates_val_by_fold is not None and len(winrates_val_by_fold) > 0:
+        # Convertir si string avec '%'
+        winrates_decimal = []
+        for wr in winrates_val_by_fold:
+            if isinstance(wr, str) and '%' in wr:
+                winrates_decimal.append(float(wr.strip('%')) / 100)
+            else:
+                winrates_decimal.append(float(wr))
+
+        std_winrate = np.std(winrates_decimal)
+        mean_winrate = np.mean(winrates_decimal)
+        cv_winrate = std_winrate / (mean_winrate + 1e-8)
+        winrate_std_penalty = 1 + cv_winrate * 2  # Facteur multiplicatif ajustable
+        penalty *= winrate_std_penalty
+
+    if use_brier_penalty and relative_brier_val_list is not None and len(relative_brier_val_list) > 0:
+        if len(relative_brier_val_list) == len(fold_metrics):
+            mean_relative_brier = np.mean(relative_brier_val_list)
+            brier_penalty = 1 + mean_relative_brier
+            penalty *= brier_penalty
+        else:
+            raise ValueError(
+                f"Liste de Brier scores relatifs incohérente: {len(relative_brier_val_list)}"
+                f" scores pour {len(fold_metrics)} folds"
+            )
+
+    if use_negative_pnl_penalty and scores_val_list is not None and len(scores_val_list) > 0:
+        try:
+            min_pnl_val = min(scores_val_list)
+            nb_neg = sum(1 for s in scores_val_list if s < 0)
+            if nb_neg > 0:
+                # log pour atténuer l’effet des grosses pertes
+                print("log pour atténuer l’effet des grosses pertes")
+                scaled_penalty = math.log(1 + abs(min_pnl_val) / 1000)
+                negative_pnl_penalty = 1 + nb_neg + scaled_penalty
+                penalty *= negative_pnl_penalty
+        except Exception as e:
+            print(f"⚠️ Erreur lors du traitement des scores_val_list : {e}")
+            pnl_norm_objective = float('-inf')  # fallback très négatif si erreur
+            return {
+                'pnl_norm_objective': pnl_norm_objective,
+                'ecart_train_val': float('inf'),
+            }
+
+    # ------------------ NOUVELLE PÉNALITÉ SUR L’ÉCART TRAIN/VAL ------------------
+    # si le flag est activé, on pénalise le fait que l'écart (ecart_global) soit élevé
+    if use_winrate_ecart_penalty:
+        # Par exemple, multiplier la pénalité par (1 + factor * ecart_global).
+        # Choisissez la constante d'échelle (ici 2.0) selon l'importance que vous donnez à la pénalisation.
+        factor = config.get('winrate_ecart_factor', 10.0)  # Valeur par défaut
+        winrate_train_val_ecart_penalty = 1 + factor * ecart_global
+        penalty *= winrate_train_val_ecart_penalty
+
+    # ------------------------ CALCUL DE L’OBJECTIF FINAL ------------------------
     pnl_norm_objective = avg_pnl / penalty
     ecart_train_val = ecart_global
 
+    # Attributs enregistrés pour analyse ultérieure
     trial.set_user_attr('pnl_norm_objective', pnl_norm_objective)
     trial.set_user_attr('avg_pnl', avg_pnl)
     trial.set_user_attr('imbalance_penalty', imbalance_penalty)
     trial.set_user_attr('std_penalty', std_penalty)
+    trial.set_user_attr('brier_penalty', brier_penalty)
+    trial.set_user_attr('winrate_std_penalty', winrate_std_penalty)
+    trial.set_user_attr('negative_pnl_penalty', negative_pnl_penalty)
+    trial.set_user_attr('winrate_train_val_ecart_penalty', winrate_train_val_ecart_penalty)
     trial.set_user_attr('ecart_train_val', ecart_train_val)
+
+    if relative_brier_val_list is not None and len(relative_brier_val_list) > 0:
+        trial.set_user_attr('mean_relative_brier', np.mean(relative_brier_val_list))
+    if brier_val_list is not None and len(brier_val_list) > 0:
+        trial.set_user_attr('mean_brier', np.mean(brier_val_list))
 
     # ✅ LOG condensé : valeurs actuelles vs meilleur trial (si dispo)
     print("\n--- Résumé Trial Actuel vs Meilleur Trial ---")
     try:
-        best = trial.study.best_trial  # Provoque une erreur si aucun trial terminé
-        print(
-            f"pnl_norm_objective : {pnl_norm_objective:.4f} | best : {best.user_attrs.get('pnl_norm_objective', 'n/a'):.4f}")
+        best = trial.study.best_trial  # Erreur si aucun trial terminé
+        print(f"pnl_norm_objective : {pnl_norm_objective:.4f} | best : {best.user_attrs.get('pnl_norm_objective', 'n/a'):.4f}")
         print(f"avg_pnl            : {avg_pnl:.4f} | best : {best.user_attrs.get('avg_pnl', 'n/a'):.4f}")
         print(f"penalty total      : {penalty:.4f} | best : "
-              f"{best.user_attrs.get('imbalance_penalty', 1.0) * best.user_attrs.get('std_penalty', 1.0):.4f}")
-        print(
-            f"imbalance_penalty  : {imbalance_penalty:.4f} | best : {best.user_attrs.get('imbalance_penalty', 'n/a'):.4f}")
+              f"{best.user_attrs.get('imbalance_penalty', 1.0) * best.user_attrs.get('std_penalty', 1.0) * best.user_attrs.get('brier_penalty', 1.0) * best.user_attrs.get('winrate_std_penalty', 1.0) * best.user_attrs.get('negative_pnl_penalty', 1.0) * best.user_attrs.get('winrate_train_val_ecart_penalty', 1.0):.4f}")
+        print(f"imbalance_penalty  : {imbalance_penalty:.4f} | best : {best.user_attrs.get('imbalance_penalty', 'n/a'):.4f}")
         print(f"std_penalty        : {std_penalty:.4f} | best : {best.user_attrs.get('std_penalty', 'n/a'):.4f}")
-        print(
-            f"ecart_train_val    : {ecart_train_val:.4f} | best : {best.user_attrs.get('ecart_train_val', 'n/a'):.4f}")
+        print(f"brier_penalty      : {brier_penalty:.4f} | best : {best.user_attrs.get('brier_penalty', 'n/a'):.4f}")
+        print(f"winrate_std_penalty: {winrate_std_penalty:.4f} | best : {best.user_attrs.get('winrate_std_penalty', 'n/a'):.4f}")
+        print(f"negative_pnl_penalty: {negative_pnl_penalty:.4f} | best : {best.user_attrs.get('negative_pnl_penalty', 'n/a'):.4f}")
+        print(f"winrate_train_val_ecart_penalty: {winrate_train_val_ecart_penalty:.4f} | best : {best.user_attrs.get('winrate_train_val_ecart_penalty', 'n/a'):.4f}")
+
+        if relative_brier_val_list:
+            print(f"mean_relative_brier: {np.mean(relative_brier_val_list):.4f} | best : {best.user_attrs.get('mean_relative_brier', 'n/a'):.4f}")
+        print(f"ecart_train_val    : {ecart_train_val:.4f} | best : {best.user_attrs.get('ecart_train_val', 'n/a'):.4f}")
     except ValueError:
         print("⚠️ Aucun trial terminé, affichage du trial en cours uniquement.")
         print(f"pnl_norm_objective : {pnl_norm_objective:.4f}")
@@ -4176,6 +5004,12 @@ def calculate_normalized_pnl_objectives(trial,
         print(f"penalty total      : {penalty:.4f}")
         print(f"imbalance_penalty  : {imbalance_penalty:.4f}")
         print(f"std_penalty        : {std_penalty:.4f}")
+        print(f"brier_penalty      : {brier_penalty:.4f}")
+        print(f"winrate_std_penalty: {winrate_std_penalty:.4f}")
+        print(f"negative_pnl_penalty: {negative_pnl_penalty:.4f}")
+        print(f"winrate_train_val_ecart_penalty: {winrate_train_val_ecart_penalty:.4f}")
+        if relative_brier_val_list is not None and len(relative_brier_val_list) > 0:
+            print(f"mean_relative_brier: {np.mean(relative_brier_val_list):.4f}")
         print(f"ecart_train_val    : {ecart_train_val:.4f}")
     print("------------------------------------------------")
 
@@ -4186,10 +5020,12 @@ def calculate_normalized_pnl_objectives(trial,
             'avg_pnl': avg_pnl,
             'ecart_global': ecart_global,
             'imbalance_penalty': imbalance_penalty,
-            'std_penalty': std_penalty
+            'std_penalty': std_penalty,
+            'brier_penalty': brier_penalty,
+            'winrate_std_penalty': winrate_std_penalty,
+            'winrate_train_val_ecart_penalty': winrate_train_val_ecart_penalty
         }
     }
-
 
 def normalize_to_range(value, old_min, old_max, new_min=0, new_max=1):
     """
@@ -4763,7 +5599,7 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
             'random_state': random_state_seed_,
             'tree_method': 'hist',
             'device': device,
-            # 'boosting_type': boosting_type,
+            'booster': boosting_type,
         }
         # num_boost_round = trial.suggest_int('num_boost_round',
         #                                   modele_param_optuna_range['num_boost_round']['min'],
@@ -4791,13 +5627,6 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                 'min_child_samples',
                 modele_param_optuna_range['min_child_samples']['min'],
                 modele_param_optuna_range['min_child_samples']['max']
-            ),
-
-            # Configuration de la fraction des données pour le bagging
-            'bagging_fraction': trial.suggest_float(
-                'bagging_fraction',
-                modele_param_optuna_range['bagging_fraction']['min'],
-                modele_param_optuna_range['bagging_fraction']['max']
             ),
 
             # Configuration de la fraction des features par arbre
@@ -4837,6 +5666,13 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                 log=modele_param_optuna_range['lambda_l2'].get('log', False)
             ),
 
+            # Configuration de la fraction des données pour le bagging
+            'bagging_fraction': trial.suggest_float(
+                'bagging_fraction',
+                modele_param_optuna_range['bagging_fraction']['min'],
+                modele_param_optuna_range['bagging_fraction']['max']
+            ),
+
             # Configuration de la fréquence du bagging
             'bagging_freq': trial.suggest_int(
                 'bagging_freq',
@@ -4844,17 +5680,52 @@ def setup_model_params_optuna(trial, config, random_state_seed_):
                 modele_param_optuna_range['bagging_freq']['max']
             ),
 
-            # Paramètres fixes
-            'boosting_type': boosting_type,
-            'max_depth': -1,  # Laisser LightGBM optimiser la profondeur
-            'min_data_in_bin': 3,  # Minimum d'observations par bin
-            'max_bin': 255,  # Nombre maximum de bins
+            # Nouveau: Configuration de la profondeur maximale de l'arbre
+            'max_depth': trial.suggest_int(
+                'max_depth',
+                modele_param_optuna_range.get('max_depth', {}).get('min', 2),
+                modele_param_optuna_range.get('max_depth', {}).get('max', 5)
+            ),
+
+            # Nouveau: Configuration du lissage des chemins
+            'path_smooth': trial.suggest_float(
+                'path_smooth',
+                modele_param_optuna_range.get('path_smooth', {}).get('min', 0),
+                modele_param_optuna_range.get('path_smooth', {}).get('max', 3)
+            ) if 'path_smooth' in modele_param_optuna_range else 0,
+
+            # Nouveau: Configuration du dropout pour mode dart (si applicable)
+            'drop_rate': trial.suggest_float(
+                'drop_rate',
+                modele_param_optuna_range.get('drop_rate', {}).get('min', 0.01),
+                modele_param_optuna_range.get('drop_rate', {}).get('max', 0.5)
+            ) if boosting_type == 'dart' and 'drop_rate' in modele_param_optuna_range else 0.1,
+
+            'skip_drop': trial.suggest_float(
+                'skip_drop',
+                modele_param_optuna_range.get('skip_drop', {}).get('min', 0.1),
+                modele_param_optuna_range.get('skip_drop', {}).get('max', 0.8)
+            ) if boosting_type == 'dart' else 0.5,
+
+            'max_drop': trial.suggest_int(
+                'max_drop',
+                modele_param_optuna_range.get('max_drop', {}).get('min', 5),
+                modele_param_optuna_range.get('max_drop', {}).get('max', 50)
+            ) if boosting_type == 'dart' else 10,
+
+            # 🔧 Paramètres fixes
+            'min_data_in_bin': 3,
+            'max_bin': 255,
             'seed': random_state_seed_,
-            'device_type': device,  # 'cpu' ou 'gpu'
-            'metric': 'None',  # Pour custom metric
-            'objective': 'binary',  # Classification binaire
-            'verbose': -1,  # Réduire les logs
-            'boost_from_average': True  # Meilleure initialisation
+            'device_type': device,
+            'metric': 'None',
+            'objective': 'binary',
+            'verbose': -1,
+            'boost_from_average': True,
+            'extra_trees': True,
+            'early_stopping_rounds': modele_param_optuna_range.get('early_stopping_rounds', 100),
+            'boosting_type': boosting_type,
+
         }
     elif model_type == modelType.XGBRF:
         params = {
@@ -5165,6 +6036,8 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
                          for key, value in metrics_dict.items()
                          if key.startswith('total_')}
 
+
+
         if config['device_'] == 'cuda':
             mean_val_score = float(cp.mean(arrays['scores_val']).get())
             std_val_score = float(cp.std(arrays['scores_val']).get())
@@ -5194,6 +6067,13 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
             'nb_samples_val_by_fold': arrays['nb_samples_val'],
             'tp_val_by_fold': arrays['tp_val'],
             'fp_val_by_fold': arrays['fp_val'],
+            'X_val_by_fold': arrays['X_val_by_fold'],
+            'model_by_fold': arrays['model_by_fold'],
+
+            'best_thresh_fold': arrays['best_thresh_fold'],
+            'best_iteration_fold': arrays['best_iteration_fold'],
+            'calibrator': arrays['calibrator'],
+
             'scores_val_by_fold': arrays['scores_val'],
             'class0_raw_data_val_by_fold': arrays['class0_raw_data_val_by_fold'],
             'class1_raw_data_val_by_fold': arrays['class1_raw_data_val_by_fold'],
@@ -5201,6 +6081,11 @@ def calculate_final_results(metrics_dict, arrays, all_fold_stats, nb_split_tscv,
             'val_pred_proba_log_odds': arrays['val_pred_proba_log_odds'],
             'val_trades_samples_perct': arrays['val_trades_samples_perct'],
             'val_bestVal_custom_metric_pnl': arrays['val_bestVal_custom_metric_pnl'],
+
+            'brier_val':arrays['brier_val'],
+            'relative_brier_val':arrays['relative_brier_val'],
+
+
 
             'mean_val_score': mean_val_score,
             'std_val_score': std_val_score,
@@ -5297,6 +6182,7 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['train_trades_samples_perct'][fold_num] = fold_results['fold_stats']['train_trades_samples_perct']
         arrays['tp_train'][fold_num] = fold_results['train_metrics']['tp']
         arrays['fp_train'][fold_num] = fold_results['train_metrics']['fp']
+
         arrays['train_bestVal_custom_metric_pnl'][fold_num] = fold_results['train_metrics'][
             'train_bestVal_custom_metric_pnl']
 
@@ -5324,12 +6210,26 @@ def update_metrics_and_arrays(metrics_dict, arrays, fold_results, fold_num, all_
         arrays['val_trades_samples_perct'][fold_num] = fold_results['fold_stats']['val_trades_samples_perct']
         arrays['tp_val'][fold_num] = fold_results['eval_metrics']['tp']
         arrays['fp_val'][fold_num] = fold_results['eval_metrics']['fp']
+        arrays['X_val_by_fold'][fold_num] = fold_results['eval_metrics']['X_val_cv']
+
+        arrays['model_by_fold'][fold_num] = fold_results['current_model']
+
+        if config["calibration_method"]!="no_sweet_no_calib":
+            arrays['best_thresh_fold'][fold_num] = fold_results['best_thresh_fold']
+            arrays['best_iteration_fold'][fold_num] = fold_results['best_iteration_fold']
+
+            arrays['calibrator'][fold_num] = fold_results['calibrator']
+
+
         arrays['val_bestVal_custom_metric_pnl'][fold_num] = fold_results['eval_metrics'][
             'val_bestVal_custom_metric_pnl']
         arrays['class0_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(0,
                                                                                                                     0)
         arrays['class1_raw_data_val_by_fold'][fold_num] = fold_results['fold_raw_data']['distributions']['val'].get(1,
                                                                                                                     0)
+
+        arrays['brier_val'][fold_num] = fold_results["eval_metrics"]["brier"]
+        arrays['relative_brier_val'][fold_num] = fold_results["eval_metrics"]["relative_brier"]
 
         class0_val = arrays['class0_raw_data_val_by_fold'][fold_num]
         class1_val = arrays['class1_raw_data_val_by_fold'][fold_num]
@@ -5432,7 +6332,7 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_
 
         # Vérification finale
         declared_cols = set(high_corr_columns_used4pca).union(colomnsList_with_vif_stat_without_pca_)
-        print(f"✅ Total déclaré = {len(declared_cols)} colonnes (HORS PCA + AVEC COL FOR PCA)")
+        print(f"✅ Total features déclaré = {len(declared_cols)} colonnes (HORS PCA + AVEC COL FOR PCA)")
 
         # Vérifications communes
         # validate_inputs(X_train, y_train_label)
@@ -5455,9 +6355,6 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_
                                              is_log_enabled, df_init_candles)
 
         for fold_num, (train_pos, val_pos) in enumerate(cv.split(X_train)):
-            # Validation des indices
-            # print(f"train_pos: {train_pos}")
-            # print(f"val_pos: {val_pos}")
             validate_fold_indices(train_pos, val_pos)
 
             # Préparation des données du fold
@@ -5496,10 +6393,10 @@ def run_cross_validation(X_train=None, X_train_full=None, y_train_label=None, y_
         #       print("results[model_lastFold]: ",model_lastFold)
         #        print("results['model_lastFold]: ",model_lastFold.params)
 
-        if config['device_'] == 'cuda':
-            print(f"\nMémoire GPU finale: {cp.get_default_memory_pool().used_bytes() / 1024 ** 2:.2f} MB")
-        else:
-            print("\nMode CPU - pas de tracking mémoire GPU")
+        # if config['device_'] == 'cuda':
+        #     print(f"\nMémoire GPU finale: {cp.get_default_memory_pool().used_bytes() / 1024 ** 2:.2f} MB")
+        # else:
+        #     print("\nMode CPU - pas de tracking mémoire GPU")
 
         return results, raw_metrics_byFold
 
@@ -5583,8 +6480,8 @@ def apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv):
     # ⚙️ Scaling
     chosen_scaler = config.get('scaler_choice', scalerChoice.SCALER_ROBUST)
     if chosen_scaler != scalerChoice.SCALER_DISABLE:
-        print(f"\n⚙️  Scaler activé : {chosen_scaler}")
-        X_train_cv, X_val_cv, scaler = apply_scaling(
+      #  print(f"\n⚙️  Scaler activé : {chosen_scaler}")
+        X_train_cv, X_val_cv, scaler,scaler_params_ret = apply_scaling(
             X_train_cv,
             X_val_cv,
             save_path=None,
@@ -5611,7 +6508,8 @@ def apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv):
         X_train_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
         X_val_cv.drop(columns=high_corr_columns_used4pca, inplace=True)
     else:
-        print("\n⏭️  Aucune colonne spécifiée pour la PCA (liste vide)")
+        pca_model=None
+        #print("\n⏭️  Aucune colonne spécifiée pour la PCA (liste vide)")
 
     # print(X_train_cv.head(20))
     # print(X_val_cv.head(20))
@@ -5643,7 +6541,7 @@ def process_cv_fold_xgboost(
     config=None,
     log_evaluation=0
 ):
-    print("______ process_cv_fold_xgboost______")
+    #print("______ process_cv_fold_xgboost______")
     try:
         # Vérif que data est dispo
         if data_4cv is None:
@@ -5702,6 +6600,8 @@ def process_cv_fold_xgboost(
 
         if (val_pos is None or train_pos is None): #pas de cv on travail sur un df entier
             fold_results["x_train_vifStatPCA_trainFinal_noCV"]=X_train_cv
+            fold_results["Y_train_trainFinal_noCV"]=Y_train_cv
+
             fold_results["scaler"]=scaler
             fold_results["pca_model"]=pca_model
 
@@ -5714,34 +6614,63 @@ def process_cv_fold_xgboost(
         import traceback
         traceback.print_exc()
         raise
-def process_cv_fold_lightgbm(fold_num=0, train_pos=None, val_pos=None, params_optuna=None,
-                             data_4cv=None, other_params=None,
-                             is_log_enabled=False, config=None, nb_split_tscv=0):
-    """
-    Process a cross-validation fold for LightGBM training and evaluation.
-    This version delegates training and evaluation steps to train_and_evaluate_lightgbm_model,
-    which returns the full set of metrics and debug_info.
-    """
+def process_cv_fold_lightgbm(
+    fold_num=0,
+    train_pos=None,
+    val_pos=None,
+    params_optuna=None,
+    data_4cv=None,
+    other_params=None,
+    is_log_enabled=False,
+    config=None,
+    log_evaluation=0
+):
+   # print("______ process_cv_fold_lightgbm______")
     try:
+        # Vérif que data est dispo
+        if data_4cv is None:
+            raise ValueError("❌ 'data' est None dans process_cv_fold_lightgbm")
 
-        # 1Split des données train/val
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
-            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+        # 1️⃣ Split des données train/val
+        if train_pos is None and val_pos is None:
+            # ➕ Données déjà préparées (pas de cross-validation)
+            required_keys = [
+                "X_train", "X_test",
+                "y_train_label", "y_test_label",
+                "y_pnl_data_train", "y_pnl_data_test"
+            ]
+            for key in required_keys:
+                if key not in data_4cv:
+                    raise KeyError(f"❌ Clé manquante dans data : {key}")
 
-        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
+            X_train_cv = data_4cv["X_train"]
+            X_val_cv = data_4cv["X_test"]
+            Y_train_cv = data_4cv["y_train_label"]
+            y_val_cv = data_4cv["y_test_label"]
+            y_pnl_data_train_cv = data_4cv["y_pnl_data_train"]
+            y_pnl_data_val_cv = data_4cv["y_pnl_data_test"]
+        else:
+            # 📆 Split custom basé sur train_pos/val_pos (CV temporelle)
+            (X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd,y_val_cv,
+             y_pnl_data_train_cv,y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
+                 config, data_4cv, train_pos, val_pos)
 
-        # Juste les noms de colonnes
-        print("\n===== DÉMARRAGE DE LA FONCTION : train_and_evaluate_lightgbm_model =====")
-        print(f"X_train_cv : {len(X_train_cv.columns)} colonnes -> {list(X_train_cv.columns)}")
-        print(f"X_val_cv   : {len(X_val_cv.columns)} colonnes -> {list(X_val_cv.columns)}")
-        print("========================================================================\n")
+        # 2️⃣ Scaling/PCA
+        X_train_cv, X_val_cv, scaler, pca_model = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
 
-        # Calculate initial fold statistics
+        # # Juste les noms de colonnes pour débogage
+        # print("\n===== DÉMARRAGE DE LA FONCTION : train_and_evaluate_lightgbm_model =====")
+        # print(f"X_train_cv : {len(X_train_cv.columns)} colonnes -> {list(X_train_cv.columns)}")
+        # print(f"X_val_cv   : {len(X_val_cv.columns)} colonnes -> {list(X_val_cv.columns)}")
+        # print("========================================================================\n")
+
+        # 3️⃣ Stats
         fold_stats_current = {
             **calculate_fold_stats(Y_train_cv, "train", config),
             **calculate_fold_stats(y_val_cv, "val", config)
         }
 
+        # 4️⃣ Entraînement & évaluation
         fold_results = train_and_evaluate_lightgbm_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
@@ -5756,40 +6685,76 @@ def process_cv_fold_lightgbm(fold_num=0, train_pos=None, val_pos=None, params_op
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
-            log_evaluation=0,
-
+            log_evaluation=log_evaluation,
         )
 
-        # Retourner le résultat tel quel
+        if (val_pos is None or train_pos is None): #pas de cv on travail sur un df entier
+            fold_results["x_train_vifStatPCA_trainFinal_noCV"]=X_train_cv
+            fold_results["scaler"]=scaler
+            fold_results["pca_model"]=pca_model
+
+
         return fold_results
 
     except Exception as e:
-        print(f"\nErreur dans process_cv_fold lightgbm:")
+        print("\n❌ Erreur dans process_cv_fold_lightgbm :")
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
 
-def process_cv_fold_randomforest_model(fold_num=0, train_pos=None, val_pos=None, params_optuna=None,
-                                       data_4cv=None, other_params=None,
-                                       is_log_enabled=False, config=None, nb_split_tscv=0,log_evaluation=0):
-    """
-       Process a cross-validation fold for random forest training and evaluation.
-       This version delegates training and evaluation steps to train_and_evaluate_randomforest_model,
-       which returns the full set of metrics and debug_info.
-       """
+def process_cv_fold_randomforest_model(
+    fold_num=0,
+    train_pos=None,
+    val_pos=None,
+    params_optuna=None,
+    data_4cv=None,
+    other_params=None,
+    is_log_enabled=False,
+    config=None,
+    log_evaluation=0
+):
+   # print("______ process_cv_fold_randomforest_model______")
     try:
-        # 1Split des données train/val
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
-            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+        # Vérif que data est dispo
+        if data_4cv is None:
+            raise ValueError("❌ 'data' est None dans process_cv_fold_randomforest_model")
 
-        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
+        # 1️⃣ Split des données train/val
+        if train_pos is None and val_pos is None:
+            # ➕ Données déjà préparées (pas de cross-validation)
+            required_keys = [
+                "X_train", "X_test",
+                "y_train_label", "y_test_label",
+                "y_pnl_data_train", "y_pnl_data_test"
+            ]
+            for key in required_keys:
+                if key not in data_4cv:
+                    raise KeyError(f"❌ Clé manquante dans data : {key}")
 
-        # Calculate initial fold statistics
+            X_train_cv = data_4cv["X_train"]
+            X_val_cv = data_4cv["X_test"]
+            Y_train_cv = data_4cv["y_train_label"]
+            y_val_cv = data_4cv["y_test_label"]
+            y_pnl_data_train_cv = data_4cv["y_pnl_data_train"]
+            y_pnl_data_val_cv = data_4cv["y_pnl_data_test"]
+        else:
+            # 📆 Split custom basé sur train_pos/val_pos (CV temporelle)
+            (X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd,y_val_cv,
+             y_pnl_data_train_cv,y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
+                 config, data_4cv, train_pos, val_pos)
+
+        # 2️⃣ Scaling/PCA
+        X_train_cv, X_val_cv, scaler, pca_model = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
+
+        # 3️⃣ Stats
         fold_stats_current = {
             **calculate_fold_stats(Y_train_cv, "train", config),
             **calculate_fold_stats(y_val_cv, "val", config)
         }
 
+        # 4️⃣ Entraînement & évaluation
         fold_results = train_and_evaluate_randomforest_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
@@ -5804,40 +6769,75 @@ def process_cv_fold_randomforest_model(fold_num=0, train_pos=None, val_pos=None,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
-            log_evaluation=0,
+            log_evaluation=log_evaluation,
         )
 
-        # Retourner le résultat tel quel
+        if (val_pos is None or train_pos is None): #pas de cv on travail sur un df entier
+            fold_results["x_train_vifStatPCA_trainFinal_noCV"]=X_train_cv
+            fold_results["scaler"]=scaler
+            fold_results["pca_model"]=pca_model
+
         return fold_results
 
     except Exception as e:
-        print(f"\nErreur dans process_cv_fold randomforest_model:")
+        print("\n❌ Erreur dans process_cv_fold_randomforest_model :")
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
 
-def process_cv_fold_svc_model(fold_num=0,
-                              train_pos=None, val_pos=None, params_optuna=None,
-                              data_4cv=None, other_params=None,
-                              is_log_enabled=False, config=None, nb_split_tscv=0):
-    """
-    Process a cross-validation fold for SVC (Support Vector Classifier) training and evaluation.
-    This version delegates training and evaluation steps to train_and_evaluate_svc_model,
-    which returns the full set of metrics and debug_info.
-    """
+def process_cv_fold_svc_model(
+    fold_num=0,
+    train_pos=None,
+    val_pos=None,
+    params_optuna=None,
+    data_4cv=None,
+    other_params=None,
+    is_log_enabled=False,
+    config=None,
+    log_evaluation=0
+):
+   # print("______ process_cv_fold_svc_model______")
     try:
-        # 1Split des données train/val
-        X_train_cv, X_train_cv_pd, Y_train_cv, X_val_cv, X_val_cv_pd, y_val_cv, y_pnl_data_train_cv, y_pnl_data_val_cv \
-            = prepare_dataSplit_cv_train_val(config, data_4cv, train_pos, val_pos)
+        # Vérif que data est dispo
+        if data_4cv is None:
+            raise ValueError("❌ 'data' est None dans process_cv_fold_svc_model")
 
-        X_train_cv, X_val_cv = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
+        # 1️⃣ Split des données train/val
+        if train_pos is None and val_pos is None:
+            # ➕ Données déjà préparées (pas de cross-validation)
+            required_keys = [
+                "X_train", "X_test",
+                "y_train_label", "y_test_label",
+                "y_pnl_data_train", "y_pnl_data_test"
+            ]
+            for key in required_keys:
+                if key not in data_4cv:
+                    raise KeyError(f"❌ Clé manquante dans data : {key}")
 
-        # Calculate initial fold statistics
+            X_train_cv = data_4cv["X_train"]
+            X_val_cv = data_4cv["X_test"]
+            Y_train_cv = data_4cv["y_train_label"]
+            y_val_cv = data_4cv["y_test_label"]
+            y_pnl_data_train_cv = data_4cv["y_pnl_data_train"]
+            y_pnl_data_val_cv = data_4cv["y_pnl_data_test"]
+        else:
+            # 📆 Split custom basé sur train_pos/val_pos (CV temporelle)
+            (X_train_cv,X_train_cv_pd,Y_train_cv,X_val_cv,X_val_cv_pd,y_val_cv,
+             y_pnl_data_train_cv,y_pnl_data_val_cv) = prepare_dataSplit_cv_train_val(
+                 config, data_4cv, train_pos, val_pos)
+
+        # 2️⃣ Scaling/PCA
+        X_train_cv, X_val_cv, scaler, pca_model = apply_scalingAndOrPCA(other_params, config, X_train_cv, X_val_cv)
+
+        # 3️⃣ Stats
         fold_stats_current = {
             **calculate_fold_stats(Y_train_cv, "train", config),
             **calculate_fold_stats(y_val_cv, "val", config)
         }
 
+        # 4️⃣ Entraînement & évaluation
         fold_results = train_and_evaluate_svc_model(
             X_train_cv=X_train_cv,
             X_val_cv=X_val_cv,
@@ -5851,21 +6851,22 @@ def process_cv_fold_svc_model(fold_num=0,
             fold_stats_current=fold_stats_current,
             train_pos=train_pos,
             val_pos=val_pos,
-            log_evaluation=0,
+            log_evaluation=log_evaluation,
         )
 
-        # # Conserver le scaler pour une utilisation ultérieure
-        # if scaler is not None:
-        #     fold_results['scaler'] = scaler
-        #     fold_results['scaler_params'] = scaler_params
+        if (val_pos is None or train_pos is None): #pas de cv on travail sur un df entier
+            fold_results["x_train_vifStatPCA_trainFinal_noCV"]=X_train_cv
+            fold_results["scaler"]=scaler
+            fold_results["pca_model"]=pca_model
 
-        # Retourner le résultat tel quel
         return fold_results
 
     except Exception as e:
-        print(f"\nErreur dans process_cv_fold_svc_model:")
+        print("\n❌ Erreur dans process_cv_fold_svc_model :")
         print(f"Type: {type(e).__name__}")
         print(f"Message: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
 
 
@@ -5907,6 +6908,7 @@ def initialize_arrays(nb_split_tscv, config, len):
         'nb_samples_val': xp.zeros(nb_split_tscv, dtype=int_dtype),
         'tp_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'fp_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'X_val_by_fold' : [None] * nb_split_tscv,
         'scores_val': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'class0_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'class1_raw_data_val_by_fold': xp.zeros(nb_split_tscv, dtype=xp.float32),
@@ -5914,6 +6916,14 @@ def initialize_arrays(nb_split_tscv, config, len):
         'val_pred_proba_log_odds': [None] * nb_split_tscv,
         'val_trades_samples_perct': xp.zeros(nb_split_tscv, dtype=xp.float32),
         'val_bestVal_custom_metric_pnl': xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'brier_val':xp.zeros(nb_split_tscv, dtype=xp.float32),
+        'relative_brier_val':xp.zeros(nb_split_tscv, dtype=xp.float32),
+
+        'model_by_fold':[None] * nb_split_tscv,
+
+        'best_thresh_fold': [np.nan] * nb_split_tscv,
+        'best_iteration_fold': [np.nan] * nb_split_tscv,
+        'calibrator': [None] * nb_split_tscv,
 
         # Entraînement
         'winrates_train': xp.zeros(nb_split_tscv, dtype=xp.float32),
@@ -6008,8 +7018,8 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
             # metrics_dict['tn_val_by_fold'][fold_idx] = val_tn
             # metrics_dict['fn_val_by_fold'][fold_idx] = val_fn
 
-            total_trades = val_tp + val_fp
-            winrate = compute_winrate_safe(val_tp, total_trades, config)
+            # total_trades = val_tp + val_fp
+            # winrate = compute_winrate_safe(val_tp, total_trades, config)
 
             # metrics_dict['winrates_val_by_fold'][fold_idx] = winrate
             # metrics_dict['nb_trades_val_by_fold'][fold_idx] = total_trades
@@ -6019,6 +7029,8 @@ def update_fold_metrics(metrics_dict, eval_metrics, train_metrics, fold_idx, con
             metrics_dict['total_fp_val'] += val_fp
             metrics_dict['total_tn_val'] += val_tn
             metrics_dict['total_fn_val'] += val_fn
+
+
         except KeyError as e:
             raise ValueError(f"Clé manquante dans eval_metrics: {e}")
         except Exception as e:
@@ -6279,7 +7291,8 @@ def report_trial_optuna(trial, best_trial, rfe_param, modele_param_optuna_range,
             # Ajout des résultats du nouveau trial
             results_data[f"trial_{trial.number + 1}"] = {
                 "best_result": {k: convert_to_serializable(v) for k, v in result_dict_trialOptuna.items()},
-                "params": {k: convert_to_serializable(v) for k, v in trial.params.items()}
+                "params": {k: convert_to_serializable(v) for k, v in trial.params.items()},
+                "other_params": {k: convert_to_serializable(v) for k, v in trial.user_attrs["other_params"].items()}
             }
 
             # Écriture sécurisée avec nom unique
@@ -6550,7 +7563,13 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         'perctDiff_winrateRatio_train_val': best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None),
         'ecart_train_val': best_trial.user_attrs.get('ecart_train_val', None),
         # for pareto analysis. We compute a specific metric including trade ratio for weithing the impact
-        'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None
+        'pnl_norm_objective': best_trial.values[0] if len(best_trial.values) > 0 else None,
+        'model_by_fold': best_trial.user_attrs.get('model_by_fold', None),
+        'X_val_by_fold': best_trial.user_attrs.get('X_val_by_fold', None),
+
+        'best_thresh_fold': best_trial.user_attrs.get('best_thresh_fold', None),
+        'best_iteration_fold': best_trial.user_attrs.get('best_iteration_fold', None),
+
         # 'ecart_train_val': best_trial.values[1] if len(best_trial.values) > 1 else None
     }
     study.set_user_attr('bestResult_dict', bestResult_dict)
@@ -6563,6 +7582,15 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
     nb_samples_val_by_fold_ = best_trial.user_attrs.get('nb_samples_val_by_fold', None)
     scores_ens_val_list_ = best_trial.user_attrs.get('scores_ens_val_list', None)
     scores_ens_val_list_formatted_ = [f"{x:.2f}" for x in scores_ens_val_list_] if scores_ens_val_list_ else None
+
+    brier_val_list_ = best_trial.user_attrs.get('brier_val_list', None)
+    brier_val_list_formatted_ = [f"{x:.3f}" for x in brier_val_list_] if brier_val_list_ else None
+
+    best_thresh_fold_ = best_trial.user_attrs.get('best_thresh_fold', None)
+    best_thresh_fold_formatted_ = [f"{x:.3f}" for x in best_thresh_fold_] if best_thresh_fold_ else None
+
+    best_iteration_fold_ = best_trial.user_attrs.get('best_iteration_fold', None)
+    best_iteration_fold_formatted_ = [f"{x:.3f}" for x in best_iteration_fold_] if best_iteration_fold_ else None
 
     # Ajout pour l'entraînement
 
@@ -6636,7 +7664,10 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         'nb_trades_val_by_fold': nb_trades_val_by_fold_,
         'nb_samples_val_by_fold': nb_samples_val_by_fold_,
         'scores_ens_val_list_formatted': scores_ens_val_list_formatted_,
-        'class0_raw_data_val_by_fold': best_trial.user_attrs.get('class0_raw_data_val_by_fold', None),
+        'brier_val_list_formatted':brier_val_list_formatted_,
+        "best_thresh_fold_formatted_":best_thresh_fold_formatted_,
+        "best_iteration_fold_formatted_":best_iteration_fold_formatted_,
+    'class0_raw_data_val_by_fold': best_trial.user_attrs.get('class0_raw_data_val_by_fold', None),
         'class1_raw_data_val_by_fold': best_trial.user_attrs.get('class1_raw_data_val_by_fold', None),
         'val_trades_samples_perct': best_trial.user_attrs.get('val_trades_samples_perct', None),
         'winrates_val_by_fold': best_trial.user_attrs.get('winrates_val_by_fold', None),
@@ -6701,7 +7732,8 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN: "TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN",
         cv_config.TIMESERIES_SPLIT_BY_ID: 'TIMESERIES_SPLIT_BY_ID',
         cv_config.K_FOLD: "K_FOLD",
-        cv_config.K_FOLD_SHUFFLE: "K_FOLD_SHUFFLE"
+        cv_config.K_FOLD_SHUFFLE: "K_FOLD_SHUFFLE",
+        cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_ROLLING: "TIME_SERIE_SPLIT_NON_ANCHORED_ROLLING"
 
     }
 
@@ -6774,11 +7806,25 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         #   print(contraints_list)
         #  raise ValueError(
         #     f"Incohérence détectée : constraints_reached_check = {constraints_reached_check}, contraints_reached = {contraints_reached}")
+
+        # Vérifier si la contrainte trades/samples est activée
+        trades_samples_constraint_active = config.get('config_constraint_min_trades_samples_perct',
+                                                      float('inf')) != float('inf')
+
         if contraints_reached:
-            print(Fore.GREEN + f"\u2713 All constraints respected:\n"
-                               f"    - ratioWinrate_train_val <= {config['config_constraint_ratioWinrate_train_val']} (max: {max(best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', []))}) - {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)})\n"
-                               f"    - min_trades >= {config['config_constraint_min_trades_threshold_by_Fold']} (min: {min(best_trial.user_attrs.get('nb_trades_val_by_fold', []))}) - {best_trial.user_attrs.get('nb_trades_val_by_fold', None)})\n"
-                               f"    - winrate >= {config['config_constraint_winrates_val_by_fold']} (min: {min(best_trial.user_attrs.get('winrates_val_by_fold', []))}) - {best_trial.user_attrs.get('winrates_val_by_fold', None)})\n" + Style.RESET_ALL)
+            constraint_message = (Fore.GREEN + f"\u2713 All constraints respected:\n"
+                                               f"    - ratioWinrate_train_val <= {config['config_constraint_ratioWinrate_train_val']} (max: {max(best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', []))}) - {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)})\n"
+                                               f"    - min_trades >= {config['config_constraint_min_trades_threshold_by_Fold']} (min: {min(best_trial.user_attrs.get('nb_trades_val_by_fold', []))}) - {best_trial.user_attrs.get('nb_trades_val_by_fold', None)})\n"
+                                               f"    - winrate >= {config['config_constraint_winrates_val_by_fold']} (min: {min(best_trial.user_attrs.get('winrates_val_by_fold', []))}) - {best_trial.user_attrs.get('winrates_val_by_fold', None)})\n")
+
+            # Ajouter le message pour la contrainte trades/samples si activée
+            if trades_samples_constraint_active:
+                val_trades_samples_perct = best_trial.user_attrs.get('val_trades_samples_perct', [])
+                if val_trades_samples_perct:
+                    min_perct = min(val_trades_samples_perct)
+                    constraint_message += f"    - trades/samples ratio >= {config.get('config_constraint_min_trades_samples_perct')}% (min: {min_perct:.2f}%) - {val_trades_samples_perct})\n"
+
+            print(constraint_message + Style.RESET_ALL)
 
         else:
             print(Fore.RED + "\u2717 Some constraints not respected:" + Style.RESET_ALL)
@@ -6816,6 +7862,40 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
                 "winrates_val_by_fold",
                 check_type='min'
             ))
+
+            # 4. Contrainte écart-type des trades (si présente)
+            if 'config_constraint_max_std_trades' in config and config['config_constraint_max_std_trades'] != float(
+                    'inf'):
+                if len(contraints_list) > 3:
+                    print(format_constraint_message(
+                        contraints_list[3] > 0,
+                        config,
+                        trial,
+                        "val max std trades",
+                        "config_constraint_max_std_trades",
+                        "nb_trades_val_by_fold",
+                        check_type='std'
+                    ))
+
+            # 5. Contrainte ratio trades/samples (si activée)
+            if trades_samples_constraint_active:
+                constraint_index = 4
+                if 'config_constraint_max_std_trades' in config and config['config_constraint_max_std_trades'] != float(
+                        'inf'):
+                    constraint_index = 4
+                else:
+                    constraint_index = 3
+
+                if len(contraints_list) > constraint_index:
+                    print(format_constraint_message(
+                        contraints_list[constraint_index] > 0,
+                        config,
+                        trial,
+                        "val min trades/samples ratio %",
+                        "config_constraint_min_trades_samples_perct",
+                        "val_trades_samples_perct",
+                        check_type='min'
+                    ))
     # print(f" perctDiff_winrateRatio_train_val: {best_trial.user_attrs.get('perctDiff_winrateRatio_train_val', None)}")
     # print(f" perctDiff_ratioTradeSample_train_val: {best_trial.user_attrs.get('perctDiff_ratioTradeSample_train_val', None)}")
 
@@ -6890,6 +7970,8 @@ def callback_optuna(study, trial, optuna, study_optuna, rfe_param, config, resul
         f"                                                    Nb samples val :{metrics['nb_samples_val_by_fold']}")
     print(
         f"                                                    trades/samples val % :{[f'{p:.2f}%' for p in metrics['val_trades_samples_perct']]}")
+    print(
+        f"                                                    Brier Score :{metrics['brier_val_list_formatted']}")
     print(
         f"     -Nombre d'échantillons           : {sum([metrics['total_tp_val'], metrics['total_fp_val'], metrics['total_tn_val'], metrics['total_fn_val']])} "
         f"dont {metrics['total_tp_val'] + metrics['total_fp_val']} trades pris")
@@ -8600,7 +9682,7 @@ def compute_display_statistic(X=None, Y=None, name="Dataset",
         output_colors = []
         if is_compute_vif:
 
-            if row['is_vif'] and row['is_stat']:
+            if row['is_vif'] and row['is_stat'] and row['p-value'] <= config["fisher_pvalue_threshold"]:
                 features_data.append({
                     'Feature': row['Feature'],
                     'is_vif': row['is_vif'],
@@ -8947,35 +10029,34 @@ def check_value_ranges(X_train, X_test):
             }
     return out_of_bounds
 
-
-def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
+def apply_scaling(X_train, X_test=None, save_path=None, chosen_scaler=None):
     """
     Applique la normalisation sur les données d'entraînement et de test.
     Compatible avec DataFrame et numpy array.
 
     Args:
         X_train: Données d'entraînement à normaliser (DataFrame ou array)
-        X_test: Données de test à normaliser (DataFrame ou array)
+        X_test: Données de test à normaliser (peut être None)
         save_path: Chemin optionnel pour sauvegarder les paramètres du scaler
         chosen_scaler: Type de scaler à utiliser
 
     Returns:
-        tuple: (X_train_scaled, X_test_scaled, scaler, scaler_params)
+        tuple: (X_train_scaled, X_test_scaled or None, scaler, scaler_params)
     """
+    import pandas as pd
+    from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, MaxAbsScaler
+
     # Détection du type d'entrée
     is_dataframe = isinstance(X_train, pd.DataFrame)
 
-    # Si entrée DataFrame, sauvegarder les colonnes et les index
     if is_dataframe:
         columns = X_train.columns
         train_index = X_train.index
-        test_index = X_test.index
+        test_index = X_test.index if X_test is not None else None
 
-    # Si le scaling est désactivé
     if chosen_scaler == scalerChoice.SCALER_DISABLE:
         return X_train, X_test, None, None
 
-    # Création du scaler selon le choix
     if chosen_scaler == scalerChoice.SCALER_ROBUST:
         scaler = RobustScaler()
         scaler_name = "RobustScaler"
@@ -8991,114 +10072,65 @@ def apply_scaling(X_train, X_test, save_path=None, chosen_scaler=None):
     else:
         exit(98)
 
-    # Convertir en numpy pour le scaling si nécessaire
     X_train_np = X_train.values if is_dataframe else X_train
-    X_test_np = X_test.values if is_dataframe else X_test
+    X_test_np = X_test.values if is_dataframe and X_test is not None else X_test
 
-    # Fit sur train et transform
     X_train_scaled_np = scaler.fit_transform(X_train_np)
-    X_test_scaled_np = scaler.transform(X_test_np)
+    X_test_scaled_np = scaler.transform(X_test_np) if X_test is not None else None
 
-    # Reconvertir en DataFrame si l'entrée était un DataFrame
     if is_dataframe:
-        X_train_scaled = pd.DataFrame(
-            X_train_scaled_np,
-            columns=columns,
-            index=train_index
-        )
+        X_train_scaled = pd.DataFrame(X_train_scaled_np, columns=columns, index=train_index)
+        X_test_scaled = pd.DataFrame(X_test_scaled_np, columns=columns, index=test_index) if X_test is not None else None
 
-        X_test_scaled = pd.DataFrame(
-            X_test_scaled_np,
-            columns=columns,
-            index=test_index
-        )
+        scaler_params = {'scaler_type': scaler_name, 'features': columns.tolist()}
 
-        # Stockage des paramètres avec noms de colonnes
-        scaler_params = {
-            'scaler_type': scaler_name,
-            'features': columns.tolist()
-        }
-
-        # Enregistrement des paramètres spécifiques à chaque scaler
         if chosen_scaler == scalerChoice.SCALER_ROBUST:
             scaler_params.update({
                 'center': dict(zip(columns, scaler.center_)),
                 'scale': dict(zip(columns, scaler.scale_))
             })
-            print("\nParamètres du RobustScaler:")
-            print("Médianes:", scaler_params['center'])
-            print("IQRs:", scaler_params['scale'])
         elif chosen_scaler == scalerChoice.SCALER_MINMAX:
             scaler_params.update({
                 'min': dict(zip(columns, scaler.min_)),
                 'scale': dict(zip(columns, scaler.scale_))
             })
-            print("\nParamètres du MinMaxScaler:")
-            print("Minimums:", scaler_params['min'])
-            print("Échelles:", scaler_params['scale'])
         elif chosen_scaler == scalerChoice.SCALER_MAXABS:
             scaler_params.update({
                 'scale': dict(zip(columns, scaler.scale_)),
                 'max_abs': dict(zip(columns, scaler.max_abs_))
             })
-            print("\nParamètres du MaxAbsScaler:")
-            print("Valeurs max absolues:", scaler_params['max_abs'])
-            print("Échelles:", scaler_params['scale'])
-        else:  # Pour StandardScaler ou autres
+        else:
             scaler_params.update({
                 'mean': dict(zip(columns, scaler.mean_)),
                 'scale': dict(zip(columns, scaler.scale_))
             })
-            print("\nParamètres du StandardScaler:")
-            print("Moyennes:", scaler_params['mean'])
-            print("Écarts-types:", scaler_params['scale'])
     else:
-        # Si l'entrée était un array, retourner des arrays et des paramètres simplifiés
         X_train_scaled = X_train_scaled_np
         X_test_scaled = X_test_scaled_np
+        scaler_params = {'scaler_type': scaler_name}
 
-        scaler_params = {
-            'scaler_type': scaler_name
-        }
-
-        # Pour les arrays, on ne peut pas associer les paramètres à des noms de colonnes
-        # donc on stocke juste les valeurs brutes
         if chosen_scaler == scalerChoice.SCALER_ROBUST:
-            scaler_params.update({
-                'center': scaler.center_.tolist(),
-                'scale': scaler.scale_.tolist()
-            })
+            scaler_params.update({'center': scaler.center_.tolist(), 'scale': scaler.scale_.tolist()})
         elif chosen_scaler == scalerChoice.SCALER_MINMAX:
-            scaler_params.update({
-                'min': scaler.min_.tolist(),
-                'scale': scaler.scale_.tolist()
-            })
+            scaler_params.update({'min': scaler.min_.tolist(), 'scale': scaler.scale_.tolist()})
         elif chosen_scaler == scalerChoice.SCALER_MAXABS:
-            scaler_params.update({
-                'scale': scaler.scale_.tolist(),
-                'max_abs': scaler.max_abs_.tolist()
-            })
-        else:  # Pour StandardScaler ou autres
-            scaler_params.update({
-                'mean': scaler.mean_.tolist(),
-                'scale': scaler.scale_.tolist()
-            })
+            scaler_params.update({'scale': scaler.scale_.tolist(), 'max_abs': scaler.max_abs_.tolist()})
+        else:
+            scaler_params.update({'mean': scaler.mean_.tolist(), 'scale': scaler.scale_.tolist()})
 
-    # Sauvegarde des paramètres si un chemin est fourni
-    if save_path is not None and is_dataframe:  # Sauvegarder uniquement si on a des noms de colonnes
+    if save_path is not None and is_dataframe:
         import os
         import json
-
         filename = f"{scaler_name.lower()}_params.json"
         full_path = os.path.join(save_path, filename)
-
         os.makedirs(save_path, exist_ok=True)
-
         with open(full_path, 'w') as f:
             json.dump(scaler_params, f, indent=4)
         print(f"\nParamètres sauvegardés dans: {full_path}")
 
-    return X_train_scaled, X_test_scaled, scaler
+    return X_train_scaled, X_test_scaled, scaler, scaler_params
+
+
 
 
 def save_features_with_sessions(df, custom_sections, file_path):
@@ -9391,6 +10423,147 @@ class nonAnchore_dWalkForwardCV_afterPrevVal(BaseCrossValidator):
             current_index += train_size + val_size
 
 
+import numpy as np
+from math import floor
+
+from sklearn.model_selection import BaseCrossValidator
+
+class nonAnchoreRolling_dWalkForwardCV_afterPrevTrain(BaseCrossValidator):
+    """
+    Validateur temporel personnalisé «non ancré» (non anchored) à fenêtres
+    glissantes (rolling) pour la validation croisée.
+
+    Caractéristiques principales :
+    -----------------------------
+    1. Le nombre de splits (n_splits) est donné.
+    2. La proportion de la fenêtre de validation est val_ratio (0 < val_ratio <= 1).
+    3. Le recouvrement entre deux trains successifs est de train_overlap_ratio (r),
+       0 <= r < 1.
+    4. train_size est déterminé automatiquement afin de pouvoir générer au moins
+       n_splits splits. On utilise la formule théorique :
+
+         train_size <= n / [1 + val_ratio + (n_splits - 1)*(1 - r)]
+
+       puis on ajuste au besoin en décrémentant train_size si nécessaire.
+    5. val_size = round(train_size * val_ratio).
+    6. La fenêtre de train_(i+1) commence après un 'step' = floor(train_size*(1-r))
+       échantillons supplémentaires par rapport au début de train_i,
+       assurant le recouvrement partiel.
+
+    Paramètres
+    ----------
+    n_splits : int
+        Nombre de splits (ou folds) souhaités.
+
+    val_ratio : float
+        Proportion de la taille du train (entre 0 et 1] utilisée comme fenêtre de validation.
+
+    train_overlap_ratio : float
+        Proportion de recouvrement entre deux fenêtres d'entraînement successives
+        (entre 0 inclus et 1 exclus).
+
+    Exemples
+    --------
+    >>> validator = nonAnchoreRolling_dWalkForwardCV_afterPrevTrain(
+    ...     n_splits=5,
+    ...     val_ratio=0.66,
+    ...     train_overlap_ratio=0.5
+    ... )
+    >>> for train_idx, val_idx in validator.split(np.arange(6000)):
+    ...     print(train_idx[0], train_idx[-1], val_idx[0], val_idx[-1])
+    """
+
+    def __init__(self, n_splits, val_ratio=0.5, train_overlap_ratio=0.5):
+        super().__init__()
+        assert 0 < val_ratio <= 1, "val_ratio doit être dans l'intervalle (0, 1]."
+        assert 0 <= train_overlap_ratio < 1, "train_overlap_ratio doit être dans [0, 1)."
+        assert n_splits >= 1, "n_splits doit être >= 1."
+
+        self.n_splits = n_splits
+        self.val_ratio = val_ratio
+        self.train_overlap_ratio = train_overlap_ratio
+
+        self.train_size_ = None  # sera calculé dans .split()
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        """
+        Retourne le nombre (souhaité) de splits.
+        (En pratique, on lèvera une exception si on ne peut pas
+        générer exactement n_splits splits complets.)
+        """
+        return self.n_splits
+
+    def _max_splits_with(self, n, train_size, val_ratio, overlap_ratio):
+        """
+        Calcule combien de splits complets on peut générer pour un
+        train_size donné.
+        """
+        val_size = round(train_size * val_ratio)
+        step = int(train_size * (1 - overlap_ratio))
+
+        # Si step = 0, on ne pourra pas avancer la fenêtre
+        if step < 1:
+            return 0
+
+        # On applique la formule : floor((n - T - V) / step) + 1
+        total_needed_per_fold = train_size + val_size
+        leftover = n - total_needed_per_fold
+        if leftover < 0:
+            return 0
+        return (leftover // step) + 1
+
+    def split(self, X, y=None, groups=None):
+        """
+        Génère les indices (train, val) pour chaque split.
+        """
+        n = len(X)
+        r = self.train_overlap_ratio
+
+        # 1) Estimation analytique de train_size
+        #    T <= n / [1 + val_ratio + (n_splits - 1)*(1 - r)]
+        denom = (1 + self.val_ratio + (self.n_splits - 1) * (1 - r))
+        if denom <= 0:
+            raise ValueError("Paramètres invalides, la formule de train_size est non définie.")
+
+        T_est = int(n // denom)  # division entière "basique"
+
+        # 2) Ajustement par décrémentation si besoin jusqu'à satisfaire n_splits
+        train_size = T_est
+        while train_size > 0:
+            possible = self._max_splits_with(n, train_size, self.val_ratio, r)
+            if possible >= self.n_splits:
+                break
+            train_size -= 1
+
+        if train_size <= 0:
+            raise ValueError(
+                f"Impossible de générer {self.n_splits} splits. "
+                f"Essayez de réduire n_splits ou val_ratio."
+            )
+
+        self.train_size_ = train_size
+        val_size = round(train_size * self.val_ratio)
+        step = int(train_size * (1 - r))
+
+        start = 0
+        for i in range(self.n_splits):
+            end_train = start + train_size
+            end_val = end_train + val_size
+
+            # On vérifie que la fenêtre de validation ne dépasse pas n
+            if end_val > n:
+                # On préfère "casser" la boucle si plus de place pour ce split
+                break
+
+            # Indices du train et validation
+            train_indices = np.arange(start, end_train)
+            val_indices = np.arange(end_train, end_val)
+            yield train_indices, val_indices
+
+            # Décalage pour le split suivant
+            start += step
+
+
 def convert_metrics_to_numpy(metrics_dict):
     """
     Convertit de manière sûre les métriques GPU en arrays NumPy
@@ -9427,16 +10600,19 @@ def setup_cv_method(df_init_features=None, X_train=None, y_train_label=None, cv_
     if cv_method == cv_config.TIME_SERIE_SPLIT:
         return TimeSeriesSplit(n_splits=nb_split_tscv)
     elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL:
-        r = config.get('non_acnhored_val_ratio', 1)
+        val_ratio = config.get('non_acnhored_val_ratio', 1)
 
-        cv = nonAnchore_dWalkForwardCV_afterPrevVal(n_splits=nb_split_tscv, r=r)
+        cv = nonAnchore_dWalkForwardCV_afterPrevVal(n_splits=nb_split_tscv, r=val_ratio)
         return cv
-    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN:
-        r = config.get('non_acnhored_val_ratio', 1)
+    elif cv_method == cv_config.TIME_SERIE_SPLIT_NON_ANCHORED_ROLLING:
+        val_ratio = config.get('non_acnhored_val_ratio', 1)
+        train_overlap_ratio = config.get('non_acnhoredRolling_train_overlap_ratio', 1)
 
-        cv = nonAnchore_dWalkForwardCV_afterPrevTrain(
+        cv = nonAnchoreRolling_dWalkForwardCV_afterPrevTrain(
             n_splits=nb_split_tscv,
-            val_ratio=r)
+            val_ratio=val_ratio,
+            train_overlap_ratio=train_overlap_ratio
+        )
         return cv
     elif cv_method == cv_config.TIMESERIES_SPLIT_BY_ID:
         # Ensuite, appliquer la logique en fonction de cv_method
@@ -9522,6 +10698,8 @@ def calculate_constraints_optuna(trial=None, config=None, debug=False):
     perctDiff_winrateRatio_train_val = trial.user_attrs.get('perctDiff_winrateRatio_train_val', float('inf'))
     nb_trades_val_by_fold_list = trial.user_attrs.get('nb_trades_val_by_fold', [float('inf')])
     winrates_val_by_fold = trial.user_attrs.get('winrates_val_by_fold', None)
+    val_trades_samples_perct = trial.user_attrs.get('val_trades_samples_perct', None)
+
 
     # Vérif
     def validate_variable(var, name):
@@ -9531,12 +10709,16 @@ def calculate_constraints_optuna(trial=None, config=None, debug=False):
     validate_variable(perctDiff_winrateRatio_train_val, "perctDiff_winrateRatio_train_val")
     validate_variable(nb_trades_val_by_fold_list, "nb_trades_val_by_fold_list")
     validate_variable(winrates_val_by_fold, "winrates_val_by_fold")
+    validate_variable(val_trades_samples_perct, "val_trades_samples_perct")
+
 
     # Récupération des seuils
     cfg_ratio = config.get('config_constraint_ratioWinrate_train_val', float('inf'))
     cfg_min_trades = config.get('config_constraint_min_trades_threshold_by_Fold', float('inf'))
     cfg_min_winrates = config.get('config_constraint_winrates_val_by_fold', float('inf'))
     cfg_max_std_trades = config.get('config_constraint_max_std_trades', float('inf'))
+    cfg_min_trades_samples_perct = config.get('config_constraint_min_trades_samples_perct', float('inf'))
+
 
     # Fonctions utilitaires
     def to_float(x):
@@ -9579,6 +10761,14 @@ def calculate_constraints_optuna(trial=None, config=None, debug=False):
         std_trades = xp.std(arr_trades)
         c = xp.maximum(0, std_trades - cfg_max_std_trades)
         constraints.append(to_float(c))
+
+    # --- 5) Contrainte surtrades_samples_perct  ---
+    if cfg_min_trades_samples_perct != float('inf'):
+        min_trades_samples_perct = safe_min(val_trades_samples_perct)
+        c = xp.maximum(0, cfg_min_trades_samples_perct - min_trades_samples_perct)
+        constraints.append(to_float(c))
+
+
 
     if debug:
         print("\n--- DEBUG: Contraintes Calculées ---")
@@ -9832,6 +11022,14 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
     perctDiff_winrateRatio_train_val = to_numpy_if_needed(cv_results['perctDiff_winrateRatio_train_val'])
     perctDiff_ratioTradeSample_train_val = to_numpy_if_needed(cv_results['perctDiff_ratioTradeSample_train_val'])
 
+    perctDiff_winrateRatio_train_val = to_numpy_if_needed(cv_results['perctDiff_winrateRatio_train_val'])
+    perctDiff_ratioTradeSample_train_val = to_numpy_if_needed(cv_results['perctDiff_ratioTradeSample_train_val'])
+
+    brier_val = to_numpy_if_needed(cv_results['brier_val'])
+    relative_brier_val = to_numpy_if_needed(cv_results['relative_brier_val'])
+    best_thresh_fold = to_numpy_if_needed(cv_results['best_thresh_fold'])
+    best_iteration_fold = to_numpy_if_needed(cv_results['best_iteration_fold'])
+
     # --- 5) Conversion des fold_stats ---
     # On convertit chaque champ Cupy -> float si nécessaire
     fold_stats = {}
@@ -9889,10 +11087,16 @@ def process_cv_results(cv_results, config, ENV=None, study=None):
         'train_pred_proba_log_odds': train_pred_proba_log_odds,
         'train_bestVal_custom_metric_pnl': train_bestVal_custom_metric_pnl,
 
+        'best_thresh_fold': best_thresh_fold,
+        'best_iteration_fold':best_iteration_fold,
+
         'class0_raw_data_train_by_fold': class0_raw_data_train_by_fold,
         'class1_raw_data_train_by_fold': class1_raw_data_train_by_fold,
         'winrate_raw_data_train_by_fold': winrate_raw_data_train_by_fold,
         'train_trades_samples_perct': train_trades_samples_perct,
+
+        'brier_val':brier_val,
+        'relative_brier_val': relative_brier_val,
 
         'perctDiff_winrateRatio_train_val': perctDiff_winrateRatio_train_val,
         'perctDiff_ratioTradeSample_train_val': perctDiff_ratioTradeSample_train_val,
@@ -10240,7 +11444,7 @@ def apply_data_feature_scaling(X_train, X_test, y_train_label, y_test_label,
                 print(f"Feature: {f}, KS-stat: {stats['statistic']:.3f}, p-value: {stats['p_value']:.3e}")
 
     # Application du scaling
-    X_train_scaled, X_test_scaled, scaler = apply_scaling(
+    X_train_scaled, X_test_scaled, scaler,scaler_params_ret = apply_scaling(
         X_train,
         X_test,
         save_path=save_scaler_dir,

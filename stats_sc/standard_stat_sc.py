@@ -159,14 +159,21 @@ def plot_boxplots(df, features, category_col='trade_category', nrows=3, ncols=4)
     plt.show()
 
 
-
-# Fonction pour appliquer les conditions de filtrage
 def apply_feature_conditions(df, features_conditions):
     mask = np.ones(len(df), dtype=bool)  # Initialisation du masque global à True
 
     for feature, conditions in features_conditions.items():
-        # Extraire le nom de base de la feature (pour gérer les _range1, _range2, etc.)
-        base_feature = feature.split('_range')[0]
+        # Check if the feature exists in the dataframe
+        if feature in df.columns:
+            base_feature = feature
+        else:
+            # Try to extract the base feature name (for legacy range1, range2 handling)
+            base_feature = feature.split('_range')[0]
+
+            # If the base feature still doesn't exist, skip this feature
+            if base_feature not in df.columns:
+                print(f"Warning: Feature '{feature}' or '{base_feature}' not found in dataframe. Skipping.")
+                continue
 
         # Filtrer les conditions actives
         active_conditions = [cond for cond in conditions if cond.get('active', False)]

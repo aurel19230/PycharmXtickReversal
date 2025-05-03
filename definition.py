@@ -19,10 +19,11 @@ import time
 class cv_config(Enum):
     TIME_SERIE_SPLIT = 0
     TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVTRAIN = 1
-    TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL = 2
-    TIMESERIES_SPLIT_BY_ID = 3
-    K_FOLD = 4
-    K_FOLD_SHUFFLE = 5
+    TIME_SERIE_SPLIT_NON_ANCHORED_ROLLING=2
+    TIME_SERIE_SPLIT_NON_ANCHORED_AFTER_PREVVAL = 3
+    TIMESERIES_SPLIT_BY_ID = 4
+    K_FOLD = 5
+    K_FOLD_SHUFFLE = 6
 
 class modelType (Enum):
     XGB=0
@@ -268,105 +269,72 @@ def verify_alignment(y_true_class_binaire, y_pnl_data):
         raise ValueError(f"Désalignement détecté: y_true == 0 mais y_pnl_data > 0 aux indices {misaligned_negatives}")
 
     #print("Vérification réussie: Les classes 0 et 1 sont correctement alignées avec le signe des PnL théoriques.")
-def calculate_profitBased(y_true_class_binaire, y_pred_threshold, y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None,
-                          metric_dict=None, config=None):
+def calculate_profitBased(
+    y_true_class_binaire,
+    y_pred_threshold,
+    y_pnl_data_array=None,
+    other_params=None,
+    config=None
+):
     """
-    Calcule les métriques de profit en utilisant les valeurs PNL réelles des trades
-    avec des opérations vectorisées pour plus d'efficacité
+    Calcule les métriques de profit en utilisant la série PNL
+    directement fournie en paramètre y_pnl_data_array.
     """
-    """
-    unique_values, counts = np.unique(y_pnl_data_train_cv, return_counts=True)
+    # Pas besoin de y_pnl_data_train_cv ni y_pnl_data_val_cv_OrTest
+    # dans ce mode "direct", on suppose que c'est déjà le bon vecteur
 
-    # Créer un DataFrame pour un affichage plus clair
-    distribution_df = pd.DataFrame({
-        'Valeur': unique_values,
-        'Fréquence': counts,
-        'Pourcentage': (counts / len(y_pnl_data_train_cv) * 100).round(2)
-    })
+    if y_pnl_data_array is None:
+        raise ValueError("Il faut fournir y_pnl_data_array pour calculer le profit.")
 
-    # Trier par fréquence décroissante
-    distribution_df = distribution_df.sort_values(by='Fréquence', ascending=False)
-
-    # Afficher le nombre total de valeurs uniques
-    print(f"Nombre total de valeurs différentes: {len(unique_values)}")
-    
-    # Afficher la distribution
-    print("\nDistribution des valeurs:")
-    print(distribution_df)
-    """
-    # Conversion en numpy arrays pour un traitement efficace
     y_true_class_binaire = np.asarray(y_true_class_binaire)
     y_pred = np.asarray(y_pred_threshold)
+    y_pnl_data_array = np.asarray(y_pnl_data_array)
 
-    # Vérification de la configuration
-    if config is None:
-        raise ValueError("config ne peut pas être None dans calculate_profitBased")
+    # Vérifier l'alignement
+    if not (len(y_true_class_binaire) == len(y_pred) == len(y_pnl_data_array)):
+        raise ValueError(f"Mauvais alignement: {len(y_true_class_binaire)=}, {len(y_pred)=}, {len(y_pnl_data_array)=}")
 
-
-
-    # Récupération des paramètres
-    penalty_per_fn = metric_dict.get('penalty_per_fn', config.get('penalty_per_fn', 0))
-    #y_pnl_data_train_cv = config.get('y_pnl_data_train_cv', None)
-    #y_pnl_data_val_cv_OrTest = config.get('y_pnl_data_val_cv_OrTest', None)
-
-    # Identification du jeu de données (train ou validation)
-    if len(y_true_class_binaire) == len(y_pnl_data_train_cv):
-        y_pnl_data = y_pnl_data_train_cv
-    elif len(y_true_class_binaire) == len(y_pnl_data_val_cv_OrTest):
-        y_pnl_data = y_pnl_data_val_cv_OrTest
-    else:
-        raise ValueError(f"Impossible d'identifier l'ensemble de données. Taille actuelle: {len(y_true_class_binaire)}, "
-                         f"Taille train: {len(y_pnl_data_train_cv)}, "
-                         f"Taille val pour val de val croisée ou ensemble test pour entrainement final y_pnl_data_val_cv_OrTest: {len(y_pnl_data_val_cv_OrTest)}")
-
-    #print(f"Données conforme. Taille actuelle, y_true_class_binaire: {len(y_true_class_binaire)}, "
-        #        f"Nombre de 0 y_true_class_binaire y_true_class_binaire: {np.sum(y_true_class_binaire == 0)}, "
-        # f"Taille train, y_pnl_data_train_cv: {len(y_pnl_data_train_cv)}, "
-     #f"Taille val pour val de val croisée ou ensemble test pour entrainement final,y_pnl_data_val_cv_OrTest: {len(y_pnl_data_val_cv_OrTest)}")
-
-    # Vérification de l'alignement des données
-    if not (len(y_true_class_binaire) == len(y_pred) == len(y_pnl_data)):
-        raise ValueError(
-            f"Erreur d'alignement: y_true ({len(y_true_class_binaire)} lignes), y_pred ({len(y_pred)} lignes), y_pnl_data ({len(y_pnl_data)} lignes)")
-
-    # Vérification de l'absence de zéros dans y_true
-    if 0 in y_pnl_data_val_cv_OrTest:
-        nb_zeros = np.sum(y_pnl_data_val_cv_OrTest == 0)
-        raise ValueError(f"La variable y_true contient des zéros, ce qui n'est pas autorisé pour SL et TP. NB 0:{nb_zeros}")
-
-    try:
-        verify_alignment(y_true_class_binaire, y_pnl_data)  # y_true et y_pnl_data sont des séries ou tableaux
-        # Continuer avec le reste du traitement si la vérification est réussie
-    except ValueError as e:
-        print(f"Erreur: {e}")
-        # Gérer l'erreur en la relançant pour arrêter l'exécution
-        raise ValueError(f"Vérification échouée: {e}")
-
-    # Création de masques booléens pour chaque cas (opérations vectorisées)
+    # Calcul masques
     tp_mask = (y_true_class_binaire == 1) & (y_pred == 1)
     fp_mask = (y_true_class_binaire == 0) & (y_pred == 1)
     fn_mask = (y_true_class_binaire == 1) & (y_pred == 0)
 
-    # Comptage des événements
+    # Comptage
     tp = np.sum(tp_mask)
     fp = np.sum(fp_mask)
     fn = np.sum(fn_mask)
 
-    # Calcul vectorisé des profits/pertes
-    # Pour les profits (TP), on prend les valeurs positives aux indices tp_mask
-    pnl_values = y_pnl_data.values if hasattr(y_pnl_data, 'values') else y_pnl_data
+    # Récupération des pénalités dans metric_dict/config
+    penalty_per_fn = other_params.get('penalty_per_fn', config.get('penalty_per_fn', 0))
 
-    # Calcul du profit pour les vrais positifs (prend uniquement les valeurs positives)
-    tp_profits = np.sum(np.maximum(0, pnl_values[tp_mask])) if tp > 0 else 0
-
-    # Calcul des pertes pour les faux positifs (prend uniquement les valeurs négatives ou nulles)
-    fp_losses = np.sum(np.minimum(0, pnl_values[fp_mask])) if fp > 0 else 0
-
-    # Calcul de la pénalité pour les faux négatifs
+    # Calcul
+    tp_profits = np.sum(np.maximum(0, y_pnl_data_array[tp_mask])) if tp > 0 else 0
+    fp_losses = np.sum(np.minimum(0, y_pnl_data_array[fp_mask])) if fp > 0 else 0
     fn_penalty = fn * penalty_per_fn
 
-    # Calcul du profit total
     total_profit = tp_profits + fp_losses + fn_penalty
+    # Récupération des PnL utilisés pour les TP et FP
+    tp_pnls = y_pnl_data_array[tp_mask]
+    fp_pnls = y_pnl_data_array[fp_mask]
+
+    # Vérification que toutes les valeurs de TP sont égales à 175
+    tp_unique_values = np.unique(tp_pnls)
+    if not np.all(tp_unique_values == 175):
+        print(f"❌ Incohérence : TP contient des valeurs autres que 175 : {tp_unique_values}")
+        exit(100)
+    # else:
+    #     print("✅ Tous les TP ont une valeur de 175.")
+    #     exit(101)
+
+
+    # Vérification que toutes les valeurs de FP sont égales à -227
+    fp_unique_values = np.unique(fp_pnls)
+    if not np.all(fp_unique_values == -227):
+        print(f"❌ Incohérence : FP contient des valeurs autres que -227 : {fp_unique_values}")
+        exit(102)
+
+    # else:
+    #     print("✅ Tous les FP ont une valeur de -227.")
 
     return float(total_profit), int(tp), int(fp)
 
@@ -397,6 +365,7 @@ def predict_and_process(pred_proba_raw, threshold, config):
         pred_proba_afterSig = sigmoidCustom(pred_proba_raw)
         pred_proba_afterSig = cp.clip(pred_proba_afterSig, 0.0, 1.0)
         pred = (pred_proba_afterSig > threshold).astype(cp.int32)
+        exit(55)
 
     return pred_proba_afterSig, pred
 
@@ -434,7 +403,7 @@ def compute_confusion_matrix_cpu(y_true, y_pred, config):
     return TN, FP, FN, TP
 
 
-def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold, config):
+def predict_and_compute_metrics_XgbOrLightGbm(model, X_data, y_true, best_iteration, threshold, config):
     """
     Effectue les prédictions et calcule les métriques de confusion pour un jeu de données.
 
@@ -457,7 +426,7 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
         pred_proba_log_odds = model.predict(X_data, iteration_range=(0, best_iteration), output_margin=True)
         #print("pred_proba_log_odds ",pred_proba_log_odds)
     elif model_type == modelType.LGBM:
-        pred_proba_log_odds = model.predict(X_data, num_iteration=best_iteration, raw_score=True)
+        pred_proba_log_odds = model.predict(X_data, num_iteration=model.best_iteration, raw_score=True)
     #print(f"pred_proba_log_oddsMin: {np.min(pred_proba_log_odds)}, Max: {np.max(pred_proba_log_odds)}")
 
     # Conversion GPU si nécessaire
@@ -483,6 +452,66 @@ def predict_and_compute_metrics(model, X_data, y_true, best_iteration, threshold
 
     return pred_proba_afterSig,pred_proba_log_odds, predictions_converted, (tn, fp, fn, tp), y_true_converted
 
+
+def predict_and_compute_metrics_RF(
+        model,
+        X_data,
+        y_true,
+        threshold=0.5,
+        config=None
+):
+    """
+    Effectue les prédictions et calcule les métriques sur un ensemble de données
+    pour un modèle Random Forest ou XGBRFClassifier.
+    Prend en charge la conversion CPU/GPU selon la configuration.
+
+    Parameters:
+    -----------
+    model : modèle entraîné (RandomForestClassifier ou XGBRFClassifier)
+    X_data : features de l'ensemble de données
+    y_true : labels réels de l'ensemble de données
+    threshold : seuil de décision (défaut: 0.5)
+    config : dictionnaire de configuration avec clé 'device_' (défaut: None)
+
+    Returns:
+    --------
+    tuple :
+        - pred_proba : probabilités prédites
+        - pred_proba_log_odds : log-odds des probabilités
+        - predictions_converted : prédictions binaires converties (CPU ou GPU)
+        - tn : true negative
+        - fp : false positive
+        - fn : false negative
+        - tp : true positive
+        - y_true_converted : valeurs réelles converties (CPU ou GPU)
+    """
+    import numpy as np
+    from sklearn.metrics import confusion_matrix
+    import pandas as pd
+
+    # Valeur par défaut pour config
+    if config is None:
+        config = {'device_': 'cpu'}
+
+    # Calcul des probabilités et log-odds
+    pred_proba = model.predict_proba(X_data)[:, 1]
+    pred_proba_log_odds = np.log(pred_proba / (1 - pred_proba + 1e-10))
+    predictions = (pred_proba >= threshold).astype(int)
+
+    # Conversion des données pour la matrice de confusion
+    if config['device_'] != 'cpu':
+        import cupy as cp
+        y_true_converted = cp.asarray(y_true) if isinstance(y_true, (np.ndarray, pd.Series)) else y_true
+        predictions_converted = cp.asarray(predictions) if isinstance(predictions,
+                                                                      (np.ndarray, pd.Series)) else predictions
+    else:
+        y_true_converted = y_true
+        predictions_converted = predictions
+
+    # Calcul de la matrice de confusion
+    tn, fp, fn, tp = confusion_matrix(y_true, predictions).ravel()
+
+    return pred_proba, pred_proba_log_odds, predictions_converted, tn, fp, fn, tp, y_true_converted
 
 def timestamp_to_date_utc_(timestamp):
     try:
@@ -1343,3 +1372,846 @@ def compare_dataframes(df1, df2, name1, name2, tolerance=1e-6):
                             for idx in diff_indices:
                                 print(f"    Index {idx}: {df1[col1].iloc[idx]} vs {df2[col2].iloc[idx]}")
                 break
+
+
+import numpy as np
+from scipy.optimize import minimize
+from scipy.special import expit, logit
+
+
+class BetaCalibrationCustom:
+    """
+    Implémentation simplifiée de Beta Calibration (Kull et al. 2017).
+    Calibre des probabilités p -> f(p).
+
+    On modélise: f(p) = (alpha_1 * p^(beta_1 - 1) * (1 - p)^(beta_2 - 1)) /
+                       (alpha_1 * p^(beta_1 - 1) * (1 - p)^(beta_2 - 1) +
+                        alpha_2 * p^(beta_3 - 1) * (1 - p)^(beta_4 - 1))
+
+    Hypothèse: alpha_1 > 0, alpha_2 > 0, etc.
+    """
+
+    def __init__(self, method="ab"):
+        """
+        Choisir la forme de Beta calibration:
+        - "ab": full parameters
+        - "abm": mid-level (fewer parameters)
+        - "am": alternative version
+        """
+        self.method = method
+        self.params_ = None
+
+    def _negative_log_likelihood(self, params, p, y):
+        # Selon la méthode, on associe les params
+        if self.method == "ab":  # 4 paramètres
+            a, b, c, d = params
+        elif self.method == "abm":  # 3 paramètres
+            a, b, c = params
+            d = 1.0
+        elif self.method == "am":  # 2 paramètres
+            a, b = params
+            c, d = 1.0, 1.0
+        else:
+            raise ValueError("Unknown method")
+
+        # f(p) = numerator / (numerator + denominator)
+        # numerator = p^(a) * (1-p)^(b)
+        # denominator = p^(c) * (1-p)^(d)
+        # => on ajoute un petit epsilon pour éviter log(0)
+        eps = 1e-12
+        num = np.power(p, a) * np.power((1 - p), b) + eps
+        den = np.power(p, c) * np.power((1 - p), d) + eps
+        f = num / (num + den)
+
+        # log-likelihood
+        ll = y * np.log(f + eps) + (1 - y) * np.log(1 - f + eps)
+        return -np.sum(ll)
+
+    def fit(self, p, y):
+        """
+        p: probabilités non calibrées
+        y: labels (0 ou 1)
+        """
+        p = np.clip(p, 1e-8, 1 - 1e-8)
+        y = np.array(y, dtype=float)
+
+        # Init des params
+        if self.method == "ab":
+            init_params = [1.0, 1.0, 1.0, 1.0]  # a, b, c, d
+        elif self.method == "abm":
+            init_params = [1.0, 1.0, 1.0]  # a, b, c
+        elif self.method == "am":
+            init_params = [1.0, 1.0]  # a, b
+        else:
+            raise ValueError("Unknown method")
+
+        # On minimise la -log-likelihood
+        res = minimize(self._negative_log_likelihood, init_params, args=(p, y),
+                       method='L-BFGS-B', bounds=None)
+
+        self.params_ = res.x
+        return self
+
+    def predict(self, p):
+        """
+        Calibre les probabilités p en f(p).
+        """
+        if self.params_ is None:
+            raise RuntimeError("BetaCalibrationCustom is not fitted!")
+
+        p = np.clip(p, 1e-8, 1 - 1e-8)
+
+        # Récup params
+        if self.method == "ab":
+            a, b, c, d = self.params_
+        elif self.method == "abm":
+            a, b, c = self.params_
+            d = 1.0
+        elif self.method == "am":
+            a, b = self.params_
+            c, d = 1.0, 1.0
+        else:
+            raise ValueError("Unknown method")
+
+        # f(p)
+        eps = 1e-12
+        num = np.power(p, a) * np.power(1 - p, b) + eps
+        den = np.power(p, c) * np.power(1 - p, d) + eps
+        return num / (num + den)
+
+
+import numpy as np
+
+import numpy as np
+
+def log_stats(name, data, bins=30):
+    """
+    Affiche min, max, moyenne, std + répartition sur 'bins' intervalles.
+    """
+    data = np.array(data)
+    print(f"\n📊 Statistiques pour {name}:")
+    print(f"  Min       : {np.min(data):.6f}")
+    print(f"  Max       : {np.max(data):.6f}")
+    print(f"  Moyenne   : {np.mean(data):.6f}")
+    print(f"  Écart-type: {np.std(data):.6f}")
+
+    counts, edges = np.histogram(data, bins=bins)
+    for i in range(len(counts)):
+        print(f"  Bin {i+1} ({edges[i]:.3f} - {edges[i+1]:.3f}) : {counts[i]}")
+import numpy as np
+import xgboost as xgb
+import lightgbm as lgb
+
+class BoosterWrapper:
+    def __init__(self, booster, model_type=None):
+        self.booster = booster
+
+        if model_type is not None:
+            self.model_type = model_type
+        elif isinstance(booster, lgb.Booster) or "lightgbm.sklearn" in str(type(booster)).lower():
+            self.model_type = 'lgbm'
+        elif isinstance(booster, xgb.Booster):
+            self.model_type = 'xgb'
+        else:
+            raise ValueError(f"Impossible de détecter le type du booster : {type(booster)}")
+
+    def fit(self, X, y):
+        # Stub : on considère le booster déjà entraîné
+        return self
+
+    def predict(self, X, output_margin=False):
+        if self.model_type == 'lgbm':
+            if "DMatrix" in str(type(X)):
+                raise TypeError("LightGBM cannot predict on an XGBoost DMatrix.")
+            num_iteration = getattr(self.booster, "best_iteration", None)
+            if output_margin:
+                return self.booster.predict(X, raw_score=True, num_iteration=num_iteration)
+            else:
+                probas = self.booster.predict(X, num_iteration=num_iteration)
+                return np.round(probas).astype(int)
+
+        else:
+            if not isinstance(X, xgb.DMatrix):
+                X = xgb.DMatrix(X)
+            ntree_limit = getattr(self.booster, "best_iteration", None)
+            if ntree_limit is not None:
+                ntree_limit += 1
+            if output_margin:
+                return self.booster.predict(X, output_margin=True, ntree_limit=ntree_limit)
+            else:
+                probas = self.booster.predict(X, ntree_limit=ntree_limit)
+                return np.round(probas).astype(int)
+
+    def predict_proba(self, X):
+        if self.model_type == 'lgbm':
+            if "DMatrix" in str(type(X)):
+                raise TypeError("LightGBM cannot predict on an XGBoost DMatrix.")
+            num_iteration = getattr(self.booster, "best_iteration", None)
+            raw_preds = self.booster.predict(X, num_iteration=num_iteration)
+        else:
+            if not isinstance(X, xgb.DMatrix):
+                X = xgb.DMatrix(X)
+            ntree_limit = getattr(self.booster, "best_iteration", None)
+            if ntree_limit is not None:
+                ntree_limit += 1
+            raw_preds = self.booster.predict(X, ntree_limit=ntree_limit)
+
+        if len(raw_preds.shape) == 1:
+            probs = np.zeros((len(raw_preds), 2))
+            probs[:, 1] = raw_preds
+            probs[:, 0] = 1 - raw_preds
+            return probs
+        return raw_preds
+
+    def get_params(self, deep=True):
+        return {"booster": self.booster, "model_type": self.model_type}
+
+    def set_params(self, **params):
+        for k, v in params.items():
+            setattr(self, k, v)
+        return self
+
+
+def plot_train_eval_performance(fold_results, save_dir=None, display=True, mode="trainAndVal"):
+    """
+    Visualise les résultats d'entraînement et de validation d'un modèle LightGBM
+    avec mise en évidence de la meilleure itération.
+
+    Args:
+        fold_results (dict): Dictionnaire contenant les résultats d'entraînement et de validation
+                            avec une clé 'evals_result' et éventuellement 'best_iteration'
+        save_dir (str, optional): Répertoire où sauvegarder la figure. Si None, la figure n'est pas sauvegardée.
+        display (bool, optional): Si True, affiche la figure en plus de l'enregistrer. Par défaut True.
+        mode (str, optional): Mode d'affichage: "train_only" pour afficher uniquement les données d'entrainement,
+                             "trainAndVal" pour afficher les données d'entrainement et de validation. Par défaut "trainAndVal".
+
+    Returns:
+        matplotlib.figure.Figure: L'objet figure créé
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+
+    # Récupération des résultats d'évaluation
+    evals_result = fold_results["evals_result"]
+
+    # Déterminer les métriques disponibles
+    train_metrics = list(evals_result['train'].keys())
+    eval_metrics = list(evals_result['eval'].keys()) if 'eval' in evals_result else []
+
+    # Récupération de la meilleure itération si disponible
+    best_iteration = fold_results.get("best_iteration", None)
+    if best_iteration is None and 'best_iteration' in fold_results:
+        best_iteration = fold_results['best_iteration']
+
+    # Si toujours pas disponible, essayer de la déterminer à partir de la métrique principale
+    if best_iteration is None and len(eval_metrics) > 0:
+        primary_metric = eval_metrics[0]  # Supposer que la première métrique est la principale
+        eval_values = evals_result['eval'][primary_metric]
+        # Pour les métriques où plus grand est meilleur (comme PnL)
+        best_iteration = np.argmax(eval_values) + 1  # +1 car les itérations commencent à 1
+
+    # Création de la figure en fonction du mode
+    if mode == "train_only":
+        fig, ax_train = plt.subplots(figsize=(12, 8))
+        axs = [ax_train]
+    else:  # mode == "trainAndVal"
+        fig, axs = plt.subplots(1, 2, figsize=(20, 8))
+        ax_train = axs[0]
+
+    # Couleurs pour les différentes métriques
+    colors = ['blue', 'green', 'red', 'purple', 'orange', 'brown']
+
+    # Plot des données d'entraînement
+    for i, metric in enumerate(train_metrics):
+        values = evals_result['train'][metric]
+        iterations = range(1, len(values) + 1)
+        ax_train.plot(iterations, values, label=f'{metric}', color=colors[i % len(colors)])
+
+        # Marquer la meilleure itération
+        if best_iteration and best_iteration <= len(values):
+            best_value = values[best_iteration - 1]
+            ax_train.scatter(best_iteration, best_value, color=colors[i % len(colors)], s=100, marker='o',
+                             edgecolor='black', zorder=10)
+            ax_train.axvline(x=best_iteration, color='gray', linestyle='--', alpha=0.5)
+            ax_train.text(best_iteration, best_value, f'  Itération {best_iteration}\n  Valeur: {best_value:.4f}',
+                          verticalalignment='center')
+
+    ax_train.set_title('Performance sur les données d\'entraînement', fontsize=14)
+    ax_train.set_xlabel('Itérations', fontsize=12)
+    ax_train.set_ylabel('Valeur métrique', fontsize=12)
+    ax_train.grid(True, alpha=0.3)
+    ax_train.legend(loc='best')
+
+    # Plot des données de validation (seulement si mode trainAndVal)
+    if mode == "trainAndVal" and eval_metrics:
+        ax_eval = axs[1]
+        for i, metric in enumerate(eval_metrics):
+            values = evals_result['eval'][metric]
+            iterations = range(1, len(values) + 1)
+            ax_eval.plot(iterations, values, label=f'{metric}', color=colors[i % len(colors)])
+
+            # Marquer la meilleure itération
+            if best_iteration and best_iteration <= len(values):
+                best_value = values[best_iteration - 1]
+                ax_eval.scatter(best_iteration, best_value, color=colors[i % len(colors)], s=100, marker='o',
+                                edgecolor='black', zorder=10)
+                ax_eval.axvline(x=best_iteration, color='gray', linestyle='--', alpha=0.5)
+                ax_eval.text(best_iteration, best_value, f'  Itération {best_iteration}\n  Valeur: {best_value:.4f}',
+                             verticalalignment='center')
+
+        ax_eval.set_title('Performance sur les données de validation', fontsize=14)
+        ax_eval.set_xlabel('Itérations', fontsize=12)
+        ax_eval.set_ylabel('Valeur métrique', fontsize=12)
+        ax_eval.grid(True, alpha=0.3)
+        ax_eval.legend(loc='best')
+
+    # Ajout d'un titre global
+    if mode == "train_only":
+        titre_base = "Évolution des métriques"
+    else:
+        titre_base = "Évolution des métriques d'entraînement et de validation"
+
+    if best_iteration:
+        plt.suptitle(f'{titre_base}\nMeilleure itération: {best_iteration}', fontsize=16)
+    else:
+        plt.suptitle(titre_base, fontsize=16)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Ajustement pour le titre global
+
+    # Sauvegarde de la figure si un répertoire est spécifié
+    if save_dir:
+        # Création du répertoire s'il n'existe pas
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Création du nom de fichier
+        mode_suffix = "_train_only" if mode == "train_only" else ""
+        iter_suffix = f"_iter_{best_iteration}" if best_iteration else ""
+        filename = f"model_performance{mode_suffix}{iter_suffix}.png"
+        filepath = os.path.join(save_dir, filename)
+
+        # Sauvegarde de la figure
+        fig.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"\n📥 Figure sauvegardée : {filepath}")
+
+    # Affichage de la figure selon le paramètre display
+    if display:
+        plt.show()
+
+    # Afficher un résumé des performances à la meilleure itération
+    if best_iteration:
+        print(f"\n📊 Performances à la meilleure itération ({best_iteration}):")
+        print("-" * 50)
+        print("Métriques d'entraînement:")
+        for metric in train_metrics:
+            if best_iteration <= len(evals_result['train'][metric]):
+                value = evals_result['train'][metric][best_iteration - 1]
+                print(f"  - {metric}: {value:.6f}")
+
+        if mode == "trainAndVal" and eval_metrics:
+            print("\nMétriques de validation:")
+            for metric in eval_metrics:
+                if best_iteration <= len(evals_result['eval'][metric]):
+                    value = evals_result['eval'][metric][best_iteration - 1]
+                    print(f"  - {metric}: {value:.6f}")
+
+        # Sauvegarde des métriques dans un fichier texte si un répertoire est spécifié
+        if save_dir:
+            mode_suffix = "_train_only" if mode == "train_only" else ""
+            metrics_filename = f"model_metrics{mode_suffix}_iter_{best_iteration}.txt"
+            metrics_filepath = os.path.join(save_dir, metrics_filename)
+
+            with open(metrics_filepath, 'w') as f:
+                f.write(f"Performances à la meilleure itération ({best_iteration}):\n")
+                f.write("-" * 50 + "\n")
+                f.write("Métriques d'entraînement:\n")
+                for metric in train_metrics:
+                    if best_iteration <= len(evals_result['train'][metric]):
+                        value = evals_result['train'][metric][best_iteration - 1]
+                        f.write(f"  - {metric}: {value:.6f}\n")
+
+                if mode == "trainAndVal" and eval_metrics:
+                    f.write("\nMétriques de validation:\n")
+                    for metric in eval_metrics:
+                        if best_iteration <= len(evals_result['eval'][metric]):
+                            value = evals_result['eval'][metric][best_iteration - 1]
+                            f.write(f"  - {metric}: {value:.6f}\n")
+
+            print(f"📝 Métriques sauvegardées : {metrics_filepath}")
+
+    return fig
+
+import numpy as np
+def sweep_threshold_pnl_real(
+    model,
+    X,
+    y_true_class_binaire,
+    y_pnl_data,
+    config,
+    val_score_bestIdx,
+    other_params,
+    thresholds=np.linspace(0.45, 0.60, num=31)
+):
+    """
+    Balaye plusieurs seuils et calcule le profit via calculate_profitBased à chaque seuil.
+
+    Retourne pour chaque seuil : TP, FP, FN, TN, TP_gains, FP_losses, FN_missed, total_profit
+    """
+
+
+    model_type = config['model_type']
+    if model_type == modelType.XGB:
+        import xgboost as xgb
+        dData = xgb.DMatrix(X)
+    else:
+        dData = X
+
+    # Obtenir les probabilités de classe 1 avec le pipeline custom
+    y_pred_proba, _, _, _, _ = predict_and_compute_metrics_XgbOrLightGbm(
+        model=model,
+        X_data=dData,
+        y_true=y_true_class_binaire,
+        best_iteration=val_score_bestIdx + 1,
+        threshold=other_params['threshold'],
+        config=config
+    )
+
+    # Initialisation
+    y_true_class_binaire = np.array(y_true_class_binaire)
+    y_pnl_array = np.array(y_pnl_data)
+    probas = np.array(y_pred_proba)
+
+    results = []
+    for threshold in thresholds:
+        y_pred = (probas >= threshold).astype(int)
+
+        # Masques pour FP, TP, FN, TN (toujours utiles pour info)
+        tp_mask = (y_true_class_binaire == 1) & (y_pred == 1)
+        fp_mask = (y_true_class_binaire == 0) & (y_pred == 1)
+        fn_mask = (y_true_class_binaire == 1) & (y_pred == 0)
+        tn_mask = (y_true_class_binaire == 0) & (y_pred == 0)
+
+        # Calcul via ta fonction métier calculate_profitBased
+
+
+        total_profit, tp, fp = calculate_profitBased(
+            y_true_class_binaire=y_true_class_binaire,
+            y_pred_threshold=y_pred,
+            y_pnl_data_array=y_pnl_array,
+            other_params=other_params,
+            config=config
+        )
+
+        # Statistiques complémentaires
+        fn = np.sum(fn_mask)
+        tn = np.sum(tn_mask)
+        tp_gains = np.sum(y_pnl_array[tp_mask])
+        fp_losses = np.sum(y_pnl_array[fp_mask])
+        fn_missed = np.sum(y_pnl_array[fn_mask])
+
+        results.append({
+            "threshold": round(threshold, 5),
+            "TP": int(tp),
+            "FP": int(fp),
+            "FN": int(fn),
+            "TN": int(tn),
+            "TP_gains": float(tp_gains),
+            "FP_losses": float(fp_losses),
+            "FN_missed": float(fn_missed),
+            "pnl_total": float(total_profit)  # basé sur ta fonction métier
+        })
+
+    #results.sort(key=lambda x: x["pnl_total"], reverse=True)
+    return results
+
+
+# ----------------------------------------------
+# 0.  Imports
+# ----------------------------------------------
+import os
+import numpy as np
+import pandas as pd
+import shap
+from typing import List, Sequence, Tuple, Optional
+
+# ----------------------------------------------
+# 1.  SHAP par fold
+# ----------------------------------------------
+def get_fold_shap_mean_abs(model, X_fold: pd.DataFrame) -> pd.Series:
+    """
+    Renvoie la moyenne absolue des valeurs SHAP par feature pour un fold donné.
+    Gère classification binaire (liste shap_vals[0]/[1]) et régression.
+    """
+    explainer = shap.TreeExplainer(model)
+    shap_vals = explainer.shap_values(X_fold)
+
+    if isinstance(shap_vals, Sequence):  # classification
+        # on prend la classe "positive" (index 1) s'il y a 2 matrices
+        shap_vals = shap_vals[1] if len(shap_vals) == 2 else shap_vals[0]
+
+    return pd.Series(
+        np.abs(shap_vals).mean(axis=0),
+        index=X_fold.columns, name="mean_abs_shap"
+    )
+
+# ----------------------------------------------
+# 2.  Table d’importance SHAP fold × feature
+# ----------------------------------------------
+def build_shap_table(
+    models_by_fold: List, X_val_by_fold: List[pd.DataFrame]
+) -> pd.DataFrame:
+    """
+    Concatène les importances SHAP par fold → DataFrame (features × folds).
+    """
+    shap_cols = []
+    for i, (m, Xv) in enumerate(zip(models_by_fold, X_val_by_fold)):
+        s = get_fold_shap_mean_abs(m, Xv)
+        s.name = f"fold_{i}"
+        shap_cols.append(s)
+
+    return pd.concat(shap_cols, axis=1).fillna(0)
+
+# ----------------------------------------------
+# 3.  Calcul des métriques de stabilité
+#     (CV, rang moyen, freq_top_N, Levene p‑value optionnelle)
+# ----------------------------------------------
+def add_stability_metrics(
+    df: pd.DataFrame,
+    top_n: int = 20,
+    add_levene: bool = False
+) -> pd.DataFrame:
+    """
+    Ajoute colonnes :
+      - mean_SHAP, std_SHAP, cv_SHAP
+      - mean_rank (rang moyen sur chaque fold, plus petit = meilleur)
+      - freq_topN  (nb de fois où la feature est dans le top N de son fold)
+      - levene_p   (homogénéité de variance entre folds, facultatif)
+    """
+    metric_df = df.copy()
+
+    # statistiques de base
+    metric_df["mean_SHAP"] = metric_df.mean(axis=1)
+    metric_df["std_SHAP"] = metric_df.std(axis=1)
+    metric_df["cv_SHAP"] = metric_df["std_SHAP"] / (metric_df["mean_SHAP"] + 1e-12)
+
+    # stabilité de rang
+    ranks = df.rank(axis=0, ascending=False)            # rang 1 = plus important
+    metric_df["mean_rank"] = ranks.mean(axis=1)
+
+    # fréquence d’apparition dans le top N
+    metric_df["freq_topN"] = (ranks <= top_n).sum(axis=1)
+
+    # homogénéité de variance (option)
+    if add_levene:
+        from scipy.stats import levene
+        levene_vals = []
+        for feat in df.index:
+            stat, pval = levene(*[df.loc[feat, c].values
+                                  for c in df.columns if c.startswith("fold_")])
+            levene_vals.append(pval)
+        metric_df["levene_p"] = levene_vals
+
+    return metric_df
+
+# ----------------------------------------------
+# 4.  Sélection finale des features
+# ----------------------------------------------
+def select_features(
+    metrics_df: pd.DataFrame,
+    *,
+    min_mean: float = 0.0,
+    max_cv: float = 0.30,
+    max_mean_rank: Optional[float] = None,
+    min_freq_topN: Optional[int] = None,
+    levene_alpha: Optional[float] = None,
+    top_k: Optional[int] = None
+) -> Tuple[list, pd.DataFrame]:
+    """
+    Filtre les features selon plusieurs critères.
+    Retourne (liste_features_gardées, sous‑DataFrame filtré).
+    """
+    keep = (metrics_df["mean_SHAP"] >= min_mean) & (metrics_df["cv_SHAP"] <= max_cv)
+
+    if max_mean_rank is not None:
+        keep &= metrics_df["mean_rank"] <= max_mean_rank
+    if min_freq_topN is not None:
+        keep &= metrics_df["freq_topN"] >= min_freq_topN
+    if (levene_alpha is not None) and ("levene_p" in metrics_df.columns):
+        keep &= metrics_df["levene_p"] >= levene_alpha
+
+    filtered = metrics_df[keep].sort_values(["cv_SHAP", "mean_SHAP"])
+
+    if top_k:
+        filtered = filtered.head(top_k)
+
+    return filtered.index.tolist(), filtered
+
+# ----------------------------------------------
+# 5.  Export CSV séparateur « ; »
+# ----------------------------------------------
+def export_stability_csv(
+    metrics_df: pd.DataFrame,
+    save_dir: str,
+    filename: str = "shap_stability_byfold_report.csv"
+):
+    """
+    Sauvegarde le tableau complet avec ; comme séparateur et index=feature.
+    """
+    path = os.path.join(save_dir, filename)
+    metrics_df.to_csv(path, sep=";")
+    print(f"[+] Fichier sauvegardé → {path}")
+
+
+# streamlit run C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy\stats_sc\main_shap_byFold.py
+
+
+# =============================================================================
+# 📘 Mode d’emploi : Filtres SHAP dans l’interface Streamlit
+# =============================================================================
+#
+# 🎯 Objectif : Sélectionner les features SHAP les plus importantes et stables
+#
+# -----------------------------------------------------------------------------
+# 1. mean_SHAP : importance moyenne (float)
+# -----------------------------------------------------------------------------
+# ➤ Définition :
+#     Moyenne des valeurs SHAP absolues sur tous les folds
+#     mean_SHAP = moyenne(|SHAP| sur tous les folds)
+#
+# ➤ Filtrage :
+#     Seuil minimal ajustable avec le slider Streamlit
+#
+# -----------------------------------------------------------------------------
+# 2. cv_SHAP : instabilité relative (float)
+# -----------------------------------------------------------------------------
+# ➤ Définition :
+#     Coefficient de variation = std_SHAP / mean_SHAP
+#     (permet de rejeter les features instables d’un fold à l’autre)
+#
+# ➤ Filtrage :
+#     Seuil maximal de cv_SHAP ajustable
+#
+# -----------------------------------------------------------------------------
+# 3. Top-K : nombre de features conservées à la fin (int)
+# -----------------------------------------------------------------------------
+# ➤ Définition :
+#     Une fois les filtres appliqués, on garde uniquement les Top-K
+#     features selon leur mean_SHAP
+#
+# ➤ Filtrage :
+#     Via un nombre limité dans le champ Top-K (0 = illimité)
+#
+# -----------------------------------------------------------------------------
+# 4. freq_topN : fréquence d'apparition dans les meilleurs (int)
+# -----------------------------------------------------------------------------
+# ➤ Définition :
+#     Nombre de folds dans lesquels une feature est classée
+#     dans le Top-N des plus importantes
+#
+#     freq_topN = nb de fois où rank(feature) <= N
+#
+# ➤ Paramètre Top-N :
+#     Défini par défaut à 20, ou passé via la fonction add_stability_metrics()
+#
+# ➤ Filtrage :
+#     Optionnel : filtrer uniquement les features avec freq_topN >= seuil
+#
+# -----------------------------------------------------------------------------
+# ✅ Exemple :
+#     - 6 folds
+#     - Top-N = 20
+#     - freq_topN = 4  ➜ la feature est dans le top 20 dans 4 folds sur 6
+#
+# -----------------------------------------------------------------------------
+# 🧠 Résumé des filtres utilisés :
+# -----------------------------------------------------------------------------
+#     - mean_SHAP >= seuil
+#     - cv_SHAP <= seuil
+#     - freq_topN >= min si activé
+#     - top_k : limite de features finales
+# =============================================================================
+import numpy as np
+from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
+
+# ------------------------------------------------------------
+# 1. Calibration  (Isotonic | Platt-sigmoid | none)
+# ------------------------------------------------------------
+def calibrate_probabilities(log_odds: np.ndarray,
+                            y_true: np.ndarray,
+                            method: str = "isotonic"):
+    """
+    Calibre les log-odds XGB et renvoie
+    (proba_calibrées, objet_calibrator | None)
+    """
+    if method == "none":
+        return 1.0 / (1.0 + np.exp(-log_odds)), None
+
+    if method == "sigmoid":
+        calibrator = LogisticRegression(solver="lbfgs")
+    elif method == "isotonic":
+        calibrator = IsotonicRegression(out_of_bounds="clip")
+    else:
+        raise ValueError("method doit être 'none', 'sigmoid' ou 'isotonic'")
+
+    calibrator.fit(log_odds.reshape(-1, 1), y_true)
+    proba_cal = calibrator.predict(log_odds.reshape(-1, 1))
+    return proba_cal, calibrator
+
+
+# ------------------------------------------------------------
+# 2. Sweep de seuil orienté PnL
+# ------------------------------------------------------------
+def sweep_threshold_pnl(y_true: np.ndarray,
+                        proba: np.ndarray,
+                        profit_tp: float = 175,
+                        loss_fp: float = -227,
+                        penalty_fn: float = 0.0,
+                        n_steps: int = 200):
+    lo, hi = proba.min(), proba.max()
+    lo, hi = max(lo, .02), min(hi, .98)         # on évite les extrêmes
+    thresholds = np.linspace(lo, hi, n_steps)
+
+    pnl_curve = []
+    for t in thresholds:
+        pred = (proba >= t).astype(int)
+        tp = np.sum((pred == 1) & (y_true == 1))
+        fp = np.sum((pred == 1) & (y_true == 0))
+        fn = np.sum((pred == 0) & (y_true == 1))
+        pnl_curve.append(tp * profit_tp + fp * loss_fp + fn * penalty_fn)
+
+    pnl_curve = np.asarray(pnl_curve)
+    best_idx = pnl_curve.argmax()
+    return thresholds[best_idx], thresholds, pnl_curve
+
+
+# ------------------------------------------------------------
+# 3. Agrégation des seuils par fold
+# ------------------------------------------------------------
+def aggregate_fold_thresholds(thresholds_list, mode: str = "median") -> float:
+    return float(np.mean(thresholds_list) if mode == "mean"
+                 else np.median(thresholds_list))
+
+
+def evaluate_model(X_data, y_data, model, scaler=None, calibrator=None,
+                   num_round=None, config=None, best_thresh_sweep=None,
+                   final_threshold_median=None, dataset_name="",
+                   profit_tp=175, loss_fp=-227, penalty_fn=0.0, n_steps=200):
+    """
+    Fonction générique pour évaluer un modèle sur des données (train ou test)
+
+    Args:
+        X_data: Features à évaluer
+        y_data: Labels réels
+        model: Modèle XGBoost entraîné
+        scaler: Scaler pour normaliser les données
+        calibrator: Calibrateur de probabilités (ou None)
+        num_round: Nombre d'arbres à utiliser
+        config: Configuration pour la matrice de confusion
+        best_thresh_sweep: Seuil sweepé pré-calculé (optionnel)
+        final_threshold_median: Seuil médian CV (optionnel)
+        dataset_name: Nom du jeu de données ("TRAIN" ou "TEST")
+        profit_tp: Profit par vrai positif
+        loss_fp: Perte par faux positif
+        penalty_fn: Pénalité par faux négatif
+        n_steps: Nombre d'étapes pour le sweep
+
+    Returns:
+        Dict contenant les métriques d'évaluation
+    """
+    import numpy as np
+    import pandas as pd
+    import xgboost as xgb
+
+    results = {}
+    print("eval model for ",dataset_name)
+    # 1) Scaling des données si nécessaire
+    if scaler is not None:
+        X_scaled = (pd.DataFrame(scaler.transform(X_data.values),
+                                 columns=X_data.columns,
+                                 index=X_data.index)
+                    if isinstance(X_data, pd.DataFrame)
+                    else scaler.transform(X_data))
+    else:
+        X_scaled = X_data
+
+    # 2) Préparer la DMatrix
+    dmatrix = xgb.DMatrix(X_scaled)
+    # 3) Log-odds → proba (tous les arbres)
+    log_odds = model.predict(
+        dmatrix,
+        iteration_range=(0, num_round),
+        output_margin=True
+    )
+
+    proba = (calibrator.predict(log_odds.reshape(-1, 1)).ravel()
+             if calibrator is not None
+             else 1.0 / (1.0 + np.exp(-log_odds)))
+
+    results['probabilities'] = proba
+
+    # 4) Sweep PnL global si demandé
+    if best_thresh_sweep is None:
+        best_thresh_sweep, _, pnl_curve = sweep_threshold_pnl(
+            y_data, proba,
+            profit_tp=profit_tp, loss_fp=loss_fp,
+            penalty_fn=penalty_fn, n_steps=n_steps
+        )
+        results['best_threshold_sweep'] = best_thresh_sweep
+        results['pnl_curve'] = pnl_curve
+
+        print(f"🔍 Meilleur seuil théorique sur {dataset_name} = {best_thresh_sweep:.4f} "
+              f"| Max PnL observé (sweep) = {pnl_curve.max():,.0f} €")
+    else:
+        results['best_threshold_sweep'] = best_thresh_sweep
+
+    # 5) Prédiction avec le seuil sweep
+    y_pred_sweep = (proba >= best_thresh_sweep).astype(int)
+    tn, fp, fn, tp = compute_confusion_matrix_cpu(y_data, y_pred_sweep, config)
+
+    pnl_sweep = tp * profit_tp + fp * loss_fp + fn * penalty_fn
+    trades = tp + fp
+    samples = len(y_data)
+    winrate = 100 * tp / trades if trades else 0.0
+    trade_part = 100 * trades / samples if samples else 0.0
+
+    results['sweep_metrics'] = {
+        'tp': tp,
+        'fp': fp,
+        'tn': tn,
+        'fn': fn,
+        'pnl': pnl_sweep,
+        'winrate': winrate,
+        'trade_part': trade_part,
+        'trades': trades
+    }
+
+    print(f"📊 Évaluation {dataset_name} (seuil sweepé) → TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn} | "
+          f"Winrate: {winrate:.2f}% | PnL: {pnl_sweep:,.0f} | %Trades: {trade_part:.2f}%")
+
+    # 6) Prédiction avec le seuil médian CV si fourni
+    if final_threshold_median is not None:
+        y_pred_median = (proba >= final_threshold_median).astype(int)
+        tn_median, fp_median, fn_median, tp_median = compute_confusion_matrix_cpu(y_data, y_pred_median, config)
+
+        pnl_median = tp_median * profit_tp + fp_median * loss_fp + fn_median * penalty_fn
+        trades_median = tp_median + fp_median
+        winrate_median = 100 * tp_median / trades_median if trades_median else 0.0
+        trade_part_median = 100 * trades_median / samples if samples else 0.0
+
+        results['median_metrics'] = {
+            'tp': tp_median,
+            'fp': fp_median,
+            'tn': tn_median,
+            'fn': fn_median,
+            'pnl': pnl_median,
+            'winrate': winrate_median,
+            'trade_part': trade_part_median,
+            'trades': trades_median
+        }
+
+        print(
+            f"📊 Évaluation {dataset_name} (seuil médian CV) → TP: {tp_median} | FP: {fp_median} | TN: {tn_median} | FN: {fn_median} | "
+            f"Winrate: {winrate_median:.2f}% | PnL: {pnl_median:,.0f} | %Trades: {trade_part_median:.2f}%")
+
+    return results

@@ -25,9 +25,9 @@ from pandas.errors import PerformanceWarning
 
 file_name = "Step4_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
 #file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
-file_name = "Step4_version2_170924_110325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
+file_name = "Step4__150924_030425_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
 # Chemin du répertoire
-directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge"
+directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL_1\\merge"
 #directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
 
 # Construction du chemin complet du fichier
@@ -1164,15 +1164,15 @@ features_df['asymetrie_volume'] = np.where(df['volume'] != 0, (df['VolAbv'] - df
 features_df['VolCandleMeanxRatio'] = np.where(features_df['meanVolx'] != 0, df['volume'] / features_df['meanVolx'],
                                               addDivBy0 if DEFAULT_DIV_BY0 else valueX)
 
-Imb_Div0=-6
-Imb_zone=-2
+Imb_Div0=0
+Imb_zone=0
 # Nouvelles features - Order Flow:
 # Imbalances haussières
 features_df['bull_imbalance_low_1'] = np.where(
     df['bidVolLow'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolLow'] >= 1) & (df['bidVolLow'] <= 1),
+        (df['bidVolLow'] >= 0) & (df['bidVolLow'] <= 0),
         Imb_zone,
         df['askVolLow_1'] / df['bidVolLow']
     )
@@ -1183,7 +1183,7 @@ features_df['bull_imbalance_low_2'] = np.where(
     df['bidVolLow_1'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolLow_1'] >= 1) & (df['bidVolLow_1'] <= 2),
+        (df['bidVolLow_1'] >= 0) & (df['bidVolLow_1'] <= 0),
         Imb_zone,
         df['askVolLow_2'] / df['bidVolLow_1']
     )
@@ -1200,7 +1200,7 @@ features_df['bull_imbalance_low_3'] = np.where(
     df['bidVolLow_2'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolLow_2'] >= 1) & (df['bidVolLow_2'] <= 1),
+        (df['bidVolLow_2'] >= 0) & (df['bidVolLow_2'] <= 0),
         Imb_zone,
         df['askVolLow_3'] / df['bidVolLow_2']
     )
@@ -1211,7 +1211,7 @@ features_df['bull_imbalance_high_0'] = np.where(
     df['bidVolHigh_1'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolHigh_1'] >= 1) & (df['bidVolHigh_1'] <= 1),
+        (df['bidVolHigh_1'] >= 0) & (df['bidVolHigh_1'] <= 0),
         Imb_zone,
         df['askVolHigh'] / df['bidVolHigh_1']
     )
@@ -1221,7 +1221,7 @@ features_df['bull_imbalance_high_1'] = np.where(
     df['bidVolHigh_2'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolHigh_2'] >= 1) & (df['bidVolHigh_2'] <= 1),
+        (df['bidVolHigh_2'] >= 0) & (df['bidVolHigh_2'] <= 0),
         Imb_zone,
         df['askVolHigh_1'] / df['bidVolHigh_2']
     )
@@ -1231,7 +1231,7 @@ features_df['bull_imbalance_high_2'] = np.where(
     df['bidVolHigh_3'] == 0,
     Imb_Div0,
     np.where(
-        (df['bidVolHigh_3'] >= 1) & (df['bidVolHigh_3'] <= 1),
+        (df['bidVolHigh_3'] >= 0) & (df['bidVolHigh_3'] <= 0),
         Imb_zone,
         df['askVolHigh_2'] / df['bidVolHigh_3']
     )
@@ -1280,7 +1280,7 @@ features_df['bear_imbalance_low_0'] = np.where(
     df['askVolLow_1'] == 0,
     Imb_Div0,
     np.where(
-        (df['askVolLow_1'] >= 1) & (df['askVolLow_1'] <= 1),
+        (df['askVolLow_1'] >= 0) & (df['askVolLow_1'] <= 0),
         Imb_zone,
         df['bidVolLow'] / df['askVolLow_1']
     )
@@ -1290,7 +1290,7 @@ features_df['bear_imbalance_low_1'] = np.where(
     df['askVolLow_2'] == 0,
     Imb_Div0,
     np.where(
-        (df['askVolLow_2'] >= 1) & (df['askVolLow_2'] <= 1),
+        (df['askVolLow_2'] >= 0) & (df['askVolLow_2'] <= 0),
         Imb_zone,
         df['bidVolLow_1'] / df['askVolLow_2']
     )
@@ -1300,7 +1300,7 @@ features_df['bear_imbalance_low_2'] = np.where(
     df['askVolLow_3'] == 0,
     Imb_Div0,
     np.where(
-        (df['askVolLow_3'] >= 1) & (df['askVolLow_3'] <= 1),
+        (df['askVolLow_3'] >= 0) & (df['askVolLow_3'] <= 0),
         Imb_zone,
         df['bidVolLow_2'] / df['askVolLow_3']
     )
@@ -3259,8 +3259,8 @@ winsorized_file_name = file_without_extension + '_feat_winsorized.csv'
 winsorized_file = os.path.join(file_dir, winsorized_file_name)
 
 # Sauvegarder le fichier des features originales
-#print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
-#save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
+print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
+save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
 
 # Sauvegarder le fichier winsorized
 print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")

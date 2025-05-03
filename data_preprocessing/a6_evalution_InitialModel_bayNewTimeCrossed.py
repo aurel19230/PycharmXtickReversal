@@ -315,6 +315,11 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     val_trades_samples_perct = processed_results['val_trades_samples_perct']
     val_bestIdx_custom_metric_pnl = processed_results['val_bestVal_custom_metric_pnl']
 
+    brier_val = processed_results['brier_val']
+    relative_brier_val = processed_results['relative_brier_val']
+
+    best_thresh_fold = processed_results['best_thresh_fold']
+    best_iteration_fold= processed_results['best_iteration_fold']
 
     # Training metrics
     winrates_train_by_fold = processed_results['winrates_train_by_fold']
@@ -400,7 +405,12 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
     # 11) Mise à jour de tous les attributs du trial pour validation
     # Mise à jour des attributs du trial pour validation
 
+    model_by_fold=cv_results['model_by_fold']
+    X_val_by_fold=cv_results['X_val_by_fold']
 
+
+    trial.set_user_attr('model_by_fold',model_by_fold)
+    trial.set_user_attr('X_val_by_fold',X_val_by_fold)
 
 
     trial.set_user_attr('total_tp_val', total_tp_val)
@@ -504,10 +514,19 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
         config.get('config_constraint_min_trades_threshold_by_Fold', 0)
     )
 
+    trial.set_user_attr('brier_val_list', brier_val.tolist())
+    trial.set_user_attr('relative_brier_val_list', relative_brier_val.tolist())
+
+
     trial.set_user_attr('raw_metrics_byFold',raw_metrics_byFold)
 
     use_imbalance_penalty = config.get('use_imbalance_penalty', False)
     trial.set_user_attr('use_imbalance_penalty', use_imbalance_penalty)
+
+    trial.set_user_attr('best_thresh_fold', best_thresh_fold)
+    trial.set_user_attr('best_iteration_fold', best_iteration_fold)
+
+
 
     # 12) Calcul des objectifs finaux
     objectives = calculate_normalized_pnl_objectives(trial=trial,
@@ -517,8 +536,10 @@ def objective_optuna(df_init_features=None,df_init_candles=None, trial=None, stu
         fp_val_list=fp_val_by_fold,
         scores_train_list=train_bestIdx_custom_metric_pnl,
         scores_val_list=val_bestIdx_custom_metric_pnl,
-                                                     config=config,
-        fold_stats=fold_stats,
+                                                     winrates_val_by_fold=winrates_val_by_fold.tolist(),
+        brier_val_list=brier_val,
+        relative_brier_val_list=relative_brier_val,
+        config=config,
     )
     raw_metrics = objectives['raw_metrics']
 
@@ -860,8 +881,9 @@ def train_and_evaluate_model(
         'X_train_no99_fullRange',  # ← ajoute-le ici aussi !
         'X_train_no99_fullRange_pd'
     ]
+    import copy
 
-    masked_params = mask_large_fields(other_params.copy(), excluded_keys)
+    masked_params = mask_large_fields(copy.deepcopy(other_params), excluded_keys)
     print("## Meilleurs hyperparamètres trouvés pour other_params:", masked_params)
     print(f"## Seuil utilisé : {optimal_threshold:.4f}")
 
@@ -876,6 +898,7 @@ def train_and_evaluate_model(
     X_test = X_test[selected_feature_names]
     # Calculate the size of the feature list
     num_features = len(selected_feature_names)
+
     print(f"Number of selected features: {num_features}")
 
     print_notification('###### FIN: OPTIMISATION BAYESIENNE ##########', color="blue")
@@ -991,7 +1014,7 @@ if __name__ == "__main__":
         f"   - Distribution des trades df_init_features - Échecs (0): {zeros} ({zeros / total * 100:.1f}%), Réussis (1): {ones} ({ones / total * 100:.1f}%), Total: {total}")
 
     print(f"   - Nb de features avant  selection manuelle: {len(df_init_features.columns)}\n")
-    # Créer un nouveau DataFrame avec uniquement les colonnes PNL
+    # Créer un nouveau DataFrame avec uniquement les colonnes P²NL
 
 
 
@@ -1031,7 +1054,11 @@ if __name__ == "__main__":
         'force_index_divergence', #empty or null
         'is_zscore_extrem',
         'zscore_extrem',
-
+        'cumDOM_AskBid_avgRatio', #mal capturé je pense
+        'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone', #puissance stat faible
+        'finished_auction_high', #puissance stat faible
+        # 'force_index_short_4',
+        # "force_index_long_4",
         #'atr',
         # 'ratio_volRevMove_volImpulsMove',
         # 'ratio_deltaImpulsMove_volImpulsMove',
@@ -1095,7 +1122,6 @@ if __name__ == "__main__":
         'bullish_absorption_score',
         'bullish_market_context_score',
         'bullish_combined_pressure',
-
         #'bull_imbalance_low_1',
         #'bull_imbalance_low_2',
         #'bull_imbalance_low_3',
@@ -1105,6 +1131,7 @@ if __name__ == "__main__":
     ]
 
     excluded_columns_CorrCol = [
+
     ]
 
     # Liste des catégories à exclure
@@ -1153,9 +1180,20 @@ if __name__ == "__main__":
     # Liste des colonnes à vérifier
     columns_to_check = ['date', 'trade_category']
 
-
     selected_columnsByFiltering = [
-
+        "bull_imbalance_low_1",
+        "diffLowPrice_0_1",
+        "ratio_delta_vol_VA6P",
+        "diffVolDelta_2_2Ratio",
+        "cumDiffVolDeltaRatio",
+        "VolPocVolCandleRatio",
+        "ratio_delta_vol_VA21P",
+        "ratio_volRevMove_volImpulsMove",
+        "close_sma_zscore_6",
+        "ratio_delta_vol_VA11P",
+        "sc_reg_std_30P_2",
+        "cumDOM_AskBid_pullStack_avgDiff_ratio",
+        "williams_r_oversold",
     ]
 
     if selected_columnsByFiltering != []:

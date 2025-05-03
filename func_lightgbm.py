@@ -1,6 +1,7 @@
 import lightgbm as lgb
 
 from definition import *
+from sklearn.metrics import brier_score_loss
 
 
 # Fonction objective personnalisée pour LightGBM
@@ -43,41 +44,53 @@ def lgb_calculate_profitBased(y_true=None, y_pred_threshold=None, metric_dict=No
 
     return float(total_profit), int(tp), int(fp)
 """
+def lgb_custom_metric_pnl_factory(
+    config=None,
+    other_params=None,
+):
+    """
+    Retourne une fonction de métrique LightGBM
+    qui accède à config, metric_dict, etc.
+    """
 
-# Métrique personnalisée pour LightGBM
-# Métrique personnalisée pour LightGBM
-def lgb_custom_metric_PNL(y_pnl_data_train_cv=None,y_pnl_data_val_cv_OrTest=None,
-        metric_dict=None, config=None):
-    def profit_metric(preds, y_true_class_binaire):
+    def custom_metric_pnl(preds, train_data):
         """
-        LightGBM custom metric pour le profit
+        Métrique LightGBM pour le profit,
+        utilisant config, metric_dict, etc.
         """
-        y_true_class_binaire = y_true_class_binaire.get_label()
+        # Récupération du vecteur de labels
+        y_true = train_data.get_label()
+
+        # Récupération de la série PnL attachée au dataset
+        y_pnl_data = train_data.pnl_data  # On suppose que vous avez fait ltrain.pnl_data = y_pnl_data_train_cv
 
         # Application de la sigmoid
-        preds = 1.0 / (1.0 + np.exp(-preds))
-        preds = np.clip(preds, 0.0, 1.0)
+        preds_sigmoid = 1.0 / (1.0 + np.exp(-preds))
+        preds_sigmoid = np.clip(preds_sigmoid, 0.0, 1.0)
 
-        # Vérification des prédictions
-        if np.any(preds < 0) or np.any(preds > 1):
-            return 'profit_based', float('-inf'), False
+        # Récupération d’un paramètre (ex. threshold) dans metric_dict
+        threshold = other_params.get('threshold', 0.55555555)
+        y_pred_threshold = (preds_sigmoid > threshold).astype(np.int32)
 
-        # Application du seuil
-        threshold = metric_dict.get('threshold', 0.55555555)
-        y_pred_threshold = (preds > threshold).astype(np.int32)
-
-        # Calcul du profit et des métriques
+        # Calcul du profit, etc.
         total_profit, tp, fp = calculate_profitBased(
-            y_true_class_binaire=y_true_class_binaire,
-            y_pred_threshold=y_pred_threshold,y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
-            metric_dict=metric_dict,
+            y_true_class_binaire=y_true,
+            y_pred_threshold=y_pred_threshold,
+            y_pnl_data_array=y_pnl_data,  # <-- n'existe pas dans la signature
+            other_params=other_params,
             config=config
         )
+        #print(preds)
+        total_profit=(tp * 175) + (fp * -227)
+        #print(f"✅ Profit total: {total_profit} | TP: {tp} | FP: {fp}")
 
-        # Le troisième paramètre (True) indique qu'une valeur plus élevée est meilleure
+        # Troisième élément = True -> "plus c'est grand, mieux c'est"
         return 'custom_metric_PNL', float(total_profit), True
 
-    return profit_metric
+    return custom_metric_pnl
+
+
+
 
 
 def train_and_evaluate_lightgbm_model(
@@ -97,11 +110,15 @@ def train_and_evaluate_lightgbm_model(
         val_pos=None,
         log_evaluation=0,
 ):
-    # Calcul des poids
-    sample_weights_train, sample_weights_val = compute_sample_weights(y_train_cv, y_val_cv)
-    # Création des datasets LightGBM avec les poids
-    ltrain = lgb.Dataset(X_train_cv, label=y_train_cv, weight=sample_weights_train)
-    lval = lgb.Dataset(X_val_cv, label=y_val_cv, weight=sample_weights_val)
+    ltrain = lgb.Dataset(X_train_cv, label=y_train_cv)
+    # on attache y_pnl_data_train_cv dans ltrain
+    ltrain.pnl_data = y_pnl_data_train_cv
+
+
+
+    lval = lgb.Dataset(X_val_cv, label=y_val_cv)
+    # on attache y_pnl_data_val_cv_OrTest dans lval
+    lval.pnl_data = y_pnl_data_val_cv_OrTest
 
     # Configuration des paramètres selon l'objectif
     custom_objective_lossFct = config.get('custom_objective_lossFct', 13)
@@ -121,44 +138,96 @@ def train_and_evaluate_lightgbm_model(
         raise ValueError("Choisir une fonction objective / Fonction objective non reconnue")
 
     if config.get('custom_metric_eval', 13) == model_custom_metric.LGB_CUSTOM_METRIC_PNL:
-        custom_metric = lgb_custom_metric_PNL(y_pnl_data_train_cv=y_pnl_data_train_cv,y_pnl_data_val_cv_OrTest=y_pnl_data_val_cv_OrTest,
-                                              metric_dict=other_params, config=config)
+        custom_metric_function = lgb_custom_metric_pnl_factory(config=config, other_params=other_params)
+
     else:
         params_optuna.update({'metric': ['auc', 'binary_logloss']})
 
     params_optuna['early_stopping_rounds'] = config.get('early_stopping_rounds', 13)
     params_optuna['verbose'] = -1
+    if 'boosting_type' not in params_optuna:
+        raise ValueError("Le paramètre 'boosting_type' n'est pas spécifié dans params_optuna")
+    else:
+        print(f"Boosting type configuré : {params_optuna['boosting_type']}")
+        print(f"num_boost_round : {other_params['num_boost_round']}")
+
+    # Si le boosting_type est dart, on retire tous les paramètres liés à l'early stopping
+    if params_optuna['boosting_type'] == 'dart':
+        # Paramètres d'early stopping à enlever s'ils existent
+        early_stopping_params = ['early_stopping_round', 'early_stopping_rounds', 'early_stopping']
+
+        # Créer une copie du dictionnaire pour éviter de modifier l'original pendant l'itération
+        params_copy = params_optuna.copy()
+
+        # Retirer les paramètres d'early stopping
+        for param in early_stopping_params:
+            if param in params_copy:
+                del params_copy[param]
+                #print(f"Mode dart détecté: paramètre '{param}' retiré")
+    else:
+        # Utiliser les paramètres sans modification
+        params_copy = params_optuna
 
     evals_result = {}
+    # 3) Appeler l'entraînement
     current_model = lgb.train(
         params=params_optuna,
         train_set=ltrain,
         num_boost_round=other_params['num_boost_round'],
         valid_sets=[ltrain, lval],
         valid_names=['train', 'eval'],
-        feval=custom_metric,
-        callbacks=[lgb.record_evaluation(evals_result),
-                   lgb.log_evaluation(period=log_evaluation)]
+        feval=custom_metric_function,
+        callbacks=[
+            lgb.record_evaluation(evals_result),
+            lgb.log_evaluation(period=log_evaluation)  # Affiche les logs toutes les 10 itérations
+        ],
     )
-
     # Extraction de la meilleure itération
     best_iteration, best_idx, val_best, train_best = get_best_iteration(evals_result,
                                                                         config.get('custom_metric_eval', 13))
 
-    #print(evals_result)
 
+    #print(evals_result)
     # Prédictions et métriques
     val_pred_proba, val_pred_proba_log_odds, val_pred, (tn_val, fp_val, fn_val, tp_val), y_val_cv = \
-        predict_and_compute_metrics(model=current_model, X_data=X_val_cv, y_true=y_val_cv,
+        predict_and_compute_metrics_XgbOrLightGbm(model=current_model, X_data=X_val_cv, y_true=y_val_cv,
                                     best_iteration=best_iteration, threshold=other_params['threshold'],
                                     config=config)
 
     y_train_predProba, train_pred_proba_log_odds, train_pred, (tn_train, fp_train, fn_train, tp_train), Y_train_cv = \
-        predict_and_compute_metrics(model=current_model, X_data=X_train_cv, y_true=y_train_cv,
+        predict_and_compute_metrics_XgbOrLightGbm(model=current_model, X_data=X_train_cv, y_true=y_train_cv,
                                     best_iteration=best_iteration, threshold=other_params['threshold'],
                                     config=config)
 
+    print("📊 Dernières prédictions val_pred_proba_log_odds :", val_pred_proba_log_odds[-5:])
 
+    # Calcul du PnL attendu
+    pnl_recalcule_val = (tp_val * 175) + (fp_val * -227)
+    pnl_recalcule_train = (tp_train * 175) + (fp_train * -227)
+
+
+    # Affichage des valeurs
+    # for i, score in enumerate(evals_result['eval']['custom_metric_PNL']):
+    #     print(f"[{i}] Profit = {score}")
+
+    print("train_and_evaluate_lightgbm_model", other_params['threshold'])
+
+    print(f"best_idx={best_idx} val_best : {val_best} ")
+    print(f"PnL calculé : {pnl_recalcule_val} | Vérif : TP = {tp_val}, FP = {fp_val}")
+
+    # Vérification
+    if val_best == pnl_recalcule_val:
+        print("✅ val_best est bien égal au PnL calculé.")
+    else:
+        print("❌ Mismatch : val_best est différent du PnL calculé.")
+
+    # 📉 Brier Score brut
+    brier = brier_score_loss(y_val_cv, val_pred_proba)
+    # print("brier score: ",brier)
+    # 📊 Brier Score baseline
+    baseline_pred = np.full_like(y_val_cv, y_val_cv.mean(), dtype=np.float64)
+    baseline_brier = brier_score_loss(y_val_cv, baseline_pred)
+    relative_brier = brier / baseline_brier if baseline_brier > 0 else brier
 
     # Construction des métriques
     val_metrics = {
@@ -167,8 +236,12 @@ def train_and_evaluate_lightgbm_model(
         'tn': tn_val,
         'fn': fn_val,
         'total_samples': len(y_val_cv),
-        'val_bestVal_custom_metric_pnl': val_best,
-        'best_iteration': best_iteration
+        'val_bestVal_custom_metric_pnl': pnl_recalcule_val,
+        'best_iteration': best_iteration,
+        'brier':brier,
+        'relative_brier':relative_brier,
+        'y_val_cv':y_val_cv,
+        'val_pred_proba_log_odds':val_pred_proba_log_odds,
     }
     train_metrics = {
         'tp': tp_train,
