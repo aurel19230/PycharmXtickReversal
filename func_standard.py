@@ -3025,8 +3025,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import brier_score_loss
 from sklearn.isotonic import IsotonicRegression
 from scipy.special import expit
-import netcal
-print(os.listdir(netcal.__path__[0]))
+
 
 
 def log_stats(name, data, bins=30):

@@ -1045,7 +1045,6 @@ def linear_regression_slope_market_trend(series):
     slope = model.coef_[0][0]
     return slope
 
-import ta
 def calculate_trend_strength(close=None, high=None, low=None):
     """
     Calcule un score de force de tendance entre 0 et 100

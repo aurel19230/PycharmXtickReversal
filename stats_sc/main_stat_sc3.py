@@ -7,8 +7,13 @@ from definition import *
 from func_standard import *
 
 FILE_NAME_ = "Step5__150924_030425_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
-DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\merge"
+ENV = detect_environment()
+if ENV == 'pycharm':
+        if platform.system() != "Darwin":
+                DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\merge"
 
+        else:
+                DIRECTORY_PATH = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 
 FILE_PATH = os.path.join(DIRECTORY_PATH, FILE_NAME_)
 
@@ -43,154 +48,19 @@ print(df_analysis["diffPriceClosePoc_0_0"].shape)
 
 # Définition du dictionnaire des features et leurs conditions
 features_conditions = {
-#     'diffPriceClosePoc_0_0': [
-#         {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': -0.25, 'max': -0.25, 'active': False}  # Correction de la plage
-#     ],
-# 'pocDeltaPocVolRatio': [
-#         {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': -0.25, 'max':0, 'active': False}  # Correction de la plage
-#     ],
- 'finished_auction_low': [
-         {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 1, 'max':1, 'active': False}  # Correction de la plage
-     ],
-#
-# 'diffPriceCloseVWAP': [
-#         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': 1, 'max': 2, 'active': False},  # Correction de la plage
-#
-#     {'type': 'between', 'min': -2, 'max':-1, 'active': False}  # Correction de la plage
-#     ],
- 'imbType_contZone': [
-         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 1, 'max': 1, 'active': False}],
-# 'cumDOM_AskBid_pullStack_avgDiff_ratio': [
-#         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': 4, 'max': 8, 'active': False}],
-# 'ratio_VolRevZone_XticksContZone': [
-#         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': 2.5, 'max': 10, 'active': False}],
-# 'ratioDeltaXticksContZone_VolXticksContZone': [
-#         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': 0.45, 'max': 0.9, 'active': False}] ,
- 'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': [
-         {'type': 'greater_than_or_equal', 'threshold': 4.5, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 0.5, 'max': 100, 'active': False}],
- 'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': [
-         {'type': 'greater_than_or_equal', 'threshold': 4.5, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 0.1, 'max': 1, 'active': False}],
-'ratio_volRevMove_volImpulsMove': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0, 'max': 1.5, 'active': False}],
-'ratio_deltaImpulsMove_volImpulsMove': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 5, 'max': 1, 'active': False}],
-'ratio_deltaRevMove_volRevMove': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -1, 'max': -0.5, 'active': False}],
-'sc_reg_slope_30P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -0.45, 'max': 0.65, 'active': True}],
-'sc_reg_std_30P': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 1.65, 'max': 22, 'active': False}],
-'sc_reg_slope_15P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -0.1, 'max': 0.55, 'active': False}],
-'sc_reg_std_15P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0.65, 'max': 22, 'active': False}],
-'sc_reg_slope_5P': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -1, 'max': 0.9, 'active': False}],
-'sc_reg_std_5P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0.55, 'max': 5, 'active': False}],
-# 'timeElapsed2LastBar': [
-#         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-#         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-#         {'type': 'between', 'min': 1.5, 'max': 10, 'active': True
-#          }],
+        'sc_reg_slope_30P_2': [
+                {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+                {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+                {'type': 'between', 'min': -0.45, 'max': 0.65, 'active': True}],
 
-'cumDOM_AskBid_pullStack_avgDiff_ratio': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0.5, 'max':  6, 'active': False}],
-
-
-'ratio_volRevMove_volImpulsMove': [
-        {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0.4, 'max':  10, 'active': False}],
-
-'delta_revMove_XRevZone_bigStand_extrem': [
-        {'type': 'greater_than_or_equal', 'threshold': 40, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': -10, 'active': False},
-        {'type': 'between', 'min': 2, 'max':  600, 'active': False}],
-
-'delta_impulsMove_XRevZone_bigStand_extrem': [
-        {'type': 'greater_than_or_equal', 'threshold': 25, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': -25, 'active': False},
-        {'type': 'between', 'min': 2, 'max':  600, 'active': False}],
-
-'diffLowPrice_0_1': [
-        {'type': 'greater_than_or_equal', 'threshold': 0, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': -10, 'active': False},
-        {'type': 'between', 'min': -2, 'max': 0.5, 'active': False}],
-
-'diffVolDelta_2_2Ratio': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.25, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': -0.25, 'max': 0.25, 'active': False}],
-
-'close_sma_zscore_6': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.3, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 0.4, 'max':4, 'active': False}],
-
-'williams_r_oversold': [
-        {'type': 'greater_than_or_equal', 'threshold':0.4 , 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 0.3, 'active': False},
-        {'type': 'between', 'min': -0.5, 'max': 0, 'active': False}],
-
-'sc_reg_std_30P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.6, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 0.7, 'max': 1.6, 'active': False}],
-#
- 'linear_slope_prevSession': [
-         {'type': 'greater_than_or_equal', 'threshold': -0.3, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-         {'type': 'between', 'min': -0.3, 'max': 1.8, 'active': False}],
-
-        'mfi_antiBear': [
+                'ratio_delta_vol_VA11P': [
+                        {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
+                        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
+                        {'type': 'between', 'min': 0.25, 'max': 200, 'active': True}],
+        'candleDuration': [
                 {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
                 {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 0.3, 'max': 200, 'active': False}],
-        'ratio_delta_vol_VA11P': [
-                {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
-                {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 0.25, 'max': 200, 'active': True}],
+                {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
 }
 
 

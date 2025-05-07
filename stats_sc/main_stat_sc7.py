@@ -15,7 +15,6 @@ if ENV == 'pycharm':
         else:
                 DIRECTORY_PATH = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 
-
 FILE_PATH = os.path.join(DIRECTORY_PATH, FILE_NAME_)
 
 df_init_features, CUSTOM_SESSIONS = load_features_and_sections(FILE_PATH)
@@ -49,32 +48,36 @@ print(df_analysis["diffPriceClosePoc_0_0"].shape)
 
 # Définition du dictionnaire des features et leurs conditions
 features_conditions = {
-         'finished_auction_low': [
-                 {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-                 {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-                 {'type': 'between', 'min': 1, 'max':1, 'active': True}  # Correction de la plage
-             ],
 
-        'sc_reg_slope_30P_2': [
-                {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-                {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-                {'type': 'between', 'min': 0.2, 'max': 0.8, 'active': True}],
+ 'imbType_contZone': [
+         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
+         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+         {'type': 'between', 'min': 1, 'max': 2, 'active': True}],
+
+ 'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': [
+         {'type': 'greater_than_or_equal', 'threshold': 2.5, 'active': False},
+         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+         {'type': 'between', 'min': 2.5, 'max': 10, 'active': True}],
+
+'ratio_deltaRevMove_volRevMove': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': -0.8, 'max': -0.25, 'active': True}],
+
+'bear_imbalance_high_1': [
+        {'type': 'greater_than_or_equal', 'threshold': 3, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 1, 'active': False},
+        {'type': 'between', 'min': 1.2, 'max': 100, 'active': True}],
+'sc_reg_slope_30P_2': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': -0.3, 'max': 0.8, 'active': True}],
 
 
-        'diffVolDelta_2_2Ratio': [
-                {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': True},
-                {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': -0.25, 'max': 0.25, 'active': False}],
-
-        'close_sma_zscore_6': [
-                {'type': 'greater_than_or_equal', 'threshold': 0.3, 'active': False},
-                {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 0.4, 'max':3, 'active': True}],
-
-        'candleDuration': [
-                {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
-                {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
+'candleDuration': [
+        {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
+        {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
 }
 
 

@@ -7,8 +7,13 @@ from definition import *
 from func_standard import *
 
 FILE_NAME_ = "Step5__150924_030425_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
-DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\merge"
+ENV = detect_environment()
+if ENV == 'pycharm':
+        if platform.system() != "Darwin":
+                DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\merge"
 
+        else:
+                DIRECTORY_PATH = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 
 FILE_PATH = os.path.join(DIRECTORY_PATH, FILE_NAME_)
 
@@ -194,6 +199,10 @@ features_conditions = {
         {'type': 'greater_than_or_equal', 'threshold': 4, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': 1, 'max': 3, 'active': False}],
+'candleDuration': [
+        {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
+        {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
 }
 
 

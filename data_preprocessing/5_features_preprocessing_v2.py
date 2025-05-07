@@ -29,6 +29,7 @@ file_name = "Step4__150924_030425_bugFixTradeResult1_extractOnlyFullSession_Only
 # Chemin du répertoire
 directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL_1\\merge"
 #directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
+directory_path = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
@@ -2722,9 +2723,14 @@ features_df = add_rs(df, features_df,
            rs_low_threshold_range=0.0001947, rs_high_threshold_range=0.0001994,
            rs_low_threshold_extrem=0.0001559, rs_high_threshold_extrem=0.0003939)
 
+
+features_df['candleDuration'] = df['timeStampOpening'].diff().fillna(0.1)
+
 column_settings = {
     # Time-based features
     'deltaTimestampOpening': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+    'candleDuration': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
     'deltaTimestampOpeningSession1min': (
     "winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'deltaTimestampOpeningSession1index': (
