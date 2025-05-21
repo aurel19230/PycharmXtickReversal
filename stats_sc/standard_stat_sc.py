@@ -7,7 +7,7 @@ import scipy.stats as stats
 from statsmodels.stats.power import TTestIndPower
 from sklearn.feature_selection import f_classif  # Test F (ANOVA)
 
-from func_standard import ( calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio,calculate_rogers_satchell_numba)
+from func_standard import (enhanced_close_to_vwap_zscore, calculate_slopes_and_r2_numba,calculate_atr,calculate_percent_bb,enhanced_close_to_sma_ratio,calculate_rogers_satchell_numba)
 from definition import *
 def plot_distributions_short_long_grid(df, features, class_col='class'):
     """
@@ -158,7 +158,6 @@ def plot_boxplots(df, features, category_col='trade_category', nrows=3, ncols=4)
     plt.tight_layout()
     plt.show()
 
-
 def apply_feature_conditions(df, features_conditions):
     mask = np.ones(len(df), dtype=bool)  # Initialisation du masque global à True
 
@@ -189,6 +188,11 @@ def apply_feature_conditions(df, features_conditions):
                 feature_mask |= df[base_feature].fillna(np.inf) <= condition['threshold']
             elif condition['type'] == 'between':
                 feature_mask |= df[base_feature].fillna(np.nan).between(
+                    condition['min'], condition['max'], inclusive='both'
+                )
+            elif condition['type'] == 'not_between':
+                # Nouvelle condition qui exclut ce qui est entre deux valeurs
+                feature_mask |= ~df[base_feature].fillna(np.nan).between(
                     condition['min'], condition['max'], inclusive='both'
                 )
 
@@ -2694,20 +2698,24 @@ def evaluate_atr(params, df, optimize_oversold=False, optimize_overbought=False)
     return results, df_test_filtered, target_y_test
 
 
-def evaluate_vwap(params, df, optimize_oversold=False, optimize_overbought=False):
+def evaluate_vwap_zscore(params, df, optimize_oversold=False, optimize_overbought=False):
     """
-    Évalue l'indicateur VWAP avec les paramètres optimaux.
+    Évalue l'indicateur Z-Score basé sur VWAP avec les paramètres optimaux.
+
+    Logique:
+    - oversold = Z-Score extrême (< zscore_low_threshold OU > zscore_high_threshold)
+    - overbought = Z-Score modéré (entre zscore_low_threshold et zscore_high_threshold)
 
     Parameters:
     -----------
     params : dict
-        Dictionnaire contenant les paramètres optimisés
+        Dictionnaire contenant les paramètres optimisés (period_var_zscore, zscore_low_threshold, zscore_high_threshold)
     df : pandas.DataFrame
         DataFrame complet
     optimize_oversold : bool, default=False
-        Indique si l'optimisation des zones de survente est activée
+        Indique si l'optimisation des zones de Z-Score extrême (oversold) est activée
     optimize_overbought : bool, default=False
-        Indique si l'optimisation des zones de surachat est activée
+        Indique si l'optimisation des zones de Z-Score modéré (overbought) est activée
 
     Returns:
     --------
@@ -2718,19 +2726,27 @@ def evaluate_vwap(params, df, optimize_oversold=False, optimize_overbought=False
         - Série des valeurs cibles
     """
     # Extraire les paramètres
-    vwap_low_threshold = params.get('vwap_low_threshold')
-    vwap_high_threshold = params.get('vwap_high_threshold')
+    period_var_zscore = params.get('period_var_zscore')
+    zscore_low_threshold = params.get('zscore_low_threshold')
+    zscore_high_threshold = params.get('zscore_high_threshold')
 
-    # Utiliser la colonne diffPriceCloseVWAP directement
-    df['diffPriceCloseVWAP'] = df['close'] - df['VWAP']
-    diff_vwap = pd.to_numeric(df['diffPriceCloseVWAP'], errors='coerce')
+    # Calculer le Z-Score VWAP
+    _, zscores = enhanced_close_to_vwap_zscore(df, period_var_zscore)
 
     # Créer les indicateurs binaires uniquement pour les modes activés
     if optimize_overbought:
-        df['is_vwap_range'] = np.where((diff_vwap > vwap_low_threshold) & (diff_vwap < vwap_high_threshold), 1, 0)
+        # Z-Score modéré (entre low et high) = condition overbought
+        df['is_zscore_vwap_moderate'] = np.where(
+            (zscores >= zscore_low_threshold) & (zscores <= zscore_high_threshold),
+            1, 0
+        )
 
     if optimize_oversold:
-        df['is_vwap_extrem'] = np.where((diff_vwap < vwap_low_threshold) | (diff_vwap > vwap_high_threshold), 1, 0)
+        # Z-Score extrême (< low OU > high) = condition oversold
+        df['is_zscore_vwap_extrem'] = np.where(
+            (zscores < zscore_low_threshold) | (zscores > zscore_high_threshold),
+            1, 0
+        )
 
     # Initialiser les résultats
     results = {
@@ -2749,18 +2765,18 @@ def evaluate_vwap(params, df, optimize_oversold=False, optimize_overbought=False
     df_test_filtered = df[df['class_binaire'].isin([0, 1])].copy()
     target_y_test = df['class_binaire']
 
-    # Calculs pour le bin 0 (distance VWAP extrême) uniquement si optimize_oversold est activé
+    # Calculs pour le bin 0 (Z-Score VWAP extrême / oversold) uniquement si optimize_oversold est activé
     if optimize_oversold:
-        oversold_df = df_test_filtered[df_test_filtered['is_vwap_extrem'] == 1]
+        oversold_df = df_test_filtered[df_test_filtered['is_zscore_vwap_extrem'] == 1]
         if len(oversold_df) > 0:
             results['bin_0_win_rate'] = oversold_df['class_binaire'].mean()
             results['bin_0_pct'] = len(oversold_df) / len(df_test_filtered)
             results['oversold_success_count'] = oversold_df['class_binaire'].sum()
             results['bin_0_samples'] = len(oversold_df)
 
-    # Calculs pour le bin 1 (distance VWAP modérée) uniquement si optimize_overbought est activé
+    # Calculs pour le bin 1 (Z-Score VWAP modéré / overbought) uniquement si optimize_overbought est activé
     if optimize_overbought:
-        overbought_df = df_test_filtered[df_test_filtered['is_vwap_range'] == 1]
+        overbought_df = df_test_filtered[df_test_filtered['is_zscore_vwap_moderate'] == 1]
         if len(overbought_df) > 0:
             results['bin_1_win_rate'] = overbought_df['class_binaire'].mean()
             results['bin_1_pct'] = len(overbought_df) / len(df_test_filtered)
@@ -2770,12 +2786,17 @@ def evaluate_vwap(params, df, optimize_oversold=False, optimize_overbought=False
     # Calculer le spread uniquement si les deux modes sont activés
     if optimize_oversold and optimize_overbought:
         oversold_df = df_test_filtered[
-            df_test_filtered['is_vwap_extrem'] == 1] if 'oversold_df' not in locals() else oversold_df
+            df_test_filtered['is_zscore_vwap_extrem'] == 1] if 'oversold_df' not in locals() else oversold_df
         overbought_df = df_test_filtered[
-            df_test_filtered['is_vwap_range'] == 1] if 'overbought_df' not in locals() else overbought_df
+            df_test_filtered['is_zscore_vwap_moderate'] == 1] if 'overbought_df' not in locals() else overbought_df
 
         if len(oversold_df) > 0 and len(overbought_df) > 0:
             results['bin_spread'] = results['bin_1_win_rate'] - results['bin_0_win_rate']
+
+    # Ajouter les valeurs de Z-Score aux résultats pour référence
+    results['period_var_zscore'] = period_var_zscore
+    results['zscore_low_threshold'] = zscore_low_threshold
+    results['zscore_high_threshold'] = zscore_high_threshold
 
     return results, df_test_filtered, target_y_test
 

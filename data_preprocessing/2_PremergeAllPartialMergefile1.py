@@ -89,8 +89,8 @@ def main():
     TP_VALUE = 175
 
     # Chemin du répertoire
-    directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\merge"
-    file_name = "Step2__150924_030425.csv"
+    directory_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\merge"
+    file_name = "Step2_5_0_5TP_1SL_020924_011024.csv"
 
     # Construction du chemin complet du fichier
     file_path = os.path.join(directory_path, file_name)

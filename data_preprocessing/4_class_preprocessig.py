@@ -1,284 +1,234 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from func_standard import timestamp_to_date_utc
-from func_standard import print_notification, load_data
+import matplotlib.gridspec as gridspec
+from func_standard import timestamp_to_date_utc, print_notification, load_data
 import os
 
-# Charger les données
-# Nom du fichier
-file_name = "Step3__150924_030425_bugFixTradeResult1_extractOnlyFullSession.csv"
+# ═════════════════════════════════════════════════════════════════════════════
+# 1) PARAMÈTRES & CHARGEMENT
+# ═════════════════════════════════════════════════════════════════════════════
+file_name      = "Step3_5_0_5TP_6SL_010124_150525_extractOnlyFullSession.csv"
+directory_path = (r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject"
+                  r"\Sierra chart\xTickReversal\simu\5_0_5TP_6SL\\merge")
 
-# Chemin du répertoire
-directory_path = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\merge"
+# file_name      = "Step3_version2_170924_100325_bugFixTradeResult1_extractOnlyFullSession.csv"
+# directory_path = (r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject"
+#                   r"\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge")
+file_path      = os.path.join(directory_path, file_name)
 
-# Combiner le chemin du répertoire avec le nom du fichier
-file_path = os.path.join(directory_path, file_name)
-
-# Demander à l'utilisateur de choisir l'option
-user_choice = input("Entrez 'Entrée' pour prendre en compte les shorts et longs, 's' pour les shorts uniquement ou 'l' pour les longs uniquement : ")
-
-# Charger les données
+user_choice = input("Entrée = shorts+longs, 's' = shorts only, 'l' = longs only : ").strip().lower()
 df = load_data(file_path)
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 2) PRÉ-TRAITEMENTS
+# ═════════════════════════════════════════════════════════════════════════════
 df['timeStampOpening'] = pd.to_numeric(df['timeStampOpening'], errors='coerce')
+df['formatted_date']   = timestamp_to_date_utc(df['timeStampOpening'])
+df['date']             = pd.to_datetime(df['formatted_date'])
+df['month']            = df['date'].dt.strftime('%Y-%m')
 
-# Convertir la colonne timeStamp en datetime
-df['formatted_date'] = timestamp_to_date_utc(df['timeStampOpening'])
-df['date'] = pd.to_datetime(df['formatted_date'])
-
-# Créer les colonnes 'class_binaire' et 'class_multi' en fonction du choix de l'utilisateur
-if user_choice.lower() == 's':
-    # Classification binaire pour les trades "short"
+# ------------ construction de class_binaire (1 = succès, 0 = échec, 99 = ignore)
+if user_choice == 's':                        # Shorts only
+    mask = df['tradeDir'] == -1
     df['class_binaire'] = np.select(
-        [
-            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-        ],
-        [1, 0],
-        default=99
-    )
-    # Classification multi-classe pour les trades "short"
-    df['class_multi'] = np.select(
-        [
-            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-        ],
-        [1, 0],
-        default=99
-    )
+        [(mask) & (df['tradeResult'] == 1),
+         (mask) & (df['tradeResult'] == -1)],
+        [1, 0], default=99)
     output_file_suffix = "_OnlyShort"
 
-elif user_choice.lower() == 'l':
-    # Classification binaire pour les trades "long"
+elif user_choice == 'l':                      # Longs only
+    mask = df['tradeDir'] == 1
     df['class_binaire'] = np.select(
-        [
-            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == 1) & (df['tradeResult'] == -1)
-        ],
-        [1, 0],
-        default=99
-    )
-    # Classification multi-classe pour les trades "long"
-    df['class_multi'] = np.select(
-        [
-            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == 1) & (df['tradeResult'] == -1)
-        ],
-        [1, 0],
-        default=99
-    )
+        [(mask) & (df['tradeResult'] == 1),
+         (mask) & (df['tradeResult'] == -1)],
+        [1, 0], default=99)
     output_file_suffix = "_OnlyLong"
 
-else:
-    # Classification binaire pour tous les trades
+else:                                         # Longs + Shorts
     df['class_binaire'] = np.select(
-        [
-            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-        ],
-        [1, 1, 0, 0],
-        default=99
-    )
-    # Classification multi-classe pour tous les trades
-    df['class_multi'] = np.select(
-        [
-            (df['tradeDir'] == 1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
-            (df['tradeDir'] == 1) & (df['tradeResult'] == -1),
-            (df['tradeDir'] == -1) & (df['tradeResult'] == -1)
-        ],
-        [0, 1, 2, 3],
-        default=99
-    )
+        [(df['tradeDir'] == 1)  & (df['tradeResult'] == 1),
+         (df['tradeDir'] == -1) & (df['tradeResult'] == 1),
+         (df['tradeDir'] == 1)  & (df['tradeResult'] == -1),
+         (df['tradeDir'] == -1) & (df['tradeResult'] == -1)],
+        [1, 1, 0, 0], default=99)
     output_file_suffix = ""
 
-
-# Filtrer les données pour exclure les valeurs 99 dans la colonne 'class'
-filtered_class_counts = df[df['class_binaire'] != 99]['class_binaire'].value_counts()
-filtered_class_percentages = filtered_class_counts / filtered_class_counts.sum() * 100
-
-# Préparation des données pour le graphique de distribution mensuelle détaillée
-df['month'] = df['date'].dt.strftime('%Y-%m')
-
-# Set default value for trade_category
+# ------------ Catégories texte pour le stackplot
 df['trade_category'] = 'Pas de trade'
+ok = df['class_binaire'] != 99
+df.loc[ok, 'trade_category'] = np.select(
+    [(df.loc[ok, 'tradeDir'] == 1)  & (df.loc[ok, 'tradeResult'] == 1),
+     (df.loc[ok, 'tradeDir'] == 1)  & (df.loc[ok, 'tradeResult'] == -1),
+     (df.loc[ok, 'tradeDir'] == -1) & (df.loc[ok, 'tradeResult'] == 1),
+     (df.loc[ok, 'tradeDir'] == -1) & (df.loc[ok, 'tradeResult'] == -1)],
+    ['Trades réussis long', 'Trades échoués long',
+     'Trades réussis short', 'Trades échoués short'],
+    default='Pas de trade')
 
-# Create mask for rows where class is not 99
-mask = df['class_binaire'] != 99
+all_categories = ['Trades réussis long', 'Trades réussis short',
+                  'Trades échoués long', 'Trades échoués short']
 
-# Assign trade categories only to rows where class is not 99
-df.loc[mask, 'trade_category'] = np.select(
-    [
-        (df.loc[mask, 'tradeDir'] == 1) & (df.loc[mask, 'tradeResult'] == 1),
-        (df.loc[mask, 'tradeDir'] == 1) & (df.loc[mask, 'tradeResult'] == -1),
-        (df.loc[mask, 'tradeDir'] == -1) & (df.loc[mask, 'tradeResult'] == 1),
-        (df.loc[mask, 'tradeDir'] == -1) & (df.loc[mask, 'tradeResult'] == -1)
-    ],
-    [
-        'Trades réussis long',
-        'Trades échoués long',
-        'Trades réussis short',
-        'Trades échoués short'
-    ],
-    default='Pas de trade'
-)
+# ═════════════════════════════════════════════════════════════════════════════
+# 3) STATISTIQUES
+# ═════════════════════════════════════════════════════════════════════════════
+total_bougies   = len(df)
+no_trade_cnt    = (df['tradeResult'] == 99).sum()
+short_trade_cnt = (df['tradeDir'] == -1).sum()
+long_trade_cnt  = (df['tradeDir'] ==  1).sum()
 
-# Calculer les pourcentages pour le camembert
-total_trades = len(df)
-no_trade_count = df[df['tradeResult'] == 99].shape[0]
-short_trade_count = df[df['tradeDir'] == -1].shape[0]
-long_trade_count = df[df['tradeDir'] == 1].shape[0]
-
-no_trade = no_trade_count / total_trades * 100
-short_trade = short_trade_count / total_trades * 100
-long_trade = long_trade_count / total_trades * 100
-
-# Calculer les pourcentages pour le graphique à barres
-trades = df[df['tradeResult'] != 99]
+trades              = df[df['tradeResult'] != 99]
 total_active_trades = len(trades)
 
 short_trades = trades[trades['tradeDir'] == -1]
-long_trades = trades[trades['tradeDir'] == 1]
+long_trades  = trades[trades['tradeDir'] ==  1]
 
-short_percent = len(short_trades) / total_active_trades * 100
-long_percent = len(long_trades) / total_active_trades * 100
+short_fail, short_success = short_trades['class_binaire'].value_counts().reindex([0, 1]).fillna(0)
+long_fail,  long_success  = long_trades ['class_binaire'].value_counts().reindex([0, 1]).fillna(0)
 
-short_success = short_trades[short_trades['tradeResult'] == 1].shape[0] / len(short_trades) * 100 if len(short_trades) > 0 else 0
-short_fail = 100 - short_success
+short_percent = 100 * len(short_trades) / total_active_trades if total_active_trades else 0
+long_percent  = 100 * len(long_trades)  / total_active_trades if total_active_trades else 0
 
-long_success = long_trades[long_trades['tradeResult'] == 1].shape[0] / len(long_trades) * 100 if len(long_trades) > 0 else 0
-long_fail = 100 - long_success
+# Totaux globaux uniquement sur class_binaire ∈ {0,1}
+active_mask    = trades['class_binaire'].isin([0, 1])
+succ_tot       = int(trades.loc[active_mask, 'class_binaire'].sum())
+fail_tot       = int(active_mask.sum() - succ_tot)      # 0 = échecs
+total_active_trades = succ_tot + fail_tot               # cohérent
 
-monthly_distribution = df[df['tradeResult'] != 99].groupby(['month', 'trade_category']).size().unstack(fill_value=0)
+# ------------ Distributions mensuelles
+monthly_distribution = (trades[active_mask]              # seulement 0/1
+                        .groupby(['month', 'trade_category'])
+                        .size().unstack(fill_value=0))
 monthly_distribution['Total'] = monthly_distribution.sum(axis=1)
 monthly_distribution = monthly_distribution.div(monthly_distribution['Total'], axis=0) * 100
+for cat in all_categories:
+    if cat not in monthly_distribution:
+        monthly_distribution[cat] = 0
 
-# Ensure all categories are present, fill with 0 if missing
-all_categories = ['Trades réussis long', 'Trades réussis short', 'Trades échoués long', 'Trades échoués short']
-for category in all_categories:
-    if category not in monthly_distribution.columns:
-        monthly_distribution[category] = 0
+monthly_trade_counts = trades[active_mask].groupby('month').size()
+monthly_cum_counts   = monthly_trade_counts.cumsum()
+monthly_table = (pd.DataFrame({'Trades': monthly_trade_counts,
+                               'Cumulé': monthly_cum_counts})
+                 .reindex(monthly_distribution.index).fillna(0).astype(int))
 
-# Obtenir le nom du fichier d'entrée
-nom_fichier_entree = os.path.basename(file_path)
+# ═════════════════════════════════════════════════════════════════════════════
+# 4) SAUVEGARDE CSV
+# ═════════════════════════════════════════════════════════════════════════════
+csv_out = os.path.join(os.path.dirname(file_path),
+                       os.path.basename(file_path).replace(".csv", "").replace("Step3", "Step4")
+                       + output_file_suffix + ".csv")
+print_notification(f"Sauvegarde du DataFrame dans : {csv_out}")
+df.to_csv(csv_out, sep=';', index=False, encoding='iso-8859-1')
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 5) PRINT CONSOLE
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n--- INFORMATIONS ---\n")
+print("1. Répartition des positions :")
+print(f"Total bougies : {total_bougies}")
+print(f"Aucun trade  : {no_trade_cnt} ({no_trade_cnt/total_bougies*100:.1f}%)")
+print(f"Trades short : {short_trade_cnt} ({short_trade_cnt/total_bougies*100:.1f}%)")
+print(f"Trades long  : {long_trade_cnt} ({long_trade_cnt/total_bougies*100:.1f}%)")
 
-# Obtenir le chemin complet du fichier de sortie
-# Enlever l'extension .csv si elle existe
-nom_fichier_entree_sans_extension = os.path.splitext(nom_fichier_entree)[0]
-nom_fichier_entree_sans_extension = nom_fichier_entree_sans_extension.replace("Step3", "Step4")
+print("\n2. Trades actifs :")
+print(f"Total actifs : {total_active_trades}")
 
-# Rajouter le suffixe et ajouter .csv à la fin
-nom_fichier_sortie = f"{nom_fichier_entree_sans_extension}{output_file_suffix}.csv"
-chemin_sortie = os.path.join(os.path.dirname(file_path), nom_fichier_sortie)
+if short_success + short_fail:
+    pct_ok_short = short_success / (short_success + short_fail) * 100
+    pct_ko_short = 100 - pct_ok_short
+else:
+    pct_ok_short = pct_ko_short = 0
+print(f" Shorts ({short_percent:.1f}% du total actifs)")
+print(f"   ↳ Réussis  : {short_success} ({pct_ok_short:.1f}%)")
+print(f"   ↳ Échoués  : {short_fail}   ({pct_ko_short:.1f}%)")
 
-# Sauvegarder le DataFrame
-print_notification(f"Sauvegarde du DataFrame dans : {chemin_sortie}")
-df.to_csv(chemin_sortie, sep=';', index=False, encoding='iso-8859-1')
+if long_success + long_fail:
+    pct_ok_long = long_success / (long_success + long_fail) * 100
+    pct_ko_long = 100 - pct_ok_long
+else:
+    pct_ok_long = pct_ko_long = 0
+print(f" Longs  ({long_percent:.1f}% du total actifs)")
+print(f"   ↳ Réussis  : {long_success} ({pct_ok_long:.1f}%)")
+print(f"   ↳ Échoués  : {long_fail}   ({pct_ko_long:.1f}%)")
 
-# Afficher les informations dans la console
-print("\n--- Informations des graphiques ---\n")
+print("\n3. Distribution mensuelle % :")
+print(monthly_distribution[all_categories].round(1).to_string())
 
-print("1. Répartition des positions:")
-print(f"Total des trades: {total_trades}")
-print(f"Aucun trade: {no_trade_count} ({no_trade:.1f}%)")
-print(f"Trades short: {short_trade_count} ({short_trade:.1f}%)")
-print(f"Trades long: {long_trade_count} ({long_trade:.1f}%)")
+print("\n4. Global réussis / échoués :")
+if total_active_trades:
+    print(f"Trades réussis : {succ_tot} ({succ_tot/total_active_trades*100:.1f}%)")
+    print(f"Trades échoués : {fail_tot} ({fail_tot/total_active_trades*100:.1f}%)")
+else:
+    print("Aucun trade actif.")
+print("\n--- FIN ---\n")
 
-print("\n2. Répartition et résultats des trades actifs:")
-print(f"Total des trades actifs: {total_active_trades}")
-print(f"Trades short: {len(short_trades)} ({short_percent:.1f}%)")
-print(f"  Réussis: {short_success:.1f}%")
-print(f"  Échoués: {short_fail:.1f}%")
-print(f"Trades long: {len(long_trades)} ({long_percent:.1f}%)")
-print(f"  Réussis: {long_success:.1f}%")
-print(f"  Échoués: {long_fail:.1f}%")
+# ═════════════════════════════════════════════════════════════════════════════
+# 6) FIGURE (GridSpec 2 × 3)
+# ═════════════════════════════════════════════════════════════════════════════
+fig = plt.figure(figsize=(22, 14))
+gs  = gridspec.GridSpec(2, 3, height_ratios=[2.1, 2.0], hspace=0.35, wspace=0.28)
 
-print("\n3. Distribution mensuelle détaillée des trades:")
-print(monthly_distribution.to_string())
+# Ligne 0
+ax1 = fig.add_subplot(gs[0, 0])          # Camembert positions
+ax2 = fig.add_subplot(gs[0, 1:3])        # Histogramme stacked
 
-print("\n4. Répartition globale des trades réussis et échoués:")
-successful_trades = filtered_class_counts[1]
-failed_trades = filtered_class_counts[0]
-print(f"Trades réussis: {successful_trades} ({filtered_class_percentages[1]:.1f}%)")
-print(f"Trades échoués: {failed_trades} ({filtered_class_percentages[0]:.1f}%)")
+# Ligne 1
+ax3 = fig.add_subplot(gs[1, 0])          # Stackplot mensuel
+axT = fig.add_subplot(gs[1, 1])          # Tableau
+ax4 = fig.add_subplot(gs[1, 2])          # Camembert global
+axT.axis('off')
 
-print("\n--- Fin des informations ---")
-
-# Création des graphiques
-fig, axes = plt.subplots(2, 2, figsize=(20, 12))
-
-# Graphique 1: Camembert de répartition des positions
-ax1 = axes[0, 0]
-sizes = [no_trade, short_trade, long_trade]
-labels = [f'Aucun trade\n{no_trade_count}', f'Trade Shorts\n{short_trade_count}', f'Trade longs\n{long_trade_count}']
-wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90,
-                                   pctdistance=0.85, labeldistance=1.05)
-plt.setp(texts, size=10, weight="bold")
-plt.setp(autotexts, size=9, weight="bold")
-ax1.set_title(f'Répartition des positions\nTotal: {total_trades}')
+# (1) Camembert positions
+ax1.pie([no_trade_cnt, short_trade_cnt, long_trade_cnt],
+        labels=[f'Aucun\n{no_trade_cnt}', f'Shorts\n{short_trade_cnt}', f'Longs\n{long_trade_cnt}'],
+        autopct='%1.1f%%', startangle=90, pctdistance=0.85, labeldistance=1.05)
+ax1.set_title('Répartition des positions')
 ax1.axis('equal')
 
-# Graphique 2: Barres de répartition et résultats des trades actifs
-ax2 = axes[0, 1]
-ax2.bar(['Short', 'Long'], [short_fail, long_fail], color=['red', 'red'], alpha=0.7, width=0.5, label='% trades échoués')
-ax2.bar(['Short', 'Long'], [short_success, long_success], bottom=[short_fail, long_fail], color=['green', 'green'], alpha=0.7, width=0.5, label='% trades réussis')
-
-for i, (success, fail) in enumerate(zip([short_success, long_success], [short_fail, long_fail])):
-    ax2.text(i, fail/2, f'{fail:.1f}%', ha='center', va='center', color='white')
-    ax2.text(i, fail + success/2, f'{success:.1f}%', ha='center', va='center', color='white')
-
-ax2.set_xticks([0, 1])
-ax2.set_xticklabels([f'Short\n{short_percent:.1f}%', f'Long\n{long_percent:.1f}%'])
-ax2.set_ylim(0, 110)
-ax2.set_ylabel('Pourcentage')
-ax2.set_title('Répartition et résultats des trades actifs')
+# (2) Histogramme réussite / échec
+ax2.bar(['Short', 'Long'], [short_fail, long_fail],    color='red',   alpha=.7, label='Échoués')
+ax2.bar(['Short', 'Long'], [short_success, long_success], bottom=[short_fail, long_fail],
+        color='green', alpha=.7, label='Réussis')
+ax2.set_ylabel('Nombre de trades')
+ax2.set_title('Résultat des trades actifs')
 ax2.legend()
 
-# Graphique 3: Aires empilées de distribution mensuelle détaillée
-ax3 = axes[1, 0]
+# (3) Stackplot mensuel
 colors = ['darkgreen', 'lightgreen', 'darkred', 'salmon']
 ax3.stackplot(monthly_distribution.index,
-              [monthly_distribution[cat] for cat in all_categories],
-              labels=all_categories,
-              colors=colors)
-
-ax3.set_ylabel('Pourcentage')
-ax3.set_title('Distribution mensuelle détaillée des trades')
-ax3.legend(loc='upper left', bbox_to_anchor=(1, 1))
+              [monthly_distribution[c] for c in all_categories],
+              colors=colors, labels=all_categories)
 ax3.set_ylim(0, 100)
+ax3.set_ylabel('%')
+ax3.set_title('Distribution mensuelle détaillée')
+ax3.set_xticks(range(len(monthly_distribution)))
+ax3.set_xticklabels([pd.to_datetime(m).strftime('%b %y') for m in monthly_distribution.index],
+                    rotation=90, fontsize=8)
+ax3.legend(loc='upper left', bbox_to_anchor=(1, 1))
 
-dates = [pd.to_datetime(date) for date in monthly_distribution.index]
-ax3.set_xticks(range(len(dates)))
-ax3.set_xticklabels([date.strftime('%b. %y') for date in dates], rotation=90, fontsize=9)
+# (4) Tableau
+table = axT.table(cellText  = monthly_table.values,
+                  rowLabels = [pd.to_datetime(idx).strftime('%b %y')
+                               for idx in monthly_table.index],
+                  colLabels = monthly_table.columns,
+                  loc='center', cellLoc='center')
+table.auto_set_font_size(False)
+table.set_fontsize(9)
+table.scale(1.35, 1.2)
 
-# Graphique 4: Camembert de répartition globale des trades réussis et échoués
-ax4 = axes[1, 1]
-
-# Déterminer le titre en fonction du choix de l'utilisateur
-if user_choice.lower() == 's':
-    title = 'Répartition des trades Shorts réussis et échoués'
-elif user_choice.lower() == 'l':
-    title = 'Répartition des trades Longs réussis et échoués'
+# (5) Camembert global
+if total_active_trades == 0:
+    ax4.text(0.5, 0.5, "Aucun trade actif", ha='center', va='center', fontsize=12)
+    ax4.axis('off')
 else:
-    title = 'Répartition des trades réussis et échoués (Longs et Shorts)'
+    ax4.pie([fail_tot, succ_tot],
+            labels=[f'Échoués\n{fail_tot}', f'Réussis\n{succ_tot}'],
+            autopct='%1.1f%%', colors=['red', 'green'],
+            pctdistance=0.85, labeldistance=1.05)
+    title = {'s': 'Résultats globaux (Shorts)',
+             'l': 'Résultats globaux (Longs)'}.get(user_choice,
+                                                  'Résultats globaux (Longs + Shorts)')
+    ax4.set_title(title)
+    ax4.axis('equal')
 
-wedges, texts, autotexts = ax4.pie(filtered_class_percentages,
-                                   labels=[f'Trades échoués\n{failed_trades}', f'Trades réussis\n{successful_trades}'],
-                                   autopct='%1.1f%%',
-                                   colors=['red', 'green'],
-                                   pctdistance=0.85,
-                                   labeldistance=1.05)
-
-plt.setp(texts, size=10, weight="bold")
-plt.setp(autotexts, size=9, weight="bold")
-
-ax4.set_title(title)
-ax4.axis('equal')
-
-plt.tight_layout()
 plt.show()

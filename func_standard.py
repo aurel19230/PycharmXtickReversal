@@ -11922,8 +11922,115 @@ def calculate_percent_bb(df, period=14, std_dev=2, fill_value=0, return_array=Fa
     # Sinon, créer un DataFrame pour le résultat
     result = pd.DataFrame({'percent_b': raw_percent_b}, index=df.index)
     return result
+@njit(fastmath=True, parallel=True)
+def close_to_vwap_zscore_fast(close, vwap, session_starts,
+                              window, diffDivBy0, DEFAULT_DIV_BY0,
+                              valueX, fill_value):
+
+    n = close.size
+    ratio      = np.empty(n, dtype=np.float64)
+    zscore     = np.empty(n, dtype=np.float64)
+
+    # 1. Pré-calcul du ratio (vectoriel, donc très rapide)
+    for i in prange(n):
+        ratio[i] = close[i] - vwap[i]
+
+    # 2. Bornes de sessions
+    starts = np.where(session_starts)[0]
+    # Ajoute un début "virtuel" à −1 pour la toute première barre
+    starts = np.concatenate((np.array([-1], dtype=np.int64), starts))
+    ends   = np.concatenate((starts[1:], np.array([n-1], dtype=np.int64)))
+
+    # 3. Parcours session par session
+    for s in prange(1, starts.size):          # peut être parallélisé si sessions indépendantes
+        start, end = starts[s-1]+1, ends[s]   # bornes inclusives
+        length = end - start + 1
+
+        # Rolling STD via somme / somme² (Welford simplifié)
+        roll_sum = 0.0
+        roll_sum2 = 0.0
+
+        for i in range(length):
+            idx = start + i
+            x   = ratio[idx]
+
+            # Ajout à la fenêtre
+            roll_sum  += x
+            roll_sum2 += x * x
+
+            if i >= window:
+                # Retirer la valeur qui sort de la fenêtre
+                x_old = ratio[idx - window]
+                roll_sum  -= x_old
+                roll_sum2 -= x_old * x_old
+
+            k = min(i + 1, window)  # taille effective de la fenêtre
+            if k < window:
+                zscore[idx] = fill_value
+                continue
+
+            # Variance non biaisée (ddof = 1)
+            var = (roll_sum2 - (roll_sum * roll_sum) / k) / (k - 1)
+            std = np.sqrt(var) if var > 0 else 0.0
+
+            if std != 0.0:
+                zscore[idx] = x / std
+            else:
+                zscore[idx] = diffDivBy0 if DEFAULT_DIV_BY0 else valueX
+
+        # Padding des toutes premières barres (< window)
+        zscore[start:start+window-1] = fill_value
+        ratio[start:start+window-1]  = fill_value
+
+    return ratio, zscore
 
 
+def enhanced_close_to_vwap_zscore(
+        df: pd.DataFrame,
+        window: int,
+        diffDivBy0=0,
+        DEFAULT_DIV_BY0=True,
+        valueX=0,
+        fill_value=0
+) -> tuple:
+    """
+    Version optimisée pour calculer le ratio close-to-VWAP et son z-score.
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame avec au moins les colonnes 'close', 'vwap' et 'SessionStartEnd'
+    window : int
+        Nombre de périodes pour le calcul de l'écart-type
+    diffDivBy0 : float
+        Valeur si on divise par 0 et que DEFAULT_DIV_BY0 = True
+    DEFAULT_DIV_BY0 : bool
+        Booléen, si True, alors on utilise diffDivBy0 comme valeur de fallback
+    valueX : float
+        Valeur si on divise par 0 et que DEFAULT_DIV_BY0 = False
+    fill_value : float
+        Valeur utilisée lorsque les calculs ne sont pas possibles (début de session)
+
+    Returns
+    -------
+    tuple(Series, Series)
+        (ratio, z-score)
+    """
+    # Convertir en tableaux NumPy pour traitement rapide
+    close = pd.to_numeric(df['close'], errors='coerce').values
+    vwap = pd.to_numeric(df['VWAP'], errors='coerce').values
+    session_starts = (df['SessionStartEnd'] == 10).values
+
+    # Appeler la fonction Numba principale
+    ratio_array, zscore_array = close_to_vwap_zscore_fast(
+        close, vwap, session_starts, window, diffDivBy0, DEFAULT_DIV_BY0, valueX, fill_value
+    )
+
+    # Convertir les tableaux en Series pandas
+    ratio_series = pd.Series(ratio_array, index=df.index)
+    zscore_series = pd.Series(zscore_array, index=df.index)
+
+    return ratio_series, zscore_series
 @njit
 def calculate_close_to_sma_ratio_numba(close, session_starts, window, diffDivBy0, DEFAULT_DIV_BY0, valueX, fill_value):
     """
@@ -12211,5 +12318,224 @@ def calculate_rogers_satchell_numba(high_values, low_values, open_values, close_
     return vol
 
 
+import numpy as np
+import pandas as pd
+from numba import jit, prange
+from ta.volatility import AverageTrueRange
+
+
+@jit(nopython=True)
+def calculate_z_scores(distances, z_window):
+    """Version numba optimisée pour calculer les z_scores."""
+    n = len(distances)
+    z_scores = np.zeros(n)
+
+    # Pour chaque position valide pour calculer un z-score
+    for i in range(z_window - 1, n):
+        window = distances[i - z_window + 1:i + 1]
+        mean = np.mean(window)
+        std = np.std(window)
+        if std > 0:
+            z_scores[i] = (distances[i] - mean) / std
+
+    return z_scores
+
+
+def vwap_reversal_pro(df, *, lookback, momentum, z_window, atr_period, atr_mult,
+                                ema_filter, vol_lookback, vol_ratio_min):
+    """
+    Version optimisée de l'indicateur VWAP Reversal Pro.
+    """
+    # Créer un DataFrame résultat avec juste les données nécessaires
+    result_df = pd.DataFrame(index=df.index)
+    result_df['session_id'] = df['session_id']
+
+    # Pré-calculer la distance VWAP pour tous
+    distance = df['close'].values - df['VWAP'].values
+
+    # Initialiser les colonnes pour le résultat final
+    z_dist = np.full(len(df), np.nan)
+    speed = np.full(len(df), np.nan)
+    mom = np.full(len(df), np.nan)
+    atr_values = np.full(len(df), np.nan)
+    dyn_th = np.full(len(df), np.nan)
+    ema_values = np.full(len(df), np.nan)
+    trend_ok = np.zeros(len(df), dtype=bool)
+    vol_ok = np.zeros(len(df), dtype=bool)
+    enough_data = np.zeros(len(df), dtype=bool)
+
+    # Traiter chaque session séparément
+    for session_id, indices in df.groupby('session_id').groups.items():
+        indices_array = np.array(indices)
+        if len(indices_array) == 0:
+            continue
+
+        # Extraire les données de session
+        session_distances = distance[indices_array]
+        session_close = df.loc[indices_array, 'close'].values
+
+        # Vérifier si suffisamment de données
+        has_enough_data = (
+                len(indices_array) >= z_window and
+                len(indices_array) > lookback and
+                len(indices_array) > lookback + momentum and
+                len(indices_array) >= atr_period and
+                ('volume' not in df.columns or len(indices_array) >= vol_lookback)
+        )
+
+        if has_enough_data:
+            min_required = max(z_window, lookback + momentum, atr_period, vol_lookback) - 1
+            if min_required < len(indices_array):
+                enough_indices = indices_array[min_required:]
+                enough_data[enough_indices] = True
+
+        # 1. Z-score - utiliser la fonction numba
+        if len(indices_array) >= z_window:
+            session_z_scores = calculate_z_scores(session_distances, z_window)
+            z_dist[indices_array] = session_z_scores
+
+        # 2. Speed - difference de z_dist avec lookback points
+        if len(indices_array) > lookback:
+            session_z_dist = z_dist[indices_array]
+            for i in range(lookback, len(indices_array)):
+                speed[indices_array[i]] = session_z_dist[i] - session_z_dist[i - lookback]
+
+        # 3. Momentum - différence de speed avec momentum points
+        if len(indices_array) > lookback + momentum:
+            session_speed = speed[indices_array]
+            for i in range(momentum, len(session_speed)):
+                if np.isnan(session_speed[i]) or np.isnan(session_speed[i - momentum]):
+                    continue
+                mom[indices_array[i]] = session_speed[i] - session_speed[i - momentum]
+
+        # 4. ATR
+        if len(indices_array) >= atr_period:
+            try:
+                session_high = df.loc[indices_array, 'high'].values
+                session_low = df.loc[indices_array, 'low'].values
+                session_close = df.loc[indices_array, 'close'].values
+
+                # Convertir en DataFrame temporaire pour ta.volatility
+                temp_df = pd.DataFrame({
+                    'high': session_high,
+                    'low': session_low,
+                    'close': session_close
+                })
+
+                atr = AverageTrueRange(
+                    temp_df['high'],
+                    temp_df['low'],
+                    temp_df['close'],
+                    atr_period,
+                    fillna=True
+                ).average_true_range().values
+
+                atr_values[indices_array] = atr
+                dyn_th[indices_array] = atr * atr_mult
+            except Exception as e:
+                print(f"Erreur ATR pour session {session_id}: {e}")
+
+        # 5. EMA et tendance
+        ema = pd.Series(session_close).ewm(span=ema_filter, adjust=False).mean().values
+        ema_values[indices_array] = ema
+
+        # Tendance = variation EMA
+        for i in range(1, len(ema)):
+            trend_ok[indices_array[i]] = ema[i] - ema[i - 1] < 0
+
+        # 6. Volume
+        if 'volume' in df.columns and len(indices_array) >= vol_lookback:
+            session_volume = df.loc[indices_array, 'volume'].values
+
+            # Calculer la moyenne mobile du volume
+            vol_ma = np.full(len(session_volume), np.nan)
+            for i in range(vol_lookback - 1, len(session_volume)):
+                vol_ma[i] = np.mean(session_volume[i - vol_lookback + 1:i + 1])
+
+            # Appliquer le ratio
+            for i in range(vol_lookback - 1, len(session_volume)):
+                if not np.isnan(vol_ma[i]) and vol_ma[i] > 0:
+                    vol_ok[indices_array[i]] = session_volume[i] / vol_ma[i] > vol_ratio_min
+        else:
+            vol_ok[indices_array] = True
+
+    # Générer le signal final de manière vectorisée
+    signal = (
+            (z_dist > 0) &
+            (speed > 0) &
+            ((mom < -dyn_th) | trend_ok) &
+            vol_ok &
+            ~np.isnan(atr_values)
+    )
+
+    # Remplir les NaN avec False
+    signal = pd.Series(signal, index=df.index).fillna(False)
+
+    # DataFrame de statut
+    status_df = pd.DataFrame({'enough_data': enough_data}, index=df.index)
+
+    return signal, status_df
+
+def metrics_vwap_premmium(df, mask):
+    sub = df[mask.values]
+    return ((sub["class_binaire"] == 1).mean() if not sub.empty else 0.0,
+            len(sub) / len(df))
+
 def setup_model_weight_optuna():
     return None
+
+import numba
+@numba.jit(nopython=True)
+def calculate_atr_numba(high, low, close_prev, window=14):
+    """Recalcule l'ATR avec une fenêtre personnalisée en utilisant Numba pour l'accélération
+
+    Args:
+        high: numpy array des prix hauts
+        low: numpy array des prix bas
+        close_prev: numpy array des prix de clôture précédents (déjà décalés)
+        window: taille de la fenêtre pour l'ATR
+
+    Returns:
+        numpy array de l'ATR
+    """
+    # True Range
+    tr1 = high - low
+    tr2 = np.abs(high - close_prev)
+    tr3 = np.abs(low - close_prev)
+
+    # Calculer le True Range comme maximum des trois
+    tr = np.zeros_like(high)
+    for i in range(len(high)):
+        tr[i] = max(tr1[i], tr2[i], tr3[i])
+
+    # Calcul de l'ATR
+    atr = np.zeros_like(tr)
+    atr[0] = tr[0]  # Première valeur = premier TR
+
+    # Calcul de l'ATR par moyenne mobile exponentielle
+    alpha = 2.0 / (window + 1.0)
+    for i in range(1, len(atr)):
+        atr[i] = alpha * tr[i] + (1 - alpha) * atr[i - 1]
+
+    return atr
+
+def calculate_atr_thresholds(datasets, percentiles=[0.25, 0.50, 0.75]):
+    """Calcule les seuils ATR basés sur les percentiles des datasets combinés"""
+    all_atr = np.concatenate([d['atr_recalc'].values for d in datasets])
+    thresholds = [round(np.percentile(all_atr, p*100), 1) for p in percentiles]
+    return thresholds
+def calculate_atr(df, window=14):
+    """Wrapper pour le calcul de l'ATR utilisant la version optimisée avec Numba"""
+    high = df['high'].values
+    low = df['low'].values
+
+    # Créer le close précédent (décalé d'une position)
+    if len(df['close']) > 0:
+        close_prev = np.empty_like(df['close'].values)
+        close_prev[0] = df['close'].values[0]  # La première valeur reste la même
+        close_prev[1:] = df['close'].values[:-1]  # Décalage pour les autres valeurs
+    else:
+        close_prev = np.array([])
+
+    return calculate_atr_numba(high, low, close_prev, window)
+# ───────────────────── MASK BUILDERS ────────────────────────────

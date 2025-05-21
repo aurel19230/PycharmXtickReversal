@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import RobustScaler
 import os
 import numpy as np
+from func_standard import vwap_reversal_pro,metrics_vwap_premmium, calculate_atr
 
 
 diffDivBy0 = np.nan
@@ -23,14 +24,15 @@ import warnings
 from pandas.errors import PerformanceWarning
 # Nom du fichier
 
-file_name = "Step4_version2_100325_260325_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
-#file_name = "Step4_5_0_5TP_1SL_150924_280225_bugFixTradeResult_extractOnlyFullSession_OnlyShort.csv"
-file_name = "Step4__150924_030425_bugFixTradeResult1_extractOnlyFullSession_OnlyShort.csv"
-# Chemin du répertoire
-directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL_1\\merge"
-#directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
-directory_path = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 
+file_name = "Step4_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort.csv"
+# Chemin du répertoire
+#directory_path =  r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL\version2\merge\extend"
+if platform.system() != "Darwin":
+    directory_path = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_6SL\merge"
+
+else:
+    directory_path = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
 # Construction du chemin complet du fichier
 file_path = os.path.join(directory_path, file_name)
 
@@ -779,9 +781,9 @@ def calculate_candle_rev_tick(df):
     values = ((selected_rows['high'] - selected_rows['close']) * (1 / minimum_increment)) + 1
 
     # Vérifier si toutes les valeurs sont identiques
-    if not all(values == values.iloc[0]):
-        raise ValueError(
-            "Les valeurs de (high - close) * minimum_increment diffèrent pour les 4 occurrences sélectionnées.")
+    # if not all(values == values.iloc[0]):
+    #     raise ValueError(
+    #         "Les valeurs de (high - close) * minimum_increment diffèrent pour les 4 occurrences sélectionnées.")
 
     # Retourner la valeur commune
     return int(values.iloc[0])
@@ -1128,7 +1130,7 @@ features_df['diffVolDelta_0_1Ratio'] = np.where(df['delta'].shift(1) != 0,
                                                 (df['delta'] - df['delta'].shift(1)) / df['delta'].shift(1),
                                                 diffDivBy0 if DEFAULT_DIV_BY0 else valueX)
 # Définir la période comme variable
-nb_periods = 5
+nb_periods = 4
 
 # Moyenne des volumes sur les nb_periods dernières périodes (de t-1 à t-nb_periods)
 features_df['meanVolx'] = df['volume'].shift(1).rolling(window=nb_periods, min_periods=1).mean()
@@ -1360,10 +1362,10 @@ features_df['finished_auction_low'] = (df['askVolLow'] == 0).astype(int)
 features_df['staked00_high'] = ((df['bidVolHigh'] == 0) & (df['bidVolHigh_1'] == 0)).astype(int)
 features_df['staked00_low'] = ((df['askVolLow'] == 0) & (df['askVolLow_1'] == 0)).astype(int)
 
-dist_above, dist_below = calculate_naked_poc_distances(df)
+#dist_above, dist_below = calculate_naked_poc_distances(df)
 
-features_df["naked_poc_dist_above"] = dist_above
-features_df["naked_poc_dist_below"] = dist_below
+#features_df["naked_poc_dist_above"] = dist_above
+#features_df["naked_poc_dist_below"] = dist_below
 print_notification("Ajout des informations sur les class et les trades")
 
 
@@ -2725,9 +2727,480 @@ features_df = add_rs(df, features_df,
 
 
 features_df['candleDuration'] = df['timeStampOpening'].diff().fillna(0.1)
+# Création de la colonne avec des valeurs par défaut de 0
+#
+features_df['vix_slope_12_up_15'] = 0
+#
+def compute_consecutive_trend_feature(df, features_df, target_col, n=2, trend_type='up', output_col='trend_feature'):
+    """
+    Lit une colonne source dans df et ajoute une colonne binaire dans features_df indiquant
+    si une tendance haussière ou baissière sur N bougies consécutives est détectée.
+
+    Parameters:
+    - df : DataFrame source (avec les colonnes comme vix_vixLast)
+    - features_df : DataFrame cible à enrichir (déjà existant)
+    - target_col : colonne dans df à analyser
+    - n : nombre de bougies à examiner
+    - trend_type : 'up' (hausse) ou 'down' (baisse)
+    - output_col : nom de la colonne à ajouter à features_df
+
+    Returns:
+    - features_df modifié avec la nouvelle colonne
+    """
+    cond = pd.Series(True, index=df.index)
+    for i in range(n):
+        if trend_type == 'up':
+            cond &= df[target_col].shift(i) >= df[target_col].shift(i + 1)
+        elif trend_type == 'down':
+            cond &= df[target_col].shift(i) <= df[target_col].shift(i + 1)
+        else:
+            raise ValueError("trend_type must be 'up' or 'down'")
+        cond &= ~df[target_col].shift(i).isna()
+        cond &= ~df[target_col].shift(i + 1).isna()
+
+    features_df[output_col] = cond.astype(int)
+    return features_df
+
+
+
+
+features_df = compute_consecutive_trend_feature(
+    df=df,
+    features_df=features_df,
+    target_col='vix_slope_12',
+    n=15,
+    trend_type='up',
+    output_col='vix_slope_12_up_15'
+)
+def add_vwap_reversal_pro(
+    df_full: pd.DataFrame,
+    features_df: pd.DataFrame,
+    *,
+    lookback, momentum, z_window,
+    atr_period, atr_mult,
+    ema_filter,
+    vol_lookback, vol_ratio_min,
+    lab_only: bool = True,
+    neutral_value: float = np.nan  # ← garde les NaN si not enough data
+) -> pd.DataFrame:
+    """
+    Injecte is_vwap_reversal_pro_short dans `features_df`
+    avec neutral_value=NaN quand pas assez de données.
+    Affiche WR / PCT basé uniquement sur les signaux valides.
+    """
+
+    # 1. Calcul brut du signal + statut de validité
+    sig_full, data_status = vwap_reversal_pro(
+        df_full,
+        lookback      = lookback,
+        momentum      = momentum,
+        z_window      = z_window,
+        atr_period    = atr_period,
+        atr_mult      = atr_mult,
+        ema_filter    = ema_filter,
+        vol_lookback  = vol_lookback,
+        vol_ratio_min = vol_ratio_min
+    )
+
+    # 2. Nettoyage : NaN si pas assez de données
+    sig_clean = sig_full.where(data_status['enough_data'], neutral_value)
+
+    # Réindexer si besoin
+    if not df_full.index.equals(features_df.index):
+        sig_clean = sig_clean.reindex(features_df.index)
+
+    # 3. Ajout au DataFrame
+    features_df['is_vwap_reversal_pro_short'] = sig_clean.astype('float32')
+
+    # 4. Calcul métrique uniquement sur signaux valides (non-NaN)
+    sig_eval = sig_clean.dropna().astype(bool)
+
+    if lab_only:
+        lab_mask = features_df['class_binaire'].isin([0, 1])
+        lab_valid_mask = lab_mask & sig_clean.notna()
+        df_lab = features_df.loc[lab_valid_mask, ['class_binaire']]
+        wr, pct = metrics_vwap_premmium(df_lab, sig_eval.loc[lab_valid_mask])
+    else:
+        valid_mask = sig_clean.notna()
+        wr, pct = metrics_vwap_premmium(df_full.loc[valid_mask, ['class_binaire']],
+                                        sig_eval.loc[valid_mask])
+
+    print(f"VWAP-REV global | WR {wr:.2%} / PCT {pct:.2%}")
+
+    return features_df
+
+
+
+
+# ✅ S'assurer que df contient la colonne session_id
+df["session_id"] = (df["SessionStartEnd"] == 10).cumsum().astype("int32")
+
+# ✅ S'assurer que features_df a aussi la colonne session_id
+features_df["session_id"] = df["session_id"].copy()
+
+# Appliquer vwap_reversal_pro via la fonction add_vwap_reversal_pro
+params_alt = {
+    'lookback'     : 28,
+    'momentum'     : 7,
+    'z_window'     : 40,
+    'atr_period'   : 25,
+    'atr_mult'     : 2.3868087645716685,
+    'ema_filter'   : 58,
+    'vol_lookback' : 7,
+    'vol_ratio_min': 0.3413489908051855,
+}
+
+#df_filtered_0_1 = features_df[features_df["class_binaire"].isin([0, 1])]
+
+# 1) Appel sur TOUTES les lignes
+features_df = add_vwap_reversal_pro(
+    df_full     = df,            # 24086 lignes
+    features_df = features_df,   # même index
+    **params_alt                  # lab_only=True par défaut
+)
+#
+# # 2) Sous-ensemble 0/1 APRÈS l’ajout de la colonne
+# df_lab = features_df[features_df["class_binaire"].isin([0, 1])]
+#
+# # 3) Statistiques
+# mean_by_class = (
+#     df_lab.groupby("class_binaire")["is_vwap_reversal_pro_short"]
+#           .mean()
+# )
+#
+# print("\n📊 Moyenne par classe :")
+# for cls, avg in mean_by_class.items():
+#     print(f"Classe {cls} → Moyenne: {avg:.4f}")
+# def perf(df_full: pd.DataFrame, df_lab: pd.DataFrame, params: dict) -> tuple[float, float]:
+#     sig_full, _ = vwap_reversal_pro(df_full, **params)
+#     sig_lab = sig_full.loc[df_lab.index]
+#     return metrics_vwap_premmium(df_lab, sig_lab)
+#
+#
+#
+# from pathlib import Path
+#
+# # Convertir la chaîne de caractères en objet Path
+# DIR = Path(r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_6SL\merge")
+#
+# # Maintenant vous pouvez utiliser l'opérateur / pour joindre les chemins
+# CSV_TRAIN = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat__split1_01012024_01052024.csv"
+# CSV_TEST  = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat__split2_01052024_01102024.csv"
+# CSV_VAL1  = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat__split3_01102024_28022025.csv"
+# CSV_VAL   = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat__split4_02032025_14052025.csv"
+#
+# # ─────────────────── DATA LOAD ───────────────────────────────────
+# def load_csv(path: str | Path) -> Tuple[pd.DataFrame, pd.DataFrame, int]:
+#     """Return (df_full, df_lab, nb_sessions)."""
+#     df_full = pd.read_csv(path, sep=';', encoding='ISO-8859-1',
+#                           parse_dates=['date'], low_memory=False)
+#
+#     # Correction / comptage sessions
+#     df_full['SessionStartEnd'] = pd.to_numeric(df_full['SessionStartEnd'],
+#                                                errors='coerce')
+#     df_full.dropna(subset=['SessionStartEnd'], inplace=True)
+#     df_full['SessionStartEnd'] = df_full['SessionStartEnd'].astype(int)
+#
+#     nb_start = (df_full['SessionStartEnd'] == 10).sum()
+#     nb_end   = (df_full['SessionStartEnd'] == 20).sum()
+#     nb_sessions = min(nb_start, nb_end)
+#
+#     if nb_start != nb_end:
+#         print(f"{Fore.YELLOW}⚠️  Sessions mismatch {nb_start}/{nb_end} "
+#               f"in {Path(path).name}{Style.RESET_ALL}")
+#     else:
+#         print(f"{Fore.GREEN}✔ {nb_sessions} sessions in "
+#               f"{Path(path).name}{Style.RESET_ALL}")
+#
+#     # session_id avant filtrage
+#     df_full['session_id'] = (df_full['SessionStartEnd'] == 10).cumsum().astype('int32')
+#
+#     # df_lab : uniquement bougies 0/1
+#     df_lab = df_full[df_full['class_binaire'].isin([0, 1])].copy()
+#     #df_lab.reset_index(drop=True, inplace=True)
+#     return df_full, df_lab, nb_sessions
+# # 1) Charger le même millésime (Step5) que vos splits
+# GLOBAL_CSV = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat.csv"
+# df_full, df_lab, _ = load_csv(GLOBAL_CSV)  # <- réutilisez la même fonction
+#
+# # 2) Générer le signal
+# sig_full, _ = vwap_reversal_pro(df_full, **params_alt)
+#
+# # 3) Restreindre l’évaluation aux seules bougies 0 / 1
+# sig_lab = sig_full.loc[df_lab.index]
+# wr_glb, pct_glb = metrics_vwap_premmium(df_lab, sig_lab)
+#
+# print(f"GLOBAL (Step5) | WR {wr_glb:.2%} / PCT {pct_glb:.2%}")
+#
+# TR_FULL , TR_LAB , _ = load_csv(CSV_TRAIN)
+# VA_FULL , VA_LAB , _ = load_csv(CSV_VAL  )
+# VA1_FULL, VA1_LAB, _ = load_csv(CSV_VAL1 )
+# TE_FULL , TE_LAB , _ = load_csv(CSV_TEST )
+#
+# wr_t, pct_t = perf(TR_FULL, TR_LAB, params_alt)
+# wr_v, pct_v = perf(VA_FULL, VA_LAB, params_alt)
+# wr_v1, pct_v1 = perf(VA1_FULL, VA1_LAB, params_alt)
+#
+# print(f" TR {wr_t:6.2%}/{pct_t:6.2%} | "
+#       f"VA {wr_v:6.2%}/{pct_v:6.2%} | VA1 {wr_v1:6.2%}/{pct_v1:6.2%}", end=' ')
+
+
+#sig_full, data_status = vwap_reversal_pro(df_full, **params_alt)
+
+#df_full["is_vwap_reversal_pro_short"] = sig_full.where(
+           #   data_status["enough_data"], np.nan   # NaN quand pas assez d’historique
+#).astype("Int8")                         # garde NaN, 0 ou 1
+
+#df_full["enough_data_vwap_rev"] = data_status["enough_data"]
+#df_full.to_csv(DIR / "Step5_…_feat+signal.csv", sep=";", index=False)
+
+
+def add_ImBullWithPoc(df, df_feature, name, params):
+    """
+    Add a binary feature column to df_feature based on POC and imbalance conditions.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The original dataframe with all the raw data
+    df_feature : pd.DataFrame
+        The dataframe where the new feature will be added
+    name : str
+        The name of the new feature column to add
+    params : dict
+        Dictionary containing the parameters for the conditions:
+        - 'bidVolHigh_1', 'bull_imbalance_high_0' for condition 1
+        - 'bidVolHigh_1_2Cond', 'bull_imbalance_high_0_2Cond' for condition 2
+        - 'bidVolHigh_1_3Cond', 'bull_imbalance_high_0_3Cond' for condition 3
+        - 'pos_poc_min', 'pos_poc_max' for POC filtering
+
+    Returns:
+    --------
+    pd.DataFrame
+        The updated df_feature dataframe with the new column
+    """
+    # Create masks for each condition
+    # Condition 1
+    mask1 = (df["bidVolHigh_1"] > params["bidVolHigh_1"]) & \
+            (df_feature["bull_imbalance_high_0"] > params["bull_imbalance_high_0"])
+
+    # Condition 2
+    mask2 = (df["bidVolHigh_1"] > params["bidVolHigh_1_2Cond"]) & \
+            (df_feature["bull_imbalance_high_0"] > params["bull_imbalance_high_0_2Cond"])
+
+    # Condition 3
+    mask3 = (df["bidVolHigh_1"] > params["bidVolHigh_1_3Cond"]) & \
+            (df_feature["bull_imbalance_high_0"] > params["bull_imbalance_high_0_3Cond"])
+
+    # POC filtering
+    if "pos_poc_min" in params and "pos_poc_max" in params:
+        poc_mask = (df_feature["diffPriceClosePoc_0_0"] >= params["pos_poc_min"]) & \
+                   (df_feature["diffPriceClosePoc_0_0"] <= params["pos_poc_max"])
+    else:
+        # If POC parameters are not provided, don't filter by POC
+        poc_mask = pd.Series(True, index=df.index)
+
+    # Combine all conditions: POC filter AND (condition1 OR condition2 OR condition3)
+    final_mask = poc_mask & (mask1 | mask2 | mask3)
+
+    # Add the new feature column to df_feature
+    df_feature[name] = final_mask.astype(int)
+
+    # Count valid samples (where class_binaire is 0 or 1)
+    sample_count = df["class_binaire"].isin([0, 1]).sum()
+
+    # Log some statistics about the new feature
+    signal_count = df_feature[name].sum()
+
+    print(f"Added feature '{name}': {signal_count} signals ({signal_count / sample_count:.2%} of valid samples)")
+
+    # If we have class_binaire in the dataframe, calculate win rate
+    if "class_binaire" in df.columns:
+        # Only consider rows where the signal is 1
+        signal_rows = df[final_mask]
+        if len(signal_rows) > 0:
+
+            wins = (signal_rows["class_binaire"] == 1).sum()
+            losses = (signal_rows["class_binaire"] == 0).sum()
+            win_rate = round(wins/(wins+losses),2)
+            print(f"Win rate for '{name}': {win_rate:.2%} (✓{wins} ✗{losses}, Total={wins+losses} trades)")
+
+    return df_feature
+
+# Example parameters from your code
+params = {
+    'bidVolHigh_1': 3,
+    'bull_imbalance_high_0': 2.557075830254644,
+    'bidVolHigh_1_2Cond': 18,
+    'bull_imbalance_high_0_2Cond': 3.638182553600235,
+    'bidVolHigh_1_3Cond': 55,
+    'bull_imbalance_high_0_3Cond': 2.2890964360654595,
+    'pos_poc_min': -1.0,
+    'pos_poc_max': 0.0
+}
+features_df = add_ImBullWithPoc(df, features_df, "is_imBullWithPoc_light", params)
+params = {
+    'bidVolHigh_1': 6,
+    'bull_imbalance_high_0': 4.346987727378739,
+    'bidVolHigh_1_2Cond': 22,
+    'bull_imbalance_high_0_2Cond': 7.819727557254794,
+    'bidVolHigh_1_3Cond': 25,
+    'bull_imbalance_high_0_3Cond': 3.415954337053695,
+    'pos_poc_min': -1.0,
+    'pos_poc_max': 0.0
+}
+features_df = add_ImBullWithPoc(df, features_df, "is_imBullWithPoc_agressive", params)
+
+
+def add_imbBullLightPoc_Low00(df, df_feature, name, params):
+    """
+    Add a binary feature column to df_feature based on ATR thresholds and diff_high_atr values,
+    using the existing is_imBullWithPoc_light feature.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The original dataframe with all the raw data
+    df_feature : pd.DataFrame
+        The dataframe where the new feature will be added
+    name : str
+        The name of the new feature column to add
+    params : dict
+        Dictionary containing the parameters for the conditions:
+        - 'atr_threshold_1', 'atr_threshold_2', 'atr_threshold_3' for ATR thresholds
+        - 'diff_high_atr_1', 'diff_high_atr_2', 'diff_high_atr_3', 'diff_high_atr_4' for diffHighPrice conditions
+        - 'atr_window' for ATR calculation window (default: 12)
+
+    Returns:
+    --------
+    pd.DataFrame
+        The updated df_feature dataframe with the new column
+    """
+    # Récupérer la fenêtre ATR depuis les paramètres ou utiliser la valeur par défaut
+    atr_window = params.get("atr_window", 12)
+
+    # Verify if 'atr_recalc' column exists in df or recalculate it with the specified window
+    if 'atr_recalc' not in df.columns or df.get('atr_window', 0) != atr_window:
+        df['atr_recalc'] = calculate_atr(df, window=atr_window)
+        df['atr_window'] = atr_window  # Stocker la fenêtre utilisée pour référence
+
+    # Récupérer les seuils d'ATR depuis les paramètres
+    threshold_1 = params["atr_threshold_1"]
+    threshold_2 = params["atr_threshold_2"]
+    threshold_3 = params["atr_threshold_3"]
+
+    # Créer les masques pour chaque plage d'ATR
+    mask_atr_1 = df["atr_recalc"] < threshold_1
+    mask_atr_2 = (df["atr_recalc"] >= threshold_1) & (df["atr_recalc"] < threshold_2)
+    mask_atr_3 = (df["atr_recalc"] >= threshold_2) & (df["atr_recalc"] < threshold_3)
+    mask_atr_4 = df["atr_recalc"] >= threshold_3
+
+    # Récupérer les valeurs de diffHighPrice_0_1 pour chaque plage d'ATR
+    diff_high_atr_1 = params["diff_high_atr_1"]
+    diff_high_atr_2 = params["diff_high_atr_2"]
+    diff_high_atr_3 = params["diff_high_atr_3"]
+    diff_high_atr_4 = params["diff_high_atr_4"]
+
+    # Créer les masques pour diffHighPrice_0_1 pour chaque plage d'ATR
+    mask_diff_1 = mask_atr_1 & (df_feature["diffHighPrice_0_1"] > diff_high_atr_1)
+    mask_diff_2 = mask_atr_2 & (df_feature["diffHighPrice_0_1"] > diff_high_atr_2)
+    mask_diff_3 = mask_atr_3 & (df_feature["diffHighPrice_0_1"] > diff_high_atr_3)
+    mask_diff_4 = mask_atr_4 & (df_feature["diffHighPrice_0_1"] > diff_high_atr_4)
+
+    # Combine all diffHighPrice masks
+    diff_mask = mask_diff_1 | mask_diff_2 | mask_diff_3 | mask_diff_4
+
+    # Vérifier si la colonne is_imBullWithPoc_light existe
+    if "is_imBullWithPoc_light" not in df_feature.columns:
+        raise ValueError(f"La colonne 'is_imBullWithPoc_light' est absente du dataframe df_feature.")
+
+    # Utiliser directement is_imBullWithPoc_light comme filtre
+    imbull_mask = df_feature["is_imBullWithPoc_light"].fillna(0).astype(bool)
+
+    # Combine all conditions: diff_mask AND imbull_mask
+    final_mask = diff_mask & imbull_mask
+
+    # Add the new feature column to df_feature
+    df_feature[name] = final_mask.astype(int)
+
+    # Count valid samples (where class_binaire is 0 or 1)
+    sample_count = df["class_binaire"].isin([0, 1]).sum()
+
+    # Log some statistics about the new feature
+    signal_count = df_feature[name].sum()
+
+    print(
+        f"Added feature '{name}' (ATR window: {atr_window}): {signal_count} signals ({signal_count / sample_count:.2%} of valid samples)")
+
+    # If we have class_binaire in the dataframe, calculate win rate
+    if "class_binaire" in df.columns:
+        # Only consider rows where the signal is 1
+        signal_rows = df[final_mask]
+        if len(signal_rows) > 0:
+            wins = (signal_rows["class_binaire"] == 1).sum()
+            losses = (signal_rows["class_binaire"] == 0).sum()
+            win_rate = round(wins / (wins + losses), 2)
+            print(f"Win rate for '{name}': {win_rate:.2%} (✓{wins} ✗{losses}, Total={wins + losses} trades)")
+
+    # Print detailed statistics for each ATR segment if verbose flag is set
+    if params.get("verbose", False):
+        # Filtre pour les données de trading
+        trading_mask = df["class_binaire"].isin([0, 1])
+
+        # Pour chaque segment ATR, calculer des statistiques
+        for i, (mask_atr, mask_diff, atr_label, diff_value) in enumerate([
+            (mask_atr_1, mask_diff_1, f"ATR < {threshold_1:.1f}", diff_high_atr_1),
+            (mask_atr_2, mask_diff_2, f"{threshold_1:.1f} ≤ ATR < {threshold_2:.1f}", diff_high_atr_2),
+            (mask_atr_3, mask_diff_3, f"{threshold_2:.1f} ≤ ATR < {threshold_3:.1f}", diff_high_atr_3),
+            (mask_atr_4, mask_diff_4, f"ATR ≥ {threshold_3:.1f}", diff_high_atr_4)
+        ]):
+            # Pour chaque segment, créer un masque combiné avec toutes les conditions
+            segment_mask = mask_diff & imbull_mask & trading_mask
+            segment_count = segment_mask.sum()
+
+            # Calculer les statistiques du segment (même pour les segments sans trades)
+            segment_rows = df[segment_mask]
+            segment_wins = (segment_rows["class_binaire"] == 1).sum() if len(segment_rows) > 0 else 0
+            segment_losses = (segment_rows["class_binaire"] == 0).sum() if len(segment_rows) > 0 else 0
+            segment_total = segment_wins + segment_losses
+            segment_wr = segment_wins / segment_total if segment_total > 0 else 0
+
+            # Afficher tous les segments, même ceux sans trades
+            wr_display = f"WR={segment_wr:.2%}" if segment_total > 0 else "WR=N/A"
+            print(f"  Segment {i + 1} ({atr_label}, diffHigh > {diff_value:.2f}): "
+                  f"{wr_display} | "
+                  f"Trades={segment_total}" +
+                  (f" (✓{segment_wins} ✗{segment_losses})" if segment_total > 0 else "") +
+                  f" | Échantillons dans le segment: {mask_atr.sum()} ({mask_atr.sum() / len(df):.1%})")
+
+    return df_feature
+
+# Exemple d'utilisation avec les paramètres spécifiés
+params = {
+    # ATR thresholds (respectivement 1 2 3)
+    "atr_threshold_1": 1.5,
+    "atr_threshold_2": 1.7,
+    "atr_threshold_3": 1.9,
+    # diff_high_atr (respectivement 1 2 3 4)
+    "diff_high_atr_1": 5.5,
+    "diff_high_atr_2": 3.75,
+    "diff_high_atr_3": 5.75,
+    "diff_high_atr_4": 3.25,
+    # ATR window
+    "atr_window": 12,
+    # Enable verbose output for detailed segment statistics
+    "verbose": True
+}
+
+
+# Add the new feature to the dataframe
+features_df = add_imbBullLightPoc_Low00(df, features_df, "is_imbBullLightPoc_Low00", params)
+
 
 column_settings = {
     # Time-based features
+    'session_id': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+
     'deltaTimestampOpening': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'candleDuration': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
@@ -2795,7 +3268,8 @@ column_settings = {
     'is_mfi_shortDiv': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
     'is_mfi_antiShortDiv': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
-
+'vix_slope_12_up_15': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
+'is_vwap_reversal_pro_short': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
 
     # Price and volume features
     'VolAbvState': ("winsor", None, False, False, 10, 90, toBeDisplayed_if_s(user_choice, False)),
@@ -2921,6 +3395,11 @@ column_settings = {
     'imbalance_score_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
     'imbalance_score_high': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
+    'is_imBullWithPoc_light': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+    'is_imBullWithPoc_agressive': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+
+    'is_imbBullLightPoc_Low00': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
+
     # Auction features
     'finished_auction_high': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
     'finished_auction_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
@@ -2928,8 +3407,8 @@ column_settings = {
     'staked00_low': ("winsor", None, False, False, 1, 99, toBeDisplayed_if_s(user_choice, False)),
 
     # POC distances
-    'naked_poc_dist_above': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
-    'naked_poc_dist_below': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+   # 'naked_poc_dist_above': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
+    #'naked_poc_dist_below': ("winsor", None, True, True, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
 
     # Linear slope metrics
     'linear_slope_10': ("winsor", None, False, False, 0.5, 99.9, toBeDisplayed_if_s(user_choice, False)),
@@ -3221,10 +3700,12 @@ print(f"\n")
 
 
 print_notification(
-    "Ajout de  'timeStampOpening', class_binaire', 'date', 'trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
+    "Ajout de 'volume', 'timeStampOpening', class_binaire', 'date','VWAP','high','low','open','close','bidVolHigh_1',''askVolHigh'',trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
 # Colonnes à ajouter
-columns_to_add = ['timeStampOpening', 'class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd',
-                  'close', 'high', 'low','trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl','trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric']
+columns_to_add = ['volume','timeStampOpening', 'session_id','class_binaire', 'candleDir', 'date','high','low','open','close','bidVolHigh_1','askVolHigh', 'VWAP','trade_category', 'SessionStartEnd',
+                  'close', 'high', 'low','trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl',
+                  #'trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric'
+                  ]
 
 # Vérifiez que toutes les colonnes existent dans df
 missing_columns = [col for col in columns_to_add if col not in df.columns]
@@ -3246,8 +3727,53 @@ outliersTransform_df = pd.concat([outliersTransform_df, columns_df], axis=1)
 # winsorized_scaledWithNanValue_df = pd.concat([winsorized_scaledWithNanValue_df, columns_df], axis=1)
 
 print_notification(
-    "Colonnes 'timeStampOpening','class_binaire', 'candleDir', 'date', 'trade_category', 'SessionStartEnd' , 'close', "
+    "Colonnes 'timeStampOpening','session_id','class_binaire', 'candleDir', 'date','VWAP', 'trade_category', 'SessionStartEnd' , 'close', "
     "'trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl','trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric' ajoutées")
+
+
+
+# Filtrer les lignes valides : tendance haussière lente et class_binaire ∈ {0, 1}
+mask = (features_df['vix_slope_12_up_15'] == 1) & (features_df['class_binaire'].isin([0, 1]))
+
+# Calcul de la moyenne sur les lignes valides
+mean_val = features_df.loc[mask, 'class_binaire'].mean()
+
+# Créer une nouvelle colonne avec cette valeur partout (ou seulement sur les lignes valides si souhaité)
+nb_sample = features_df['vix_slope_12_up_15'].sum()
+nb_trades = features_df['vix_slope_12_up_15'].isin([0, 1]).sum()
+
+
+# Affichage
+# Masque : lignes où vix_slope_12_up_15 == 1 et class_binaire ∈ {0, 1}
+mask = (features_df['vix_slope_12_up_15'] == 1) & (features_df['class_binaire'].isin([0, 1]))
+
+# Nombre de cas où vix_slope_12_up_15 == 1 (tous types de class_binaire)
+nb_samples = (features_df['vix_slope_12_up_15'] == 1).sum()
+
+# Masque pour les cas vix_slope_12_up_15 == 1 et class_binaire ∈ {0, 1}
+mask = (features_df['vix_slope_12_up_15'] == 1) & (features_df['class_binaire'].isin([0, 1]))
+
+# Nombre de trades valides (class_binaire 0 ou 1)
+nb_trades = mask.sum()
+
+# Nombre de gagnants (class_binaire == 1)
+nb_wins = (features_df.loc[mask, 'class_binaire'] == 1).sum()
+
+# Winrate parmi les trades valides
+winrate = nb_wins / nb_trades if nb_trades > 0 else np.nan
+
+# Affichage
+print("🔍 Analyse sur vix_slope_12_up_15 == 1")
+print(f"- Nombre total de samples (peu importe class_binaire) : {nb_samples}")
+print(f"- Nombre de trades valides (class_binaire ∈ {{0,1}}) : {nb_trades}")
+print(f"- Nombre de gains (class_binaire == 1) : {nb_wins}")
+print(f"- Winrate : {winrate:.2%}")
+
+
+
+
+
+
 
 file_without_extension = os.path.splitext(file_name)[0]
 file_without_extension = file_without_extension.replace("Step4", "Step5")

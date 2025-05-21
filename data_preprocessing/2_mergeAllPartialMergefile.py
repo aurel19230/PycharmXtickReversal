@@ -1,182 +1,151 @@
+"""
+Fusionne les fichiers Step1_*_X.csv placés dans le dossier ...\merge
+  • Concatène dans l’ordre _0, _1, _2 …         (obligatoire & consécutif)
+  • Option ‘d’ : dé-doublonne selon un groupe de colonnes et
+                 conserve le plus petit timeStampOpening
+  • Vérifie qu’à l’issue la colonne timeStampOpening est
+    STRICTEMENT croissante ; sinon, affiche les paires fautives
+    puis lève ValueError.
+
+Sortie : Step2_<config>_<startDate>_<endDate>.csv (séparateur ‘;’)
+------------------------------------------------------------------------
+© 2025 – script destiné à un usage interne
+"""
+
+# ───────────────────────────────── Imports ────────────────────────────────────
 import os
-import pandas as pd
 import re
+import numpy as np
+import pandas as pd
 
+# ───────────────────────── Paramétrage dossier ───────────────────────────────
+directory = (
+    r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject"
+    r"\Sierra chart\xTickReversal\simu\5_0_5TP_6SL\merge"
+)
 
-# Chemin spécifique pour les fichiers CSV
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\6_0_6TP_1SL_save_afternoon\merge"
-#merge les fichier terminant par _x dans l'ordre. Pour éviter les erreurs les _x sont à rajouter suite au merge du step 1
-
-#Diviser le chemin en ses composants
-path_components = directory.split(os.sep)
-
-# Trouver l'index de 'merge'
-merge_index = path_components.index('merge')
-
-# Extraire le répertoire juste avant 'merge'
+# Extraire le nom de config (répertoire parent de « merge »)
+path_components   = directory.split(os.sep)
+merge_index       = path_components.index("merge")
 xtickRev_config_dir = path_components[merge_index - 1]
 
-print(xtickRev_config_dir)
+print(f"Configuration détectée : {xtickRev_config_dir}")
 
+# ─────────────────────────── Choice de l’utilisateur ─────────────────────────
+option = input(
+    "Appuyez sur 'd' pour dé-doublonner, Entrée pour concaténer simplement : "
+).lower()
 
-option = input("Appuyez sur 'd' dedeoublonner, entrée pour uniquement concatener : ").lower()
+# ───────────────────── Function : anomalies chronologiques ───────────────────
+def show_timestamp_anomalies(timestamps: np.ndarray, label: str = "timeStampOpening"):
+    """Affiche les inversions strictes t[i] > t[i+1] et lève ValueError."""
+    bad_idx = np.where(np.diff(timestamps) < 0)[0]
+    if bad_idx.size == 0:
+        print(f"✔️  Aucun problème d’ordre chronologique détecté dans « {label} » "
+              f"({len(timestamps)} valeurs).")
+        return
+    print(f"\n❌  {bad_idx.size} inversion(s) détectée(s) dans « {label} » :")
+    for i in bad_idx:
+        print(f"  • ligne {i+1:>8} : {int(timestamps[i])}  →  ligne {i+2:>8} : "
+              f"{int(timestamps[i+1])}")
+    print("\nArrêt du traitement car l’ordre n’est pas strictement croissant.")
+    raise ValueError("Impossible d’obtenir un ordre chronologique strict des timeStampOpening.")
 
-
-def generate_output_filename(files,xtickRev_config_dir):
+# ───────────────────── Function : nom de fichier de sortie ───────────────────
+def generate_output_filename(files, config_dir):
     if not files:
         raise ValueError("La liste des fichiers est vide.")
-
-    # Trier les fichiers
     sorted_files = sorted(files)
-
-    # Trouver le fichier qui se termine par "_0.csv"
-    first_file = next((f for f in sorted_files if f.endswith('_0.csv')), None)
+    first_file   = next((f for f in sorted_files if f.endswith("_0.csv")), None)
     if first_file is None:
         raise ValueError("Aucun fichier ne se termine par '_0.csv'.")
+    start_date   = first_file.split("_")[1]
+    last_file    = max(sorted_files,
+                       key=lambda x: int(x.split("_")[-1].split(".")[0]))
+    end_date     = last_file.split("_")[2]
+    return f"Step2_{config_dir}_{start_date}_{end_date}.csv"
 
-    # Extraire la date du début à partir du fichier _0.csv (partie avant le premier '_')
-    start_date = first_file.split('_')[1]
+# ─────────────────────────── Function : merge files ──────────────────────────
+def merge_files(directory_path: str) -> pd.DataFrame:
+    # Liste et tri des fichiers *_X.csv
+    all_csv   = [f for f in os.listdir(directory_path) if f.endswith(".csv")]
+    files     = [f for f in all_csv if re.match(r".+_\d+\.csv$", f)]
+    files.sort(key=lambda f: int(re.findall(r"_(\d+)\.csv$", f)[0]))
 
-    # Trouver le fichier avec le plus grand X dans _X.csv
-    last_file = max(sorted_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
-
-    # Extraire la date de fin à partir du dernier fichier (partie après le dernier '_', sans '.csv')
-    end_date = last_file.split('_')[2]
-
-    # Utiliser "MergedAllFile" comme nom de base du fichier de sortie
-    output_filename = f"Step2_{xtickRev_config_dir}_{start_date}_{end_date}.csv"
-    return output_filename
-
-# Le reste du code reste inchangé
-
-
-
-import os
-import re
-import pandas as pd
-
-
-def merge_files(directory):
-    # Récupérer tous les fichiers CSV dans le répertoire
-    all_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
-
-    # Filtrer les fichiers qui se terminent par *X.csv où X est un nombre
-    files = [f for f in all_files if re.match(r'.+_\d+\.csv$', f)]
-
-    # Trier les fichiers par leur numéro à la fin
-    files.sort(key=lambda f: int(re.findall(r'_(\d+)\.csv$', f)[0]))
-
-    # Afficher les noms des fichiers à fusionner
     print("Fichiers à fusionner :")
-    for file in files:
-        print(f" - {file}")
-    print()  # Ligne vide pour la lisibilité
-
-    # Vérifier si des fichiers correspondants ont été trouvés
+    for f in files:
+        print(f" - {f}")
+    print()
     if not files:
-        raise ValueError(
-            f"Aucun fichier CSV correspondant au format *_X.csv n'a été trouvé dans le répertoire : {directory}")
+        raise ValueError("Aucun fichier *_X.csv trouvé dans le dossier.")
 
-    # Vérifier si les fichiers sont consécutifs et commencent par *0
-    file_numbers = [int(re.findall(r'_(\d+)\.csv$', f)[0]) for f in files]
+    file_numbers = [int(re.findall(r"_(\d+)\.csv$", f)[0]) for f in files]
     if file_numbers != list(range(len(file_numbers))):
-        raise ValueError("Les fichiers ne sont pas consécutifs ou ne commencent pas par *0.")
+        raise ValueError("Les fichiers ne sont pas consécutifs ou ne commencent pas par *_0.csv.")
 
-    # Lire tous les fichiers
-    dataframes = []
-    for i, file in enumerate(files):
-        if i == 0:
-            # Pour le premier fichier, lire normalement avec l'en-tête
-            df = pd.read_csv(os.path.join(directory, file), delimiter=';')
-        else:
-            # Pour les fichiers suivants, lire sans l'en-tête
-            df = pd.read_csv(os.path.join(directory, file), delimiter=';', header=0)
-
+    # Lecture séquentielle
+    dfs = []
+    for idx, file in enumerate(files):
+        fp = os.path.join(directory_path, file)
+        df = pd.read_csv(fp, delimiter=";", header=0)
         print(f"Traitement du fichier {file} : {len(df)} lignes")
-        dataframes.append(df)
+        dfs.append(df)
 
-    # Concaténer tous les dataframes
-    merged_df = pd.concat(dataframes, ignore_index=True)
+    merged_df = pd.concat(dfs, ignore_index=True)
 
-    if option == 'd':
-        # Conversion de timeStampOpening en numérique
-        merged_df['timeStampOpening'] = pd.to_numeric(merged_df['timeStampOpening'])
+    # ------------------- Option de dé-doublonnage ----------------------------
+    if option == "d":
+        print("\n🧹  Dé-doublonnage activé")
+        merged_df["timeStampOpening"] = pd.to_numeric(merged_df["timeStampOpening"])
+        cols_check = [
+            "close", "open", "high", "low", "volume",
+            "atr", "vaDelta_6periods", "vaVol_16periods"
+        ]
+        # Analyse pré-suppression
+        duplicates = merged_df[merged_df.duplicated(subset=cols_check, keep=False)].copy()
+        if not duplicates.empty:
+            for keys, grp in duplicates.groupby(cols_check):
+                n_del = len(grp) - 1
+                keep_ts = grp["timeStampOpening"].min()
+                print("\nGroupe de doublons:")
+                print(f"Nombre de lignes à supprimer : {n_del}")
+                print(f"timeStampOpening conservé    : {keep_ts}")
+                print(grp.sort_values("timeStampOpening"))
+                print("-" * 80)
 
-        # Colonnes pour la vérification des doublons
-        colonnes_a_verifier = ['close', 'open', 'high', 'low', 'volume', "atr", "vaDelta_6periods", 'vaVol_16periods']
+        merged_df = (merged_df
+                     .sort_values("timeStampOpening")
+                     .drop_duplicates(subset=cols_check, keep="first")
+                     .reset_index(drop=True))
 
-        # Identifier les doublons avant suppression
-        doublons = merged_df[merged_df.duplicated(subset=colonnes_a_verifier, keep=False)].copy()
+        print("\nDé-doublonnage terminé.")
+        print(f"Lignes après nettoyage : {len(merged_df)}")
 
-        # Grouper les doublons pour analyse
-        groupes_doublons = doublons.groupby(colonnes_a_verifier)
-
-        print("\nAnalyse des groupes de doublons avant suppression:")
-        for name, group in groupes_doublons:
-            nb_doublons = len(group) - 1  # -1 car on garde une ligne
-            min_timestamp = group['timeStampOpening'].min()
-            print(f"\nGroupe de doublons:")
-            print(f"Nombre de lignes à supprimer: {nb_doublons}")
-            print(f"TimeStampOpening conservé: {min_timestamp}")
-            print("Lignes du groupe:")
-            print(group.sort_values('timeStampOpening'))
-            print("-" * 80)
-
-        # Supprimer les doublons en gardant celui avec le plus petit timeStampOpening
-        merged_df_clean = merged_df.sort_values('timeStampOpening').drop_duplicates(
-            subset=colonnes_a_verifier,
-            keep='first'
-        )
-
-        # Statistiques finales
-        nb_lignes_avant = len(merged_df)
-        nb_lignes_apres = len(merged_df_clean)
-        nb_doublons_supprimes = nb_lignes_avant - nb_lignes_apres
-
-        print(f"\nStatistiques finales:")
-        print(f"Nombre de lignes avant: {nb_lignes_avant}")
-        print(f"Nombre de lignes après: {nb_lignes_apres}")
-        print(f"Nombre total de doublons supprimés: {nb_doublons_supprimes}")
-
-        # Assigner le résultat nettoyé
-        merged_df = merged_df_clean
-
-    # Vérification finale de l'ordre chronologique
-    if not merged_df['timeStampOpening'].is_monotonic_increasing:
-        print("Attention : Les timeStampOpening ne sont pas dans un ordre strictement croissant après la fusion.")
-        print("Tri final du DataFrame par timeStampOpening...")
-        merged_df = merged_df.sort_values('timeStampOpening', ignore_index=True)
-
-        # Vérification après le tri
-        if not merged_df['timeStampOpening'].is_monotonic_increasing:
-            raise ValueError(
-                "Erreur critique : Impossible d'obtenir un ordre chronologique strict des timeStampOpening.")
-        else:
-            print("Tri effectué avec succès. Les timeStampOpening sont maintenant dans un ordre strictement croissant.")
+    # -------------------- Vérification chronologique -------------------------
+    if not merged_df["timeStampOpening"].is_monotonic_increasing:
+        show_timestamp_anomalies(
+            merged_df["timeStampOpening"].to_numpy(dtype=np.int64),
+            label="timeStampOpening"
+        )  # lève déjà ValueError
     else:
-        print("Les timeStampOpening sont dans un ordre strictement croissant.")
+        print("Les timeStampOpening sont strictement croissants.")
 
-    print(f"\nNombre total de lignes après la fusion : {len(merged_df)}")
-
+    print(f"\nNombre total de lignes après fusion : {len(merged_df)}")
     return merged_df
 
-
-
-# Utilisation de la fonction
+# ───────────────────────── Exécution principale ──────────────────────────────
 try:
-    result = merge_files(directory)
+    merged = merge_files(directory)
 
-    # Récupérer la liste des fichiers CSV dans le répertoire pour générer le nom de sortie
-    all_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
-    files = [f for f in all_files if re.match(r'.+_\d+\.csv$', f)]
+    files_for_name = [f for f in os.listdir(directory) if re.match(r".+_\d+\.csv$", f)]
+    output_name    = generate_output_filename(files_for_name, xtickRev_config_dir)
+    output_path    = os.path.join(directory, output_name)
 
-    # Générer le nom du fichier de sortie
-    output_filename = generate_output_filename(files,xtickRev_config_dir)
-    output_file = os.path.join(directory, output_filename)
+    merged.to_csv(output_path, index=False, sep=";")
+    print(f"\n✅  Fusion terminée. Résultat sauvegardé : {output_path}")
 
-    result.to_csv(output_file, index=False, sep=';')
-    print(f"Fusion terminée. Résultat sauvegardé dans {output_file}")
-except ValueError as e:
-    print(f"Erreur : {str(e)}")
-except Exception as e:
-    print(f"Une erreur inattendue s'est produite : {str(e)}")
+except ValueError as err:
+    print(f"\nErreur : {err}")
+
+except Exception as exc:
+    print(f"\nUne erreur inattendue s’est produite : {exc}")

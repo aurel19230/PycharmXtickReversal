@@ -61,7 +61,7 @@ features_conditions = {
         'candleDuration': [
                 {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
                 {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
+                {'type': 'between', 'min': 3, 'max': 180, 'active': True}],
 }
 
 

@@ -6,11 +6,14 @@ from standard_stat_sc import *
 from definition import *
 from func_standard import *
 
-FILE_NAME_ = "Step5__150924_030425_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
+FILE_NAME_ = "Step5__100325_020525_bugFixTradeResult1_extractOnlyFullSession_OnlyShort_feat.csv"
+FILE_NAME_ = "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShort_feat__split3_01102024_28022025.csv"
+
+
 ENV = detect_environment()
 if ENV == 'pycharm':
         if platform.system() != "Darwin":
-                DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\merge"
+                DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_6SL\\merge"
 
         else:
                 DIRECTORY_PATH = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
@@ -58,11 +61,8 @@ features_conditions = {
 #         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
 #         {'type': 'between', 'min': -0.25, 'max':0, 'active': False}  # Correction de la plage
 #     ],
- 'finished_auction_high': [
-         {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 1, 'max':1, 'active': False}  # Correction de la plage
-     ],
+
+
 #
 # 'diffPriceCloseVWAP': [
 #         {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
@@ -74,7 +74,7 @@ features_conditions = {
  'imbType_contZone': [
          {'type': 'greater_than_or_equal', 'threshold': -5, 'active': False},
          {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 1, 'max': 2, 'active': True}],
+         {'type': 'between', 'min': 0, 'max': 0, 'active': False}],
 
  'ratio_volRevMoveZone1_volImpulsMoveExtrem_XRevZone': [
          {'type': 'greater_than_or_equal', 'threshold': 4.5, 'active': False},
@@ -83,19 +83,20 @@ features_conditions = {
  'ratio_volRevMoveZone1_volRevMoveExtrem_XRevZone': [
          {'type': 'greater_than_or_equal', 'threshold': 2.5, 'active': False},
          {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-         {'type': 'between', 'min': 2.5, 'max': 10, 'active': True}],
-'ratio_volRevMove_volImpulsMove': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+         {'type': 'between', 'min': 0, 'max': 0.75, 'active': False}],
+'ratio_VolRevZone_XticksContZone': [
+        {'type': 'greater_than_or_equal', 'threshold': 2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': 0, 'max': 1.5, 'active': False}],
 'ratio_deltaImpulsMove_volImpulsMove': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0.35, 'max': 1, 'active': False}],
+        {'type': 'between', 'min': 0.15, 'max': 1, 'active': False}],
+
 'ratio_deltaRevMove_volRevMove': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -0.8, 'max': -0.25, 'active': True}],
+        {'type': 'between', 'min': -1, 'max': -0.5, 'active': False}],
 
 
 # 'sc_reg_slope_30P_2': [
@@ -115,14 +116,7 @@ features_conditions = {
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
         {'type': 'between', 'min': 0, 'max': 1, 'active': False}],
-'sc_reg_slope_5P': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -1, 'max': 0.9, 'active': False}],
-'sc_reg_std_5P_2': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 0, 'max': 1, 'active': False}],
+
 # 'timeElapsed2LastBar': [
 #         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
 #         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
@@ -141,68 +135,100 @@ features_conditions = {
         {'type': 'between', 'min': 0.6, 'max':  0.9, 'active': False}],
 
 'delta_revMove_XRevZone_bigStand_extrem': [
-        {'type': 'greater_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': -10, 'active': False},
+        {'type': 'greater_than_or_equal', 'threshold': 50, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': -60, 'active': False},
         {'type': 'between', 'min': 2, 'max':  600, 'active': False}],
 
 'delta_impulsMove_XRevZone_bigStand_extrem': [
-        {'type': 'greater_than_or_equal', 'threshold': 25, 'active': False},
+        {'type': 'greater_than_or_equal', 'threshold': -40, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': -25, 'active': False},
         {'type': 'between', 'min': 2, 'max':  10, 'active': False}],
 
 'diffHighPrice_0_1': [
         {'type': 'greater_than_or_equal', 'threshold': 4.5, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': -10, 'active': False},
-        {'type': 'between', 'min': -2, 'max': 0.5, 'active': False}],
+        {'type': 'between', 'min': 0, 'max': 3.5, 'active': False}],
 
-'diffVolDelta_2_2Ratio': [
-        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+'cumDiffVolDeltaRatio': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.6, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': -0.25, 'max': 0.25, 'active': False}],
+        {'type': 'between', 'min': -0.65, 'max':0.0, 'active': True}],
 
 'close_sma_zscore_6': [
         {'type': 'greater_than_or_equal', 'threshold': 0.3, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 0.4, 'max':3, 'active': False}],
+        {'type': 'between', 'min': 0, 'max':1.5, 'active': False}],
 
 
 'sc_reg_std_30P_2': [
         {'type': 'greater_than_or_equal', 'threshold': 0.6, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 0, 'max': 1, 'active': False}],
+        {'type': 'between', 'min': 0.3, 'max': 1, 'active': False}],
 #
- 'linear_slope_prevSession': [
+ 'pocDeltaPocVolRatio': [
          {'type': 'greater_than_or_equal', 'threshold': -0.3, 'active': False},
          {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-         {'type': 'between', 'min': -0, 'max': 0.8, 'active': False}],
+         {'type': 'between', 'min': 0.25, 'max': 1, 'active': False}],
 
 'VolPocVolCandleRatio': [
         {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 0, 'max': 0.25, 'active': False}],
+        {'type': 'between', 'min': 0.1, 'max': 0.8, 'active': False}],
 
 'diffPriceClosePoc_0_0': [
         {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': -0.75, 'max': -0.75, 'active': False}],
+        {'type': 'between', 'min': -0.5, 'max': -0, 'active': False}],
 
-'bear_imbalance_high_1': [
-        {'type': 'greater_than_or_equal', 'threshold': 3, 'active': False},
-        {'type': 'less_than_or_equal', 'threshold': 1, 'active': False},
-        {'type': 'between', 'min': 1.2, 'max': 100, 'active': True}],
+        'vix_slope_12_up_15': [
+                {'type': 'greater_than_or_equal', 'threshold': 4, 'active': False},
+                {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+                {'type': 'between', 'min': 1, 'max': 1, 'active': False}],
+
+'sc_reg_std_5P_2': [
+        {'type': 'greater_than_or_equal', 'threshold': 1, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': 0.65, 'max': 6.5, 'active': False}], #bien
 'sc_reg_slope_30P_2': [
         {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': -0.3, 'max': 0.8, 'active': True}],
+        {'type': 'between', 'min': -0.5, 'max': 0.3, 'active': False}],
 
-'ratio_VolRevZone_XticksContZone': [
-        {'type': 'greater_than_or_equal', 'threshold': 4, 'active': False},
+'sc_reg_slope_10P_2': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-        {'type': 'between', 'min': 1, 'max': 3, 'active': False}],
+        {'type': 'between', 'min': -0.45, 'max': 0.97, 'active': False}], #bien
+
+ 'sc_reg_slope_15P_2': [
+         {'type': 'greater_than_or_equal', 'threshold': 0.15, 'active': False},
+         {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+         {'type': 'between', 'min': -0.9, 'max': 0.9, 'active': False}],
+
+
+
+
+
+'is_vwap_reversal_pro_short': [
+        {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': 1, 'max': 1, 'active': True}],
+'bear_imbalance_high_1': [
+        {'type': 'greater_than_or_equal', 'threshold': 3, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 1, 'active': False},
+        {'type': 'between', 'min': 0, 'max': 0.5, 'active': False}],
+'finished_auction_low': [
+        {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min': 1, 'max': 1, 'active': True}   ], # Correction de la plage
+'diffPriceClose_VA6PPoc': [
+        {'type': 'greater_than_or_equal', 'threshold': 4.5, 'active': False},
+        {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+        {'type': 'between', 'min':0.01, 'max': 0.7, 'active': False}],
+
 'candleDuration': [
         {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
         {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-        {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
+        {'type': 'between', 'min': 1.5, 'max': 180, 'active': True}],
 }
 
 
@@ -251,7 +277,7 @@ def save_dataframe_to_csv(df, directory_path, filename, sep=';', index=False):
 
 # Utilisation pour votre cas spécifique
 output_filename = "df_with_sessions_and_dates.csv"
-saved_file_path = save_dataframe_to_csv(df_with_sessions_and_dates, DIRECTORY_PATH, output_filename)
+#saved_file_path = save_dataframe_to_csv(df_with_sessions_and_dates, DIRECTORY_PATH, output_filename)
 
 # Vérification des résultats
 print("Somme du PnL initial:", df_init_features['trade_pnl'].sum())

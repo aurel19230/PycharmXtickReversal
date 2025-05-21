@@ -5,12 +5,12 @@ import os
 import time
 from func_standard import  print_notification
 
-directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_1SL_1\merge"
+directory = r"C:\Users\aulac\OneDrive\Documents\Trading\VisualStudioProject\Sierra chart\xTickReversal\simu\5_0_5TP_6SL\merge"
 
-file="Step2__150924_030425_bugFixTradeResult1.csv"
+file="Step2_5_0_5TP_6SL_010124_150525.csv"
 
 file_path = os.path.join(directory, file)
-8
+
 @jit(nopython=True)
 def analyser_et_filtrer_sessions_numba(session_start_end, timestamps, duree_normale, seuil_anormal):
     sessions = []
@@ -120,8 +120,8 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
         print_notification("Début de la sauvegarde des sessions normales")
         df_sessions_normales = pd.DataFrame()
 
-        # Trier les sessions normales par ordre chronologique décroissant
-        all_sessions_normales.sort(key=lambda x: x[1], reverse=True)
+        # # Trier les sessions normales par ordre chronologique décroissant
+        # all_sessions_normales.sort(key=lambda x: x[1], reverse=True)
 
         # Si un nombre spécifique de sessions est demandé, ne prendre que les dernières sessions
         if sessions_a_sauvegarder and sessions_a_sauvegarder < len(all_sessions_normales):
@@ -131,7 +131,7 @@ def analyser_et_sauvegarder_sessions(df, duree_normale=1380, seuil_anormal=0.95,
             print_notification("Sauvegarde de toutes les sessions normales")
 
         # Inverser l'ordre pour traiter du plus ancien au plus récent
-        all_sessions_normales.reverse()
+        #all_sessions_normales.reverse()
 
         for i, (start, end) in enumerate(all_sessions_normales):
             start_ts = pd.Timestamp(start, unit='s')

@@ -118,23 +118,77 @@ def parse_raw_file(file_path, expected_date=None):
         # Liste pour enregistrer les éléments manquants
         missing_elements = []
 
-        # Extraire le gamma
-        gamma_match = re.search(r'gamma\s+(positif|n[ée]gatif)', block, re.IGNORECASE)
-        if not gamma_match:
-            # Si le pattern standard ne fonctionne pas, essayer avec un pattern plus souple
-            gamma_match = re.search(r'gamma\s*(positif|n[ée]gatif)', block, re.IGNORECASE)
-            if not gamma_match:
-                # Chercher les mots clés séparément pour les cas comme "gamma positif" avec espacements variables
-                if "gamma" in block.lower() and "positif" in block.lower():
+        # Extraire le gamma (Français et Anglais) - PATTERNS AMÉLIORÉS
+        gamma_patterns = [
+            # Patterns en français avec plus de flexibilité
+            r'gamma\s+(positif|n[ée]gatif)',
+            r'gamma\s*(positif|n[ée]gatif)',
+            r'\sgamma\s+(positif|n[ée]gatif)',  # Avec espace avant
+            r'\sgamma\s*(positif|n[ée]gatif)',  # Avec espace avant
+            r'gamma.*?(positif|n[ée]gatif)',  # Tout ce qui se trouve entre
+            # Patterns en anglais
+            r'gamma\s+(positive|negative)',
+            r'gamma\s*(positive|negative)',
+            r'\sgamma\s+(positive|negative)',
+            r'\sgamma\s*(positive|negative)',
+            r'gamma.*?(positive|negative)',
+        ]
+
+        gamma = ""
+        for pattern in gamma_patterns:
+            gamma_match = re.search(pattern, block, re.IGNORECASE)
+            if gamma_match:
+                gamma_val = gamma_match.group(1).lower()
+                # Standardisation entre français et anglais
+                if gamma_val in ["positive", "positif"]:
                     gamma = "positif"
-                elif "gamma" in block.lower() and any(neg in block.lower() for neg in ["negatif", "négatif"]):
+                elif gamma_val in ["negative", "negatif", "négatif"]:
                     gamma = "negatif"
-                else:
-                    gamma = ""
-            else:
-                gamma = gamma_match.group(1).lower()
-        else:
-            gamma = gamma_match.group(1).lower()
+                break
+
+        # Si toujours pas trouvé, essayer des recherches simples de mots-clés
+        if not gamma:
+            lower_block = block.lower()
+            if "gamma positif" in lower_block or "gamma positive" in lower_block:
+                gamma = "positif"
+            elif "gamma negatif" in lower_block or "gamma négatif" in lower_block or "gamma negative" in lower_block:
+                gamma = "negatif"
+            # Détecter même sans le mot 'gamma' si c'est la seule info
+            elif "positif" in lower_block and "negatif" not in lower_block and "négatif" not in lower_block and "negative" not in lower_block:
+                gamma = "positif"
+            elif "negatif" in lower_block or "négatif" in lower_block or "negative" in lower_block:
+                gamma = "negatif"
+
+        # NOUVELLES VÉRIFICATIONS pour format "Positive Gamma" (au lieu de "gamma positif")
+        if not gamma:
+            gamma_patterns_extended = [
+                r'[Pp]ositive\s+[Gg]amma',  # Format "Positive Gamma"
+                r'[Nn]egative\s+[Gg]amma',  # Format "Negative Gamma"
+                r'[Pp]ositif\s+[Gg]amma',  # Format "Positif Gamma"
+                r'[Nn][ée]gatif\s+[Gg]amma'  # Format "Negatif Gamma"
+            ]
+
+            # Rechercher ces patterns spécifiques
+            for pattern in gamma_patterns_extended:
+                gamma_match = re.search(pattern, block, re.IGNORECASE)
+                if gamma_match:
+                    if "positive" in gamma_match.group(0).lower() or "positif" in gamma_match.group(0).lower():
+                        gamma = "positif"
+                    else:
+                        gamma = "negatif"
+                    break
+
+        # Méthode de dernier recours - vérifier chaque ligne individuellement
+        if not gamma:
+            for line in block.split('\n'):
+                line_lower = line.lower()
+                if "gamma" in line_lower:
+                    if "positive" in line_lower or "positif" in line_lower:
+                        gamma = "positif"
+                        break
+                    elif "negative" in line_lower or "negatif" in line_lower or "négatif" in line_lower:
+                        gamma = "negatif"
+                        break
 
         # Gestion spéciale pour les forex (6e, 6j) et indexes de volatilité
         # Pour ces types, le gamma est souvent omis, on peut l'initialiser à une valeur par défaut
@@ -150,7 +204,10 @@ def parse_raw_file(file_path, expected_date=None):
         # Extraire Max 1D et ses valeurs additionnelles (event et extreme)
         max_1d_patterns = [
             r'Max\s+1D\s+(\d+\.?\d*)',
-            r'Max\s+1D\s*(\d+\.?\d*)'  # Sans espace après 1D
+            r'Max\s+1D\s*(\d+\.?\d*)',  # Sans espace après 1D
+            # Patterns en anglais
+            r'Max\s+1D\s+(\d+\.?\d*)',
+            r'Maximum\s+1D\s+(\d+\.?\d*)'
         ]
         max_1d = ""
         for pattern in max_1d_patterns:
@@ -161,13 +218,19 @@ def parse_raw_file(file_path, expected_date=None):
         if not max_1d:
             missing_elements.append("Max_1D")
 
-        # Extraire Max 1D event - avec patterns améliorés
+        # Extraire Max 1D event - avec patterns améliorés (français et anglais)
         max_event_patterns = [
+            # Patterns en français
             r'en cas d[\'e]?event\s+(\d+\.?\d*)',
             r'en cas d\s*event\s+(\d+\.?\d*)',  # Avec espace entre 'd' et 'event'
             r'\(en cas d[\'e]?event\s+(\d+\.?\d*)',  # Format avec parenthèses
             r'\(event\s+(\d+\.?\d*)\)',  # Format "(event X.XXX)"
             r'\(?event\s+(\d+\.?\d*)',  # Format "event X.XXX" ou "(event X.XXX"
+            # Patterns en anglais
+            r'in case of event\s+(\d+\.?\d*)',
+            r'\(in case of event\s+(\d+\.?\d*)',
+            r'\(event\s+(\d+\.?\d*)\)',
+            r'event\s+(\d+\.?\d*)'
         ]
         max_1d_event = ""
         for pattern in max_event_patterns:
@@ -218,7 +281,10 @@ def parse_raw_file(file_path, expected_date=None):
         # Extraire Min 1D
         min_1d_patterns = [
             r'Min\s+1D\s+(\d+\.?\d*)',
-            r'Min\s+1D\s*(\d+\.?\d*)'  # Sans espace après 1D
+            r'Min\s+1D\s*(\d+\.?\d*)',  # Sans espace après 1D
+            # Patterns en anglais
+            r'Min\s+1D\s+(\d+\.?\d*)',
+            r'Minimum\s+1D\s+(\d+\.?\d*)'
         ]
         min_1d = ""
         for pattern in min_1d_patterns:
@@ -229,14 +295,19 @@ def parse_raw_file(file_path, expected_date=None):
         if not min_1d:
             missing_elements.append("Min_1D")
 
-        # Extraire Min 1D event avec patterns améliorés
+        # Extraire Min 1D event avec patterns améliorés (français et anglais)
         min_1d_section = block[block.find("Min 1D"):] if "Min 1D" in block else block
         min_event_patterns = [
+            # Patterns en français
             r'en cas d[\'e]?event\s+(\d+\.?\d*)',
             r'en cas d\s*event\s+(\d+\.?\d*)',  # Avec espace entre 'd' et 'event'
             r'\(en cas d[\'e]?event\s+(\d+\.?\d*)',  # Format avec parenthèses
             r'\(?event\s+(\d+\.?\d*)',  # Format "event X.XXX" ou "(event X.XXX"
             r'\(event\s+(\d+\.?\d*)\)',  # Format "(event X.XXX)"
+            # Patterns en anglais
+            r'in case of event\s+(\d+\.?\d*)',
+            r'\(in case of event\s+(\d+\.?\d*)',
+            r'event\s+(\d+\.?\d*)'
         ]
         min_1d_event = ""
         for pattern in min_event_patterns:
@@ -268,12 +339,22 @@ def parse_raw_file(file_path, expected_date=None):
         if not min_1d_event:
             missing_elements.append("Min_1D_event")
 
-        # Extraire Prise de contrôle acheteurs - patterns améliorés
+        # Extraire Prise de contrôle acheteurs - patterns améliorés (français et anglais)
         control_achat_patterns = [
+            # Patterns en français
             r'[Pp]rise de contrôle acheteurs\s+(\d+\.?\d*)',
             r'[Aa]cheteurs prise de contrôle\s+(\d+\.?\d*)',
             r'[Aa]cheteurs.*contrôle\s+(\d+\.?\d*)',
-            r'contrôle.*[Aa]cheteurs\s+(\d+\.?\d*)'
+            r'contrôle.*[Aa]cheteurs\s+(\d+\.?\d*)',
+            r'[Pp]rise.*[Aa]cheteurs\s+(\d+\.?\d*)',  # Pattern plus souple
+            r'[Aa]cheteurs\s+(\d+\.?\d*)',  # Pattern très simple: juste "acheteurs + nombre"
+            # Patterns en anglais
+            r'[Bb]uyers control\s+(\d+\.?\d*)',
+            r'[Bb]uyers take control\s+(\d+\.?\d*)',
+            r'[Bb]uyer control\s+(\d+\.?\d*)',
+            r'[Bb]uyer take control\s+(\d+\.?\d*)',
+            r'[Bb]uyers.*control\s+(\d+\.?\d*)',
+            r'control.*[Bb]uyers\s+(\d+\.?\d*)'
         ]
         control_achat = ""
         for pattern in control_achat_patterns:
@@ -281,15 +362,36 @@ def parse_raw_file(file_path, expected_date=None):
             if match:
                 control_achat = match.group(1)
                 break
+
+        # Si toujours pas trouvé, essayer une recherche par ligne avec des mots-clés pour acheteurs
+        if not control_achat:
+            acheteurs_keywords = ['acheteurs', 'buyers', 'buyer']
+            for line in block.split('\n'):
+                if any(keyword.lower() in line.lower() for keyword in acheteurs_keywords):
+                    numbers = re.findall(r'\d+\.?\d*', line)
+                    if numbers:
+                        control_achat = numbers[-1]  # Prendre le dernier nombre de la ligne
+                        break
+
         if not control_achat:
             missing_elements.append("Control_Acheteurs")
 
-        # Extraire Prise de contrôle vendeurs - patterns améliorés
+        # Extraire Prise de contrôle vendeurs - patterns améliorés (français et anglais)
         control_vente_patterns = [
+            # Patterns en français
             r'[Pp]rise de contrôle vendeurs\s+(\d+\.?\d*)',
             r'[Vv]endeurs prise de contrôle\s+(\d+\.?\d*)',
             r'[Vv]endeurs.*contrôle\s+(\d+\.?\d*)',
-            r'contrôle.*[Vv]endeurs\s+(\d+\.?\d*)'
+            r'contrôle.*[Vv]endeurs\s+(\d+\.?\d*)',
+            r'[Pp]rise.*[Vv]endeurs\s+(\d+\.?\d*)',  # Pattern plus souple
+            r'[Vv]endeurs\s+(\d+\.?\d*)',  # Pattern très simple: juste "vendeurs + nombre"
+            # Patterns en anglais
+            r'[Ss]ellers control\s+(\d+\.?\d*)',
+            r'[Ss]ellers take control\s+(\d+\.?\d*)',
+            r'[Ss]eller control\s+(\d+\.?\d*)',
+            r'[Ss]eller take control\s+(\d+\.?\d*)',
+            r'[Ss]ellers.*control\s+(\d+\.?\d*)',
+            r'control.*[Ss]ellers\s+(\d+\.?\d*)'
         ]
         control_vente = ""
         for pattern in control_vente_patterns:
@@ -297,34 +399,49 @@ def parse_raw_file(file_path, expected_date=None):
             if match:
                 control_vente = match.group(1)
                 break
+
+        # Si toujours pas trouvé, essayer une recherche par ligne avec des mots-clés pour vendeurs
+        if not control_vente:
+            vendeurs_keywords = ['vendeurs', 'sellers', 'seller']
+            for line in block.split('\n'):
+                if any(keyword.lower() in line.lower() for keyword in vendeurs_keywords):
+                    numbers = re.findall(r'\d+\.?\d*', line)
+                    if numbers:
+                        control_vente = numbers[-1]  # Prendre le dernier nombre de la ligne
+                        break
+
         if not control_vente:
             missing_elements.append("Control_Vendeurs")
 
-        # Extraire Put sup - support amélioré pour multiples valeurs
+        # Extraire Put sup - support amélioré pour multiples valeurs (français et anglais)
         put_sup_patterns = [
+            # Patterns en français
             r'[Pp]ut sup\.?\s+0dte\s+([\d\., ]+)',
             r'[Pp]ut sup\.?\s+([\d\., ]+)',
-            r'[Pp]ut sup\s+([\d\., ]+)'  # Variante sans point
+            r'[Pp]ut sup\s+([\d\., ]+)',  # Variante sans point
+            # Patterns en anglais
+            r'[Pp]ut support\.?\s+0dte\s+([\d\., ]+)',
+            r'[Pp]ut support\.?\s+([\d\., ]+)',
+            r'[Pp]ut support\s+([\d\., ]+)',
+            r'[Pp]ut sup\s+([\d\., ]+)'
         ]
 
-        # ──────────────────────────────
-        # 1) PUT  sup.
-        # ──────────────────────────────
+        # Détection de Put sup. (ou support)
         put_sup_line = ""
         for line in block.split('\n'):
-            if re.search(r'[Pp]ut sup', line):
+            if re.search(r'[Pp]ut sup|[Pp]ut support', line):
                 put_sup_line = line
                 break
 
         put_sup_main, put_sup_all = "", ""
         if put_sup_line:
-            # ➜ on exclut les zéros (le « 0 » de 0dte)
+            # Exclut les zéros (le « 0 » de 0dte)
             nums = [v for v in re.findall(r'\d+\.?\d*', put_sup_line) if float(v) != 0]
             if nums:
                 put_sup_main = nums[0]
                 put_sup_all = ", ".join(nums)
         else:
-            # … votre fallback pattern inchangé …
+            # Fallback pattern
             for pattern in put_sup_patterns:
                 m = re.search(pattern, block)
                 if m:
@@ -337,19 +454,23 @@ def parse_raw_file(file_path, expected_date=None):
         if not put_sup_main:
             missing_elements.append("Put_Sup")
 
-        # Extraire Call res - support amélioré pour multiples valeurs
+        # Extraire Call res - support amélioré pour multiples valeurs (français et anglais)
         call_res_patterns = [
+            # Patterns en français
             r'[Cc]all res\.?\s+0dte\s+([\d\., ]+)',
             r'[Cc]all res\.?\s+([\d\., ]+)',
-            r'[Cc]all res\s+([\d\., ]+)'  # Variante sans point
+            r'[Cc]all res\s+([\d\., ]+)',  # Variante sans point
+            # Patterns en anglais
+            r'[Cc]all resistance\.?\s+0dte\s+([\d\., ]+)',
+            r'[Cc]all resistance\.?\s+([\d\., ]+)',
+            r'[Cc]all resistance\s+([\d\., ]+)',
+            r'[Cc]all res\s+([\d\., ]+)'
         ]
 
-        # ──────────────────────────────
-        # 2) CALL res.
-        # ──────────────────────────────
+        # Détection de Call res. (ou resistance)
         call_res_line = ""
         for line in block.split('\n'):
-            if re.search(r'[Cc]all res', line):
+            if re.search(r'[Cc]all res|[Cc]all resistance', line):
                 call_res_line = line
                 break
 
@@ -373,29 +494,40 @@ def parse_raw_file(file_path, expected_date=None):
             missing_elements.append("Call_Res")
 
         # Extraire les niveaux "all" pour Put sup - amélioration pour détecter les valeurs entre parenthèses
-        all_pattern = r'\(all\s+([\d\.,\s]+)\)'  # Pattern pour (all X, Y, Z)
-        all_match = re.search(all_pattern, block, re.IGNORECASE)
-        if all_match:
-            all_values_text = all_match.group(1)
-            all_values = re.findall(r'\d+\.?\d*', all_values_text)
-            if all_values:
-                if "Put" in block[block.find(all_match.group(0)) - 30:block.find(all_match.group(0))]:
-                    # C'est pour les puts
-                    if put_sup_all:
-                        put_sup_all += ", " + ", ".join(all_values)
-                    else:
-                        put_sup_all = ", ".join(all_values)
-                elif "Call" in block[block.find(all_match.group(0)) - 30:block.find(all_match.group(0))]:
-                    # C'est pour les calls
-                    if call_res_all:
-                        call_res_all += ", " + ", ".join(all_values)
-                    else:
-                        call_res_all = ", ".join(all_values)
+        # Patterns en français et anglais
+        all_patterns = [
+            r'\(all\s+([\d\.,\s]+)\)',  # Pattern pour (all X, Y, Z)
+            r'\(tous\s+([\d\.,\s]+)\)',  # Pattern français (tous X, Y, Z)
+            r'put all\s+([\d\.,\s]+)'  # Pattern "put all X, Y, Z"
+        ]
 
-        # Extraire explicitement put all et call all
+        for pattern in all_patterns:
+            all_match = re.search(pattern, block, re.IGNORECASE)
+            if all_match:
+                all_values_text = all_match.group(1)
+                all_values = re.findall(r'\d+\.?\d*', all_values_text)
+                if all_values:
+                    if "Put" in block[block.find(all_match.group(0)) - 30:block.find(all_match.group(0))]:
+                        # C'est pour les puts
+                        if put_sup_all:
+                            put_sup_all += ", " + ", ".join(all_values)
+                        else:
+                            put_sup_all = ", ".join(all_values)
+                    elif "Call" in block[block.find(all_match.group(0)) - 30:block.find(all_match.group(0))]:
+                        # C'est pour les calls
+                        if call_res_all:
+                            call_res_all += ", " + ", ".join(all_values)
+                        else:
+                            call_res_all = ", ".join(all_values)
+
+        # Extraire explicitement put all et call all (français et anglais)
         put_all_patterns = [
+            # Patterns en français
             r'put all\s+([\d\., ]+)',
-            r'[Pp]ut.*\(all\s+([\d\., ]+)\)'  # Format "(all X.XX)" pour puts
+            r'[Pp]ut.*\(all\s+([\d\., ]+)\)',  # Format "(all X.XX)" pour puts
+            # Patterns en anglais
+            r'put all\s+([\d\., ]+)',
+            r'[Pp]ut.*\(all\s+([\d\., ]+)\)'
         ]
 
         for pattern in put_all_patterns:
@@ -410,20 +542,29 @@ def parse_raw_file(file_path, expected_date=None):
                 break
 
         # Extraire les valeurs hedgies
-        hedgies_pattern = r'hedgies\s+([\d\., ]+)'
-        hedgies_match = re.search(hedgies_pattern, block, re.IGNORECASE)
-        if hedgies_match:
-            hedgies_values = re.findall(r'\d+\.?\d*', hedgies_match.group(1))
-            if hedgies_values:
-                if put_sup_all:
-                    put_sup_all += ", Hedgies: " + ", ".join(hedgies_values)
-                else:
-                    put_sup_all = "Hedgies: " + ", ".join(hedgies_values)
+        hedgies_patterns = [
+            r'hedgies\s+([\d\., ]+)',
+            r'hedge\s+([\d\., ]+)'
+        ]
 
-        # Extraire explicitement call all
+        for pattern in hedgies_patterns:
+            hedgies_match = re.search(pattern, block, re.IGNORECASE)
+            if hedgies_match:
+                hedgies_values = re.findall(r'\d+\.?\d*', hedgies_match.group(1))
+                if hedgies_values:
+                    if put_sup_all:
+                        put_sup_all += ", Hedgies: " + ", ".join(hedgies_values)
+                    else:
+                        put_sup_all = "Hedgies: " + ", ".join(hedgies_values)
+
+        # Extraire explicitement call all (français et anglais)
         call_all_patterns = [
+            # Patterns en français
             r'call all\s+([\d\., ]+)',
-            r'[Cc]all.*\(all\s+([\d\., ]+)\)'  # Format "(all X.XX)" pour calls
+            r'[Cc]all.*\(all\s+([\d\., ]+)\)',  # Format "(all X.XX)" pour calls
+            # Patterns en anglais
+            r'call all\s+([\d\., ]+)',
+            r'[Cc]all.*\(all\s+([\d\., ]+)\)'
         ]
 
         for pattern in call_all_patterns:

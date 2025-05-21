@@ -420,7 +420,11 @@ def process_stat_files(directory_path, output_filename="combined_unique_stats.cs
 # Exemple d'utilisation:
 if __name__ == "__main__":
     # Remplacez par votre chemin de répertoire
-    DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\\merge"
-    DIRECTORY_PATH ="/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
+    import platform
+    if platform.system() != "Darwin":
+        DIRECTORY_PATH = "C:\\Users\\aulac\\OneDrive\\Documents\\Trading\\VisualStudioProject\\Sierra chart\\xTickReversal\\simu\\5_0_5TP_1SL_1\\\merge"
+
+    else:
+        DIRECTORY_PATH = "/Users/aurelienlachaud/Documents/trading_local/5_0_5TP_1SL_1/merge"
     process_stat_files(DIRECTORY_PATH, min_occurrences=2, min_common_trades=20)
 

@@ -185,7 +185,7 @@ def main():
         "Voulez-vous ajouter une colonne 'date' ? (Appuyez sur Entrée pour non, ou tapez 'd' pour oui) : ")
 
     # Répertoires
-    directory = ("C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/5_0_5TP_1SL_1/")
+    directory = ("C:/Users/aulac/OneDrive/Documents/Trading/VisualStudioProject/Sierra chart/xTickReversal/simu/5_0_5TP_6SL/")
 
     if os.path.exists(directory):
         if os.path.isdir(directory):

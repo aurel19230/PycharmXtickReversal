@@ -8,13 +8,27 @@
 - Filtrage optionnel par is_imBullWithPoc_light
 - Version simplifiée sans visualisation matplotlib
 """
+
+
+# - 🧠 WR_train  = 62.5%   | pct_train  = 0.53%   | trades = 16   | sessions = 12
+# - 📈 WR_val    = 63.11%  | pct_val    = 1.05%   | trades = 103  | sessions = 36
+# - 📊 WR_val1   = 69.77%  | pct_val1   = 0.75%   | trades = 43   | sessions = 32
+# - 🧪 WR_test   = 63.64%  | pct_test   = 0.60%   | trades = 33   | sessions = 21
+#atr_window 12
+# - ⚙️ ATR thresholds (respectivement 1 2 3)    : [1.5, 1.7, 1.9]
+# - 📐 diff_high_atr (respectivement  1 2 3 4)     : [5.5, 3.75, 5.75, 3.25]
+
 from __future__ import annotations
+
+
 
 # ─────────────────── CONFIG ──────────────────────────────────────
 from pathlib import Path
 import sys, time, math, optuna, pandas as pd, numpy as np
 import threading
 import warnings
+from  func_standard import   calculate_atr,calculate_atr_thresholds
+
 
 # Supprimer toutes les visualisations et tous les avertissements
 warnings.filterwarnings("ignore")
@@ -67,14 +81,14 @@ CSV_VAL = DIR / "Step5_5_0_5TP_6SL_010124_150525_extractOnlyFullSession_OnlyShor
 # Configuration par mode
 CONFIGS = {
     "light": {
-        # "WINRATE_MIN": 0.57,  # WR minimum acceptable
-        # "PCT_TRADE_MIN": 0.01,  # % de candles tradées minimum
-        # "ALPHA": 0.70,  # poids du WR dans le score
+        "WINRATE_MIN": 0.57,  # WR minimum acceptable
+        "PCT_TRADE_MIN": 0.01,  # % de candles tradées minimum
+        "ALPHA": 0.70,  # poids du WR dans le score
     },
     "aggressive": {
-        # "WINRATE_MIN": 0.55,  # WR minimum acceptable moins strict
-        # "PCT_TRADE_MIN": 0.02,  # % de candles tradées minimum plus élevé
-        # "ALPHA": 0.65,  # légèrement moins de poids sur le WR
+        "WINRATE_MIN": 0.55,  # WR minimum acceptable moins strict
+        "PCT_TRADE_MIN": 0.02,  # % de candles tradées minimum plus élevé
+        "ALPHA": 0.65,  # légèrement moins de poids sur le WR
     }
 }
 
@@ -83,21 +97,21 @@ ATR_FIXED = True
 
 # Paramètre pour la fenêtre ATR (sera défini par l'utilisateur)
 ATR_WINDOW = 14
-
+ATR_WINDOW_LOW, ATR_WINDOW_HIGH=5,13
 # Paramètres pour les bornes de diffHighPrice
-DIFF_HIGH_MIN, DIFF_HIGH_MAX = 2.5, 5.5
+DIFF_HIGH_MIN, DIFF_HIGH_MAX = 3, 5.75
 DIFF_HIGH_STEP = 0.25  # Pas d'incrémentation
 
 # Paramètres pour l'optimisation
 N_TRIALS = 50000  # Nombre total d'essais
-PRINT_EVERY = 50  # Fréquence d'affichage détaillé
-LAMBDA_WR = 0 # Pénalité pour l'écart de WR entre datasets
+PRINT_EVERY = 5  # Fréquence d'affichage détaillé
+LAMBDA_WR = 1 # Pénalité pour l'écart de WR entre datasets
 LAMBDA_PCT = 0  # Pénalité pour l'écart de PCT entre datasets
 FAILED_PENALTY = -1.0  # Pénalité pour les essais échoués
 
 # Variables globales (seront mises à jour dans main())
-WINRATE_MIN = 0.62
-PCT_TRADE_MIN = 0.01
+WINRATE_MIN = 0.615
+PCT_TRADE_MIN = 0.005
 ALPHA = 0.70
 FILTER_IMBULL = False
 DEBUG_LOG = True  # Active l'affich
@@ -172,61 +186,6 @@ import numba
 import numpy as np
 
 
-@numba.jit(nopython=True)
-def calculate_atr_numba(high, low, close_prev, window=14):
-    """Recalcule l'ATR avec une fenêtre personnalisée en utilisant Numba pour l'accélération
-
-    Args:
-        high: numpy array des prix hauts
-        low: numpy array des prix bas
-        close_prev: numpy array des prix de clôture précédents (déjà décalés)
-        window: taille de la fenêtre pour l'ATR
-
-    Returns:
-        numpy array de l'ATR
-    """
-    # True Range
-    tr1 = high - low
-    tr2 = np.abs(high - close_prev)
-    tr3 = np.abs(low - close_prev)
-
-    # Calculer le True Range comme maximum des trois
-    tr = np.zeros_like(high)
-    for i in range(len(high)):
-        tr[i] = max(tr1[i], tr2[i], tr3[i])
-
-    # Calcul de l'ATR
-    atr = np.zeros_like(tr)
-    atr[0] = tr[0]  # Première valeur = premier TR
-
-    # Calcul de l'ATR par moyenne mobile exponentielle
-    alpha = 2.0 / (window + 1.0)
-    for i in range(1, len(atr)):
-        atr[i] = alpha * tr[i] + (1 - alpha) * atr[i - 1]
-
-    return atr
-
-def calculate_atr_thresholds(datasets, percentiles=[0.25, 0.50, 0.75]):
-    """Calcule les seuils ATR basés sur les percentiles des datasets combinés"""
-    all_atr = np.concatenate([d['atr_recalc'].values for d in datasets])
-    thresholds = [round(np.percentile(all_atr, p*100), 1) for p in percentiles]
-    return thresholds
-def calculate_atr(df, window=14):
-    """Wrapper pour le calcul de l'ATR utilisant la version optimisée avec Numba"""
-    high = df['high'].values
-    low = df['low'].values
-
-    # Créer le close précédent (décalé d'une position)
-    if len(df['close']) > 0:
-        close_prev = np.empty_like(df['close'].values)
-        close_prev[0] = df['close'].values[0]  # La première valeur reste la même
-        close_prev[1:] = df['close'].values[:-1]  # Décalage pour les autres valeurs
-    else:
-        close_prev = np.array([])
-
-    return calculate_atr_numba(high, low, close_prev, window)
-# ───────────────────── MASK BUILDERS ────────────────────────────
-
 def create_atr_masks(df: pd.DataFrame, params: dict) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     """Crée les masques correspondant aux différentes plages d'ATR"""
     threshold_1 = params["atr_threshold_1"]
@@ -243,31 +202,37 @@ def create_atr_masks(df: pd.DataFrame, params: dict) -> tuple[pd.Series, pd.Seri
 
     return mask_atr_1, mask_atr_2, mask_atr_3, mask_atr_4
 
-
-def create_diff_high_mask(df: pd.DataFrame, params: dict) -> pd.Series:
-    """Crée un masque combiné pour diffHighPrice_0_1 en fonction des plages d'ATR"""
-    mask_atr_1, mask_atr_2, mask_atr_3, mask_atr_4 = create_atr_masks(df, params)
-
-    diff_high_atr_1 = params["diff_high_atr_1"]
-    diff_high_atr_2 = params["diff_high_atr_2"]
-    diff_high_atr_3 = params["diff_high_atr_3"]
-    diff_high_atr_4 = params["diff_high_atr_4"]
-
-    # Créer les masques de base pour diffHighPrice
-    mask_diff_1 = mask_atr_1 & (df["diffHighPrice_0_1"] > diff_high_atr_1)
-    mask_diff_2 = mask_atr_2 & (df["diffHighPrice_0_1"] > diff_high_atr_2)
-    mask_diff_3 = mask_atr_3 & (df["diffHighPrice_0_1"] > diff_high_atr_3)
-    mask_diff_4 = mask_atr_4 & (df["diffHighPrice_0_1"] > diff_high_atr_4)
-
-    # Appliquer le filtre IMBULL si activé UNIQUEMENT aux masques diffHighPrice
-    if FILTER_IMBULL and "is_imBullWithPoc_light" in df.columns:
-        mask_diff_1 = mask_diff_1 & df["is_imBullWithPoc_light"]
-        mask_diff_2 = mask_diff_2 & df["is_imBullWithPoc_light"]
-        mask_diff_3 = mask_diff_3 & df["is_imBullWithPoc_light"]
-        mask_diff_4 = mask_diff_4 & df["is_imBullWithPoc_light"]
-
-    # Combiner les masques
-    return mask_diff_1 | mask_diff_2 | mask_diff_3 | mask_diff_4
+#
+# def create_diff_high_mask(df: pd.DataFrame, params: dict) -> pd.Series:
+#     """Crée un masque combiné pour diffHighPrice_0_1 en fonction des plages d'ATR"""
+#     mask_atr_1, mask_atr_2, mask_atr_3, mask_atr_4 = create_atr_masks(df, params)
+#
+#     diff_high_atr_1 = params["diff_high_atr_1"]
+#     diff_high_atr_2 = params["diff_high_atr_2"]
+#     diff_high_atr_3 = params["diff_high_atr_3"]
+#     diff_high_atr_4 = params["diff_high_atr_4"]
+#
+#     # Créer les masques de base pour diffHighPrice
+#     mask_diff_1 = mask_atr_1 & (df["diffHighPrice_0_1"] > diff_high_atr_1)
+#     mask_diff_2 = mask_atr_2 & (df["diffHighPrice_0_1"] > diff_high_atr_2)
+#     mask_diff_3 = mask_atr_3 & (df["diffHighPrice_0_1"] > diff_high_atr_3)
+#     mask_diff_4 = mask_atr_4 & (df["diffHighPrice_0_1"] > diff_high_atr_4)
+#     raise ValueError(f"La colonne 'is_imBullWithPoc_light' est absente du dataset.")
+#     if FILTER_IMBULL:
+#         raise ValueError(f"La colonne 'is_imBullWithPoc_light' est absente du dataset.")
+#         for df in (TRAIN_RAW, VAL_RAW, VAL1_RAW, TEST_RAW):
+#             if "is_imBullWithPoc_light" not in df.columns:
+#                 raise ValueError(f"La colonne 'is_imBullWithPoc_light' est absente du dataset.")
+#
+#     # Appliquer le filtre IMBULL si activé UNIQUEMENT aux masques diffHighPrice
+#     if FILTER_IMBULL and "is_imBullWithPoc_light" in df.columns:
+#         mask_diff_1 = mask_diff_1 & df["is_imBullWithPoc_light"]
+#         mask_diff_2 = mask_diff_2 & df["is_imBullWithPoc_light"]
+#         mask_diff_3 = mask_diff_3 & df["is_imBullWithPoc_light"]
+#         mask_diff_4 = mask_diff_4 & df["is_imBullWithPoc_light"]
+#
+#     # Combiner les masques
+#     return mask_diff_1 | mask_diff_2 | mask_diff_3 | mask_diff_4
 
 # ───────────────────── METRICS HELPERS ──────────────────────────
 def _metrics(df: pd.DataFrame, mask: pd.Series, original_len: int = None) -> tuple[float, float, int, int, int]:
@@ -303,7 +268,7 @@ def _metrics(df: pd.DataFrame, mask: pd.Series, original_len: int = None) -> tup
 
 
 # Modifiez également la fonction _metrics_by_atr_segment pour appliquer le filtre IMBULL
-def _metrics_by_atr_segment(df: pd.DataFrame, params: dict, original_len: int = None):
+def _metrics_by_atr_segment(df: pd.DataFrame, params: dict, original_len: int = None, df_name: str = ""):
     """Calcule les métriques détaillées par segment d'ATR"""
     # Filtre pour les données de trading - UNIQUEMENT class_binaire, PAS le filtre IMBULL ici
     trading_mask = df["class_binaire"].isin([0, 1])
@@ -340,12 +305,35 @@ def _metrics_by_atr_segment(df: pd.DataFrame, params: dict, original_len: int = 
     mask_diff_3 = mask_atr_3 & (df["diffHighPrice_0_1"] > diff_high_atr_3)
     mask_diff_4 = mask_atr_4 & (df["diffHighPrice_0_1"] > diff_high_atr_4)
 
+    if FILTER_IMBULL and "is_imBullWithPoc_light" not in df.columns:
+        raise ValueError(f"La colonne 'is_imBullWithPoc_light' est absente du dataset {df_name}.")
+
     # Appliquer le filtre IMBULL UNIQUEMENT aux masques diffHighPrice si activé
     if FILTER_IMBULL and "is_imBullWithPoc_light" in df.columns:
-        mask_diff_1 = mask_diff_1 & df["is_imBullWithPoc_light"]
-        mask_diff_2 = mask_diff_2 & df["is_imBullWithPoc_light"]
-        mask_diff_3 = mask_diff_3 & df["is_imBullWithPoc_light"]
-        mask_diff_4 = mask_diff_4 & df["is_imBullWithPoc_light"]
+        # Conversion en booléen
+        imbull_mask = df["is_imBullWithPoc_light"].astype(bool)
+        #
+        # # Débogage: vérifier les valeurs dans la colonne originale avec le nom du dataset
+        # print(f"DEBUG ({df_name}) - is_imBullWithPoc_light valeurs uniques: {df['is_imBullWithPoc_light'].unique()}")
+        #
+        # # Débogage: vérifier s'il y a des NaN
+        # nan_count = df["is_imBullWithPoc_light"].isna().sum()
+        # print(f"DEBUG ({df_name}) - is_imBullWithPoc_light NaN count: {nan_count}")
+        #
+        # # Débogage: compter les True et False après conversion
+        # true_count = imbull_mask.sum()
+        # false_count = len(imbull_mask) - true_count
+        # print(f"DEBUG ({df_name}) - imbull_mask: {true_count} True, {false_count} False")
+        #
+        # # Ajouter la taille du DataFrame pour vérification
+        # print(f"DEBUG ({df_name}) - Taille du DataFrame: {len(df)}")
+
+        # Appliquer le filtre après avoir remplacé les NaN par False
+        imbull_mask = df["is_imBullWithPoc_light"].fillna(0).astype(bool)
+        mask_diff_1 = mask_diff_1 & imbull_mask
+        mask_diff_2 = mask_diff_2 & imbull_mask
+        mask_diff_3 = mask_diff_3 & imbull_mask
+        mask_diff_4 = mask_diff_4 & imbull_mask
 
     # Appliquer le filtre class_binaire aux masques déjà créés
     mask_diff_1 = trading_mask & mask_diff_1
@@ -540,7 +528,7 @@ def objective(trial: optuna.trial.Trial) -> float:
     # 1) Fenêtre ATR --------------------------------------------------------
     # 1) Fenêtre ATR --------------------------------------------------------
     if not ATR_FIXED:
-        ATR_WINDOW = trial.suggest_int("atr_window", 10, 80)
+        ATR_WINDOW = trial.suggest_int("atr_window", ATR_WINDOW_LOW, ATR_WINDOW_HIGH)
         # Recalculer l'ATR pour tous les datasets
         for d in (TRAIN_RAW, VAL_RAW, VAL1_RAW, TEST_RAW):
             d['atr_recalc'] = calculate_atr(d, window=ATR_WINDOW)
@@ -626,9 +614,9 @@ def objective(trial: optuna.trial.Trial) -> float:
     val1_len = val1_filter.sum()
 
     # Calculer les métriques détaillées par segment d'ATR
-    metrics_train = _metrics_by_atr_segment(TRAIN_RAW, p, train_len)
-    metrics_val = _metrics_by_atr_segment(VAL_RAW, p, val_len)
-    metrics_val1 = _metrics_by_atr_segment(VAL1_RAW, p, val1_len)
+    metrics_train = _metrics_by_atr_segment(TRAIN_RAW, p, train_len, "TRAIN")
+    metrics_val = _metrics_by_atr_segment(VAL_RAW, p, val_len, "VAL")
+    metrics_val1 = _metrics_by_atr_segment(VAL1_RAW, p, val1_len, "VAL1")
 
     # Extraire les métriques combinées
     wr_t, pct_t, suc_t, fail_t, sess_t = metrics_train["combined"]
@@ -966,9 +954,9 @@ def main():
 
     # Choix utilisateur -----------------------------------------------------
     print("Mode d'optimisation :")
-    print("  [Entrée] → ATR variable (10-80) avec filtre IMBULL activé")
+    print(f"  [Entrée] → ATR variable ({ATR_WINDOW_LOW}-{ATR_WINDOW_LOW}) avec filtre IMBULL activé")
     print("  1        → ATR fixe avec filtre IMBULL activé")
-    print("  2        → ATR variable (10-80) sans filtre IMBULL")
+    print(f"  2        → ATR variable ({ATR_WINDOW_LOW}-{ATR_WINDOW_LOW}) sans filtre IMBULL")
     print("  3        → ATR fixe sans filtre IMBULL")
     mode = input("Choix : ").strip().lower()
 
@@ -980,7 +968,7 @@ def main():
     elif mode == "2":
         ATR_FIXED = False
         FILTER_IMBULL = False
-        print(f"{Fore.GREEN}Mode 2 sélectionné: ATR variable (10-80) sans filtre IMBULL{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Mode 2 sélectionné: ATR variable ({ATR_WINDOW_LOW}-{ATR_WINDOW_LOW}) sans filtre IMBULL{Style.RESET_ALL}")
     elif mode == "3":
         ATR_FIXED = True
         FILTER_IMBULL = False

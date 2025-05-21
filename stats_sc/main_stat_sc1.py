@@ -49,32 +49,37 @@ print(df_analysis["diffPriceClosePoc_0_0"].shape)
 
 # Définition du dictionnaire des features et leurs conditions
 features_conditions = {
-         'finished_auction_low': [
-                 {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
-                 {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
-                 {'type': 'between', 'min': 1, 'max':1, 'active': True}  # Correction de la plage
-             ],
+        'finished_auction_low': [
+                {'type': 'greater_than_or_equal', 'threshold': 10, 'active': False},
+                {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
+                {'type': 'between', 'min': 1, 'max': 1, 'active': True}  # Correction de la plage
+        ],
 
         'sc_reg_slope_30P_2': [
                 {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': False},
                 {'type': 'less_than_or_equal', 'threshold': 5, 'active': False},
                 {'type': 'between', 'min': 0.2, 'max': 0.8, 'active': True}],
 
-
         'diffVolDelta_2_2Ratio': [
                 {'type': 'greater_than_or_equal', 'threshold': 0.2, 'active': True},
                 {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': -0.25, 'max': 0.25, 'active': False}],
+                {'type': 'between', 'min': -0.20, 'max': 0.30, 'active': False}],
 
         'close_sma_zscore_6': [
                 {'type': 'greater_than_or_equal', 'threshold': 0.3, 'active': False},
                 {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
-                {'type': 'between', 'min': 0.4, 'max':3, 'active': True}],
+                {'type': 'between', 'min': 0.2, 'max': 3, 'active': True}],
+
+        'diffHighPrice_0_1': [
+                {'type': 'greater_than_or_equal', 'threshold': 0.3, 'active': False},
+                {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
+                {'type': 'between', 'min': 1.25, 'max': 100, 'active': True}],
 
         'candleDuration': [
                 {'type': 'greater_than_or_equal', 'threshold': 1.3, 'active': False},
                 {'type': 'less_than_or_equal', 'threshold': 0.8, 'active': False},
                 {'type': 'between', 'min': 1, 'max': 180, 'active': True}],
+
 }
 
 
