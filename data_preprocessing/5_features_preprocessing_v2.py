@@ -10,6 +10,10 @@ import os
 import numpy as np
 from func_standard import vwap_reversal_pro,metrics_vwap_premmium, calculate_atr
 
+import sys
+sys.path.append(r"C:\Users\aulac\OneDrive\Documents\Trading\PyCharmProject\MLStrategy")
+from stats_sc.standard_stat_sc import *
+
 
 diffDivBy0 = np.nan
 addDivBy0 = np.nan
@@ -3700,9 +3704,9 @@ print(f"\n")
 
 
 print_notification(
-    "Ajout de 'volume', 'timeStampOpening', class_binaire', 'date','VWAP','high','low','open','close','bidVolHigh_1',''askVolHigh'',trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
+    "Ajout de 'volume', 'timeStampOpening', class_binaire', 'date', 'candleDir', 'VolAbv','VWAP','high','low','open','close','bidVolHigh_1',''askVolHigh'',trade_category', 'SessionStartEnd' pour permettre la suite des traitements")
 # Colonnes à ajouter
-columns_to_add = ['volume','timeStampOpening', 'session_id','class_binaire', 'candleDir', 'date','high','low','open','close','bidVolHigh_1','askVolHigh', 'VWAP','trade_category', 'SessionStartEnd',
+columns_to_add = ['volume','timeStampOpening', 'session_id','class_binaire', 'candleDir', 'VolAbv','date','high','low','open','close','bidVolHigh_1','askVolHigh', 'VWAP','trade_category', 'SessionStartEnd',
                   'close', 'high', 'low','trade_pnl', 'tp1_pnl','tp2_pnl','tp3_pnl','sl_pnl',
                   #'trade_pnl_theoric','tp1_pnl_theoric','sl_pnl_theoric'
                   ]
@@ -3784,16 +3788,23 @@ new_file_name = file_without_extension + '_feat.csv'
 # Construire le chemin complet du nouveau fichier
 feat_file = os.path.join(file_dir, new_file_name)
 
-# Créer le nouveau nom de fichier pour outliersTransform_df
-winsorized_file_name = file_without_extension + '_feat_winsorized.csv'
-
-# Construire le chemin complet du nouveau fichier winsorized
-winsorized_file = os.path.join(file_dir, winsorized_file_name)
+XTICKREVERAL_TICKPRICE = 10  # Nombre de ticks dans la zone above
+PERDIOD_ATR_SESSION_ANALYSE=15
+features_NANReplacedVal_df = create_dataframe_with_group_indicators(
+    df=features_NANReplacedVal_df,
+    groupe1_sessions=[0, 1],
+    groupe2_sessions=[2, 3, 4, 5, 6],xtickReversalTickPrice=XTICKREVERAL_TICKPRICE,period_atr_stat_session=PERDIOD_ATR_SESSION_ANALYSE)
 
 # Sauvegarder le fichier des features originales
 print_notification(f"Enregistrement du fichier de features non modifiées : {feat_file}")
 save_features_with_sessions(features_NANReplacedVal_df, CUSTOM_SESSIONS, feat_file)
 
-# Sauvegarder le fichier winsorized
-print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")
-save_features_with_sessions(outliersTransform_df, CUSTOM_SESSIONS, winsorized_file)
+# # Créer le nouveau nom de fichier pour outliersTransform_df
+# winsorized_file_name = file_without_extension + '_feat_winsorized.csv'
+
+# # Construire le chemin complet du nouveau fichier winsorized
+# winsorized_file = os.path.join(file_dir, winsorized_file_name)
+
+# # Sauvegarder le fichier winsorized
+# print_notification(f"Enregistrement du fichier de features winsorisées : {winsorized_file}")
+# save_features_with_sessions(outliersTransform_df, CUSTOM_SESSIONS, winsorized_file)

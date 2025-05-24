@@ -440,7 +440,7 @@ def print_comparative_performance(metrics_before, metrics_after):
             return f"{change:+.2f}%"
         return "N/A"
 
-    print("\n═══ ANALYSE COMPARATIVE DES PERFORMANCES ═══")
+    #print("\n═══ ANALYSE COMPARATIVE DES PERFORMANCES ═══")
 
     print("\n📊 STATISTIQUES GLOBALES")
     print("═" * 75)
@@ -460,7 +460,7 @@ def print_comparative_performance(metrics_before, metrics_after):
         print(f"{label:<35} {before_val:<15} {after_val:<15} {calculate_change(before_val, after_val):<15}")
 
     print("\n📈 PERFORMANCE GLOBALE")
-    print("═" * 75)
+    print("-" * 75)
 
     global_metrics = {
         'Win Rate Total (%)': 'Win Rate Total',
@@ -855,7 +855,7 @@ def preprocess_sessions_with_date(df):
     Returns:
         pd.DataFrame: DataFrame avec les nouvelles colonnes 'session_id' et 'session_date'
     """
-    print_notification("Création des identifiants de session et dates de session")
+    #print("Création des identifiants de session et dates de session")
 
     # Copier le DataFrame pour éviter de modifier l'original
     df_copy = df.copy()
@@ -3270,7 +3270,9 @@ def evaluate_pullStack_avgDiff(params, df, optimize_oversold=False, optimize_ove
             'bin_1_samples': 0,
             'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
         }, df_test_filtered, target_y_test
-
+# ────────────────────────────────────────────────────────────────────────────────
+# FONCTIONS POUR LA MATRICE JACCARD GLOBALE
+# ────────────────────────────────────────────────────────────────────────────────
 def evaluate_volRevMoveZone1_volImpulsMoveExtrem(params, df, optimize_oversold=False, optimize_overbought=False):
     """
     Évalue l'indicateur de ratio de volume volRevMoveZone1_volImpulsMoveExtrem avec des paramètres optimisés.
@@ -3395,3 +3397,2062 @@ def evaluate_volRevMoveZone1_volImpulsMoveExtrem(params, df, optimize_oversold=F
             'bin_1_samples': 0,
             'total_samples': len(df_test_filtered) if 'df_test_filtered' in locals() else 0
         }, df_test_filtered, target_y_test
+
+    def calculate_jaccard_similarity(set1, set2):
+        """Calcule la similarité Jaccard entre deux ensembles."""
+        if len(set1) == 0 and len(set2) == 0:
+            return 1.0
+
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        return intersection / union if union > 0 else 0.0
+
+    def get_algo_winrate(algo_name, algo_dfs):
+        """Calcule le win rate global d'un algorithme."""
+        if algo_name not in algo_dfs:
+            return 0
+
+        df = algo_dfs[algo_name]
+        pnl_col = next((c for c in ("PnlAfterFiltering", "trade_pnl") if c in df.columns), None)
+        if pnl_col:
+            wins = (df[pnl_col] > 0).sum()
+            total = len(df)
+            return (wins / total * 100) if total > 0 else 0
+        return 0
+
+        # ────────────────────────────────────────────────────────────────────────────────
+        # MODIFICATION DE VOTRE FONCTION EXISTANTE analyse_doublons_algos
+        # ────────────────────────────────────────────────────────────────────────────────
+
+        # Dans votre fonction analyse_doublons_algos, remplacez cette section :
+
+        # Stocker les statistiques
+        pairs_stats[(a1, a2)] = {
+            'common_trades': len(common),
+            'winning_both': winning_both,
+            'winning_a1_only': winning_a1_only,
+            'winning_a2_only': winning_a2_only,
+            'losing_both': losing_both,
+            'agreement_rate': agreement_rate,
+            'total_pnl': total_pnl,
+            'unanimous_pnl': unanimous_pnl
+        }
+
+        # Calculer la similarité Jaccard pour cette paire
+        set1 = uniq_sets[a1]
+        set2 = uniq_sets[a2]
+        jaccard_sim = calculate_jaccard_similarity(set1, set2)
+
+        # Calculer les win rates
+        total_wins_a1 = winning_both + winning_a1_only
+        total_wins_a2 = winning_both + winning_a2_only
+        winrate_a1_common = (total_wins_a1 / len(common) * 100) if len(common) > 0 else 0
+        winrate_a2_common = (total_wins_a2 / len(common) * 100) if len(common) > 0 else 0
+
+        # Win rates globaux
+        global_wr_a1 = get_algo_winrate(a1, algo_dfs)
+        global_wr_a2 = get_algo_winrate(a2, algo_dfs)
+
+        # Déterminer le statut de diversification
+        if jaccard_sim < JACCARD_THRESHOLD:
+            jaccard_color = f"{Fore.GREEN}{jaccard_sim:.1%}{Style.RESET_ALL}"
+            diversification_status = "DIVERSIFIÉS"
+        else:
+            jaccard_color = f"{Fore.RED}{jaccard_sim:.1%}{Style.RESET_ALL}"
+            diversification_status = "REDONDANTS"
+
+        # Stocker les statistiques avec les nouvelles métriques
+        pairs_stats[(a1, a2)] = {
+            'common_trades': len(common),
+            'winning_both': winning_both,
+            'winning_a1_only': winning_a1_only,
+            'winning_a2_only': winning_a2_only,
+            'losing_both': losing_both,
+            'agreement_rate': agreement_rate,
+            'total_pnl': total_pnl,
+            'unanimous_pnl': unanimous_pnl,
+            'jaccard_similarity': jaccard_sim,
+            'winrate_a1_common': winrate_a1_common,
+            'winrate_a2_common': winrate_a2_common,
+            'global_wr_a1': global_wr_a1,
+            'global_wr_a2': global_wr_a2
+        }
+
+        print(f"\n>> Analyse de la paire {a1} / {a2} ({diversification_status}):")
+        print(f"  Trades communs: {len(common)}")
+        print(f"  Gagnants pour les deux: {winning_both}")
+        print(f"  Gagnants uniquement pour {a1}: {winning_a1_only}")
+        print(f"  Gagnants uniquement pour {a2}: {winning_a2_only}")
+        print(f"  Perdants pour les deux: {losing_both}")
+        print(f"  Taux d'accord: {agreement_rate:.2f}%")
+        print(f"  Win Rate {a1} (trades communs): {winrate_a1_common:.1f}%")
+        print(f"  Win Rate {a2} (trades communs): {winrate_a2_common:.1f}%")
+        print(f"  Win Rate {a1} (global): {global_wr_a1:.1f}%")
+        print(f"  Win Rate {a2} (global): {global_wr_a2:.1f}%")
+        print(f"  PnL total: {total_pnl:.2f}")
+        print(f"  PnL des trades unanimes: {unanimous_pnl:.2f}")
+        print(f"  Taux de Jaccard: {jaccard_color}")
+
+    return pairs_stats, occurrences_stats
+
+
+
+def calculate_jaccard_similarity(set1, set2):
+    """Calcule la similarité Jaccard entre deux ensembles."""
+    if len(set1) == 0 and len(set2) == 0:
+        return 1.0
+
+    intersection = len(set1.intersection(set2))
+    union = len(set1.union(set2))
+    return intersection / union if union > 0 else 0.0
+
+
+def get_algo_winrate(algo_name, algo_dfs):
+    """Calcule le win rate global d'un algorithme."""
+    if algo_name not in algo_dfs:
+        return 0
+
+    df = algo_dfs[algo_name]
+    pnl_col = next((c for c in ("PnlAfterFiltering", "trade_pnl") if c in df.columns), None)
+    if pnl_col:
+        wins = (df[pnl_col] > 0).sum()
+        total = len(df)
+        return (wins / total * 100) if total > 0 else 0
+    return 0
+def create_full_jaccard_matrix(algo_dfs, indicator_columns=None):
+    """Crée la matrice de similarité Jaccard complète pour tous les algorithmes."""
+    if indicator_columns is None:
+        indicator_columns = [
+            'rsi_', 'macd', 'macd_signal', 'macd_hist',
+            'timeElapsed2LastBar', 'timeStampOpening',
+            'ratio_deltaRevZone_VolCandle'
+        ]
+
+    algos = list(algo_dfs.keys())
+    jaccard_matrix = pd.DataFrame(0.0, index=algos, columns=algos)
+
+    # Créer les ensembles de trades uniques pour chaque algo
+    uniq_sets = {}
+    for algo, df in algo_dfs.items():
+        valid_cols = [c for c in indicator_columns if c in df.columns]
+        if not valid_cols:
+            continue
+
+        uniq_sets[algo] = set()
+        for _, row in df.drop_duplicates(subset=valid_cols).iterrows():
+            key = tuple(row[col] for col in valid_cols)
+            uniq_sets[algo].add(key)
+
+    # Calculer la similarité Jaccard pour toutes les paires
+    for i, algo1 in enumerate(algos):
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                jaccard_matrix.loc[algo1, algo2] = 1.0
+            else:
+                set1 = uniq_sets.get(algo1, set())
+                set2 = uniq_sets.get(algo2, set())
+                jaccard_sim = calculate_jaccard_similarity(set1, set2)
+                jaccard_matrix.loc[algo1, algo2] = jaccard_sim
+
+    return jaccard_matrix
+
+
+def calculate_common_trades_matrix(algo_dfs, indicator_columns=None):
+    """Calcule une matrice du nombre de trades communs entre tous les algorithmes."""
+    if indicator_columns is None:
+        indicator_columns = [
+            'rsi_', 'macd', 'macd_signal', 'macd_hist',
+            'timeElapsed2LastBar', 'timeStampOpening',
+            'ratio_deltaRevZone_VolCandle'
+        ]
+
+    algos = list(algo_dfs.keys())
+    common_trades_matrix = pd.DataFrame(0, index=algos, columns=algos, dtype=int)
+
+    # Créer les ensembles de trades uniques pour chaque algo
+    uniq_sets = {}
+    for algo, df in algo_dfs.items():
+        valid_cols = [c for c in indicator_columns if c in df.columns]
+        if not valid_cols:
+            continue
+
+        uniq_sets[algo] = set()
+        for _, row in df.drop_duplicates(subset=valid_cols).iterrows():
+            key = tuple(row[col] for col in valid_cols)
+            uniq_sets[algo].add(key)
+
+    # Calculer le nombre de trades communs pour toutes les paires
+    for i, algo1 in enumerate(algos):
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                # Diagonale = nombre total de trades uniques pour l'algo
+                common_trades_matrix.loc[algo1, algo2] = len(uniq_sets.get(algo1, set()))
+            else:
+                set1 = uniq_sets.get(algo1, set())
+                set2 = uniq_sets.get(algo2, set())
+                common_count = len(set1.intersection(set2))
+                common_trades_matrix.loc[algo1, algo2] = common_count
+
+    return common_trades_matrix
+    """Crée la matrice de similarité Jaccard complète pour tous les algorithmes."""
+    if indicator_columns is None:
+        indicator_columns = [
+            'rsi_', 'macd', 'macd_signal', 'macd_hist',
+            'timeElapsed2LastBar', 'timeStampOpening',
+            'ratio_deltaRevZone_VolCandle'
+        ]
+
+    algos = list(algo_dfs.keys())
+    jaccard_matrix = pd.DataFrame(0.0, index=algos, columns=algos)
+
+    # Créer les ensembles de trades uniques pour chaque algo
+    uniq_sets = {}
+    for algo, df in algo_dfs.items():
+        valid_cols = [c for c in indicator_columns if c in df.columns]
+        if not valid_cols:
+            continue
+
+        uniq_sets[algo] = set()
+        for _, row in df.drop_duplicates(subset=valid_cols).iterrows():
+            key = tuple(row[col] for col in valid_cols)
+            uniq_sets[algo].add(key)
+
+    # Calculer la similarité Jaccard pour toutes les paires
+    for i, algo1 in enumerate(algos):
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                jaccard_matrix.loc[algo1, algo2] = 1.0
+            else:
+                set1 = uniq_sets.get(algo1, set())
+                set2 = uniq_sets.get(algo2, set())
+                jaccard_sim = calculate_jaccard_similarity(set1, set2)
+                jaccard_matrix.loc[algo1, algo2] = jaccard_sim
+
+    return jaccard_matrix
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# FONCTIONS CORRIGÉES POUR L'ANALYSE JACCARD
+# ────────────────────────────────────────────────────────────────────────────────
+
+def calculate_jaccard_similarity(set1, set2):
+    """Calcule la similarité Jaccard entre deux ensembles."""
+    if len(set1) == 0 and len(set2) == 0:
+        return 1.0
+
+    intersection = len(set1.intersection(set2))
+    union = len(set1.union(set2))
+    return intersection / union if union > 0 else 0.0
+
+
+def get_algo_winrate(algo_name, algo_dfs):
+    """Calcule le win rate global d'un algorithme."""
+    if algo_name not in algo_dfs:
+        return 0
+
+    df = algo_dfs[algo_name]
+    pnl_col = next((c for c in ("PnlAfterFiltering", "trade_pnl") if c in df.columns), None)
+    if pnl_col:
+        wins = (df[pnl_col] > 0).sum()
+        total = len(df)
+        return (wins / total * 100) if total > 0 else 0
+    return 0
+
+
+def create_full_jaccard_matrix(algo_dfs, indicator_columns=None):
+    """Crée la matrice de similarité Jaccard complète pour tous les algorithmes."""
+    if indicator_columns is None:
+        indicator_columns = [
+            'rsi_', 'macd', 'macd_signal', 'macd_hist',
+            'timeElapsed2LastBar', 'timeStampOpening',
+            'ratio_deltaRevZone_VolCandle'
+        ]
+
+    algos = list(algo_dfs.keys())
+    jaccard_matrix = pd.DataFrame(0.0, index=algos, columns=algos)
+
+    # Créer les ensembles de trades uniques pour chaque algo
+    uniq_sets = {}
+    for algo, df in algo_dfs.items():
+        valid_cols = [c for c in indicator_columns if c in df.columns]
+        if not valid_cols:
+            continue
+
+        uniq_sets[algo] = set()
+        for _, row in df.drop_duplicates(subset=valid_cols).iterrows():
+            key = tuple(row[col] for col in valid_cols)
+            uniq_sets[algo].add(key)
+
+    # Calculer la similarité Jaccard pour toutes les paires
+    for i, algo1 in enumerate(algos):
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                jaccard_matrix.loc[algo1, algo2] = 1.0
+            else:
+                set1 = uniq_sets.get(algo1, set())
+                set2 = uniq_sets.get(algo2, set())
+                jaccard_sim = calculate_jaccard_similarity(set1, set2)
+                jaccard_matrix.loc[algo1, algo2] = jaccard_sim
+
+    return jaccard_matrix
+
+
+def calculate_common_trades_matrix(algo_dfs, indicator_columns=None):
+    """Calcule une matrice du nombre de trades communs entre tous les algorithmes."""
+    if indicator_columns is None:
+        indicator_columns = [
+            'rsi_', 'macd', 'macd_signal', 'macd_hist',
+            'timeElapsed2LastBar', 'timeStampOpening',
+            'ratio_deltaRevZone_VolCandle'
+        ]
+
+    algos = list(algo_dfs.keys())
+    common_trades_matrix = pd.DataFrame(0, index=algos, columns=algos, dtype=int)
+
+    # Créer les ensembles de trades uniques pour chaque algo
+    uniq_sets = {}
+    for algo, df in algo_dfs.items():
+        valid_cols = [c for c in indicator_columns if c in df.columns]
+        if not valid_cols:
+            continue
+
+        uniq_sets[algo] = set()
+        for _, row in df.drop_duplicates(subset=valid_cols).iterrows():
+            key = tuple(row[col] for col in valid_cols)
+            uniq_sets[algo].add(key)
+
+    # Calculer le nombre de trades communs pour toutes les paires
+    for i, algo1 in enumerate(algos):
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                # Diagonale = nombre total de trades uniques pour l'algo
+                common_trades_matrix.loc[algo1, algo2] = len(uniq_sets.get(algo1, set()))
+            else:
+                set1 = uniq_sets.get(algo1, set())
+                set2 = uniq_sets.get(algo2, set())
+                common_count = len(set1.intersection(set2))
+                common_trades_matrix.loc[algo1, algo2] = common_count
+
+    return common_trades_matrix
+
+
+def display_jaccard_matrix(jaccard_matrix, threshold=None, algo_dfs=None, min_common_trades=None):
+    """Affiche la matrice Jaccard avec couleur des labels selon le volume de trades communs."""
+    # Valeurs par défaut si None
+    if threshold is None:
+        threshold = 0.5
+    if min_common_trades is None:
+        min_common_trades = 15
+
+    print(f"\n{Fore.CYAN}{'=' * 120}")
+    print(f"MATRICE DE SIMILARITÉ JACCARD - TOUS LES ALGORITHMES (Seuil: {threshold:.1%})")
+    print(f"{'=' * 120}{Style.RESET_ALL}")
+
+    algos = list(jaccard_matrix.index)
+
+    # Calculer les trades communs pour chaque paire si algo_dfs est fourni
+    common_trades_matrix = None
+    algos_with_insufficient = set()
+
+    if algo_dfs is not None:
+        common_trades_matrix = calculate_common_trades_matrix(algo_dfs)
+
+        # Nouvelle logique: un algo est VERT s'il a au moins quelques bonnes connexions
+        for i, algo1 in enumerate(algos):
+            sufficient_pairs = 0
+            total_pairs = 0
+
+            for j, algo2 in enumerate(algos):
+                if i != j:  # Exclure la diagonale
+                    total_pairs += 1
+                    common_count = common_trades_matrix.loc[algo1, algo2]
+                    if common_count >= min_common_trades:
+                        sufficient_pairs += 1
+
+            # Un algo est VERT s'il a au moins 1 bonne connexion (≥ min_common_trades)
+            # OU s'il a au moins 20% de bonnes connexions
+            has_good_connections = sufficient_pairs >= 1 or (sufficient_pairs / total_pairs) >= 0.2
+
+            if not has_good_connections:
+                algos_with_insufficient.add(algo1)
+
+    # En-tête avec noms courts colorés
+    print(f"{'':>20}", end="")
+    for algo in algos:
+        short_name = algo.replace('features_algo', 'A')
+        if algo in algos_with_insufficient:
+            print(f"{Fore.RED}{short_name:>8}{Style.RESET_ALL}", end="")
+        else:
+            print(f"{Fore.GREEN}{short_name:>8}{Style.RESET_ALL}", end="")
+    print()
+
+    # Lignes de la matrice avec labels colorés
+    for i, algo1 in enumerate(algos):
+        short_name1 = algo1.replace('features_algo', 'A')
+
+        # Colorer le label de ligne
+        if algo1 in algos_with_insufficient:
+            print(f"{Fore.RED}{short_name1:>20}{Style.RESET_ALL}", end="")
+        else:
+            print(f"{Fore.GREEN}{short_name1:>20}{Style.RESET_ALL}", end="")
+
+        for j, algo2 in enumerate(algos):
+            if i == j:
+                print(f"{'1.00':>8}", end="")  # Diagonale
+            else:
+                jaccard_val = jaccard_matrix.loc[algo1, algo2]
+
+                # Vérifier si cette paire a suffisamment de trades communs
+                has_sufficient_trades = False
+                if common_trades_matrix is not None:
+                    common_count = common_trades_matrix.loc[algo1, algo2]
+                    has_sufficient_trades = common_count >= min_common_trades
+
+                # Afficher les valeurs Jaccard avec couleur selon seuil Jaccard
+                # ET souligner si la paire a suffisamment de trades communs
+                if jaccard_val < threshold:
+                    if has_sufficient_trades:
+                        # Vert + souligné
+                        print(f"{Fore.GREEN}\033[4m{jaccard_val:>8.3f}\033[0m{Style.RESET_ALL}", end="")
+                    else:
+                        # Vert normal
+                        print(f"{Fore.GREEN}{jaccard_val:>8.3f}{Style.RESET_ALL}", end="")
+                else:
+                    if has_sufficient_trades:
+                        # Rouge + souligné
+                        print(f"{Fore.RED}\033[4m{jaccard_val:>8.3f}\033[0m{Style.RESET_ALL}", end="")
+                    else:
+                        # Rouge normal
+                        print(f"{Fore.RED}{jaccard_val:>8.3f}{Style.RESET_ALL}", end="")
+        print()
+
+    # Légendes
+    print(f"\n{Fore.GREEN}■ Vert (Valeurs){Style.RESET_ALL}: Similarité < {threshold:.1%} (Algorithmes diversifiés)")
+    print(f"{Fore.RED}■ Rouge (Valeurs){Style.RESET_ALL}: Similarité ≥ {threshold:.1%} (Algorithmes redondants)")
+    print(f"\n\033[4m■ Souligné (Valeurs)\033[0m: Paires avec ≥ {min_common_trades} trades communs")
+    print(
+        f"\n{Fore.GREEN}■ Vert (Labels){Style.RESET_ALL}: A au moins 1 paire avec ≥ {min_common_trades} trades communs")
+    print(f"{Fore.RED}■ Rouge (Labels){Style.RESET_ALL}: Aucune paire avec ≥ {min_common_trades} trades communs")
+
+
+def analyze_global_redundancy(jaccard_matrix, threshold=None):
+    """Analyse globale de la redondance entre algorithmes."""
+    # Valeur par défaut si None
+    if threshold is None:
+        threshold = 0.5
+
+    redundant_pairs = []
+
+    for i in range(len(jaccard_matrix)):
+        for j in range(i + 1, len(jaccard_matrix)):
+            algo1 = jaccard_matrix.index[i]
+            algo2 = jaccard_matrix.columns[j]
+            similarity = jaccard_matrix.iloc[i, j]
+
+            if similarity >= threshold:
+                redundant_pairs.append((algo1, algo2, similarity))
+
+    if redundant_pairs:
+        print(f"\n{Fore.RED}⚠️  ALGORITHMES REDONDANTS GLOBAUX (Similarité ≥ {threshold:.1%}):{Style.RESET_ALL}")
+        print("=" * 100)
+        for algo1, algo2, sim in sorted(redundant_pairs, key=lambda x: x[2], reverse=True):
+            print(f"  {algo1} ↔ {algo2}: {Fore.RED}{sim:.1%}{Style.RESET_ALL}")
+
+        print(f"\n{Fore.YELLOW}💡 RECOMMANDATION:{Style.RESET_ALL}")
+        print(f"  Considérer éliminer {len(redundant_pairs)} paires redondantes pour optimiser la diversification")
+    else:
+        print(f"\n{Fore.GREEN}✓ Aucune redondance globale détectée (seuil: {threshold:.1%}){Style.RESET_ALL}")
+
+    # Statistiques de diversification
+    total_pairs = len(jaccard_matrix) * (len(jaccard_matrix) - 1) // 2
+    diversification_rate = (total_pairs - len(redundant_pairs)) / total_pairs * 100
+
+    print(f"\n{Fore.CYAN}📊 STATISTIQUES DE DIVERSIFICATION:{Style.RESET_ALL}")
+    print(f"  Nombre total d'algorithmes: {len(jaccard_matrix)}")
+    print(f"  Paires analysées: {total_pairs}")
+    print(f"  Paires redondantes: {len(redundant_pairs)}")
+    print(f"  Taux de diversification: {diversification_rate:.1f}%")
+
+    return redundant_pairs
+
+
+import os
+import pandas as pd
+from typing import Dict, Any
+
+
+def export_results_to_excel(results: Dict[str, Any], filename: str = "trading_analysis_results.xlsx",
+                            directory_path: str = "."):
+    """
+    Export des résultats vers Excel avec formatage, dans un répertoire spécifié.
+
+    Parameters:
+    - results : dict
+        Résultats à exporter.
+    - filename : str
+        Nom du fichier Excel.
+    - directory_path : str
+        Répertoire dans lequel enregistrer le fichier.
+    """
+    try:
+        # Assure que le répertoire existe
+        os.makedirs(directory_path, exist_ok=True)
+
+        # Construit le chemin complet du fichier
+        full_path = os.path.join(directory_path, filename)
+
+        with pd.ExcelWriter(full_path, engine='openpyxl') as writer:
+            # Sheet 1: Résumé global
+            summary_data = []
+            for df_name, data in results.items():
+                if data is not None:
+                    summary_data.append({
+                        'Dataset': df_name,
+                        'Nb_Sessions': data['total_sessions'],
+                        'Nb_Bougies': data['total_candles'],
+                        'Duree_Moyenne_s': round(data['avg_duration_overall'], 2),
+                        'Bougies_par_Session': round(data['avg_candles_per_session'], 1),
+                        'Volume_Moyen': round(data['volume_stats']['avg_volume_per_session'], 2),
+                        'Correlation_Duree_Volume': round(data['volume_stats']['duration_volume_correlation'], 3),
+                        'Periode_Debut': data['date_range'][0],
+                        'Periode_Fin': data['date_range'][1]
+                    })
+
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Résumé_Global', index=False)
+
+            # Sheets 2-N: Détails par dataset
+            for df_name, data in results.items():
+                if data is not None and 'session_stats' in data:
+                    session_data = data['session_stats'].copy()
+                    session_data.to_excel(writer, sheet_name=f'Détails_{df_name}', index=False)
+
+        print(f"✅ Résultats exportés vers : {full_path}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Erreur lors de l'export Excel : {e}")
+        return False
+
+
+
+
+from numba import njit
+@njit
+def compute_true_range_numba(highs, lows, closes,period_window=None):
+    n = len(highs)
+    atr_values = np.empty(n)
+    atr_values[:period_window-1] = np.nan  # ATR non défini pour les 9 premières valeurs
+
+    for i in range(period_window-1, n):
+        tr_sum = 0.0
+        count = 0
+        for j in range(i - period_window-1 + 1, i + 1):
+            tr1 = highs[j] - lows[j]
+            tr2 = abs(highs[j] - closes[j - 1])
+            tr3 = abs(lows[j] - closes[j - 1])
+            tr = max(tr1, tr2, tr3)
+            tr_sum += tr
+            count += 1
+        atr_values[i] = tr_sum / count if count > 0 else np.nan
+
+    return atr_values
+
+
+import logging
+from typing import Dict, Optional, Tuple, Any
+
+# Configuration du logging pour un meilleur suivi
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+def calculate_atr_10_periods(df_session: pd.DataFrame,period_window=None) -> pd.Series:
+    """
+    Calcule l'ATR sur x  périodes pour une session avec Numba pour accélération
+    """
+    if len(df_session) < period_window:
+        return pd.Series([np.nan] * len(df_session), index=df_session.index)
+
+    if all(col in df_session.columns for col in ['high', 'low', 'close']):
+        highs = df_session['high'].to_numpy()
+        lows = df_session['low'].to_numpy()
+        closes = df_session['close'].to_numpy()
+
+        atr_values = compute_true_range_numba(highs, lows, closes,period_window)
+    elif 'volume' in df_session.columns:
+        # Fallback: volatilité du volume
+        volume = df_session['volume'].to_numpy()
+        atr_values = np.full(len(volume), np.nan)
+        for i in range(period_window-1, len(volume)):
+            atr_values[i] = np.std(volume[i-period_window-1:i+1])
+    else:
+        atr_values = np.full(len(df_session), np.nan)
+
+    return pd.Series(atr_values, index=df_session.index)
+
+
+
+
+
+def calculate_extreme_contracts_metrics(df_session: pd.DataFrame) -> dict:
+    """
+    Calcule les métriques des contrats extrêmes pour une session
+
+    Parameters:
+    -----------
+    df_session : DataFrame
+        Données d'une session
+
+    Returns:
+    --------
+    dict : Dictionnaire avec les métriques des contrats extrêmes
+    """
+    extreme_cols = [
+        'delta_impulsMove_XRevZone_bigStand_extrem',
+        'delta_revMove_XRevZone_bigStand_extrem'
+    ]
+
+    # Vérifier si les colonnes existent
+    available_cols = [col for col in extreme_cols if col in df_session.columns]
+
+    if not available_cols:
+        return {
+            'extreme_sum_with_zeros': np.nan,
+            'extreme_sum_without_zeros': np.nan,
+            'extreme_count_nonzero': 0,
+            'extreme_ratio': np.nan
+        }
+
+    # Calculer la somme des valeurs absolues
+    df_work = df_session[available_cols].fillna(0)
+    extreme_sums = df_work.abs().sum(axis=1)
+
+    # Métriques avec zéros inclus (toutes les bougies)
+    extreme_with_zeros = extreme_sums.mean()
+
+    # Métriques sans zéros (seulement les bougies avec contrats extrêmes)
+    nonzero_sums = extreme_sums[extreme_sums > 0]
+    extreme_without_zeros = nonzero_sums.mean() if len(nonzero_sums) > 0 else np.nan
+
+    # Comptage et ratio
+    extreme_count_nonzero = len(nonzero_sums)
+    extreme_ratio = extreme_count_nonzero / len(extreme_sums) if len(extreme_sums) > 0 else 0
+
+    return {
+        'extreme_sum_with_zeros': extreme_with_zeros,
+        'extreme_sum_without_zeros': extreme_without_zeros,
+        'extreme_count_nonzero': extreme_count_nonzero,
+        'extreme_ratio': extreme_ratio
+    }
+
+
+def calculate_volume_above_metrics(df_session: pd.DataFrame,xtickReversalTickPrice=None) -> dict:
+    """
+    Calcule les métriques des volumes above normalisés par tick pour une session
+
+    Parameters:
+    -----------
+    df_session : DataFrame
+        Données d'une session
+
+    Returns:
+    --------
+    dict : Dictionnaire avec les métriques des volumes above par tick
+    """
+    required_cols = ['VolAbv', 'candleDir']
+
+    # Vérifier si les colonnes existent
+    available_cols = [col for col in required_cols if col in df_session.columns]
+
+    if len(available_cols) != 2:
+        return {
+            'volume_above_per_tick_mean': np.nan,
+            'volume_above_count': 0,
+            'volume_above_ratio': np.nan
+        }
+
+    # Filtrer : VolAbv > 0 ET candleDir = -1
+    filtered_df = df_session[
+        (df_session['VolAbv'] > 0) &
+        (df_session['candleDir'] == -1)
+        ].copy()
+
+    if len(filtered_df) == 0:
+        return {
+            'volume_above_per_tick_mean': np.nan,
+            'volume_above_count': 0,
+            'volume_above_ratio': 0
+        }
+
+    # Normaliser avec la constante globale : Volume above par tick
+    filtered_df['volume_above_per_tick'] = filtered_df['VolAbv'] / xtickReversalTickPrice
+
+    # Calculer les métriques
+    volume_above_per_tick_mean = filtered_df['volume_above_per_tick'].mean()
+    volume_above_count = len(filtered_df)
+    volume_above_ratio = volume_above_count / len(df_session) if len(df_session) > 0 else 0
+
+    return {
+        'volume_above_per_tick_mean': volume_above_per_tick_mean,
+        'volume_above_count': volume_above_count,
+        'volume_above_ratio': volume_above_ratio
+    }
+
+def filter_data_by_session_group(df: pd.DataFrame, session_group: list, df_name: str) -> pd.DataFrame:
+    """
+    Filtre les données par groupe de sessions intraday
+
+    Parameters:
+    -----------
+    df : DataFrame
+        Données à filtrer
+    session_group : list
+        Liste des indices de sessions à conserver
+    df_name : str
+        Nom du dataset pour les logs
+
+    Returns:
+    --------
+    DataFrame : Données filtrées
+    """
+    if 'deltaCustomSessionIndex' not in df.columns:
+        logger.warning(f"⚠️ {df_name}: Colonne 'deltaCustomSessionIndex' non trouvée, retour données complètes")
+        return df
+
+    # Filtrer par groupe de sessions
+    filtered_df = df[df['deltaCustomSessionIndex'].isin(session_group)].copy()
+
+    logger.info(f"📊 {df_name}: {len(filtered_df)}/{len(df)} lignes conservées pour sessions {session_group}")
+    return filtered_df
+
+
+def calculate_session_metrics_enhanced(df: pd.DataFrame, df_name: str,xtickReversalTickPrice=None,period_atr_stat_session=None) -> pd.DataFrame:
+    """
+    Calcul des métriques par session avec gestion d'erreurs améliorée.
+    Inclut ATR, contrats extrêmes et volumes above par tick.
+    """
+    try:
+        # Copie de travail
+        df_work = df.copy()
+
+        # Conversion et nettoyage des données
+        numeric_columns = ['candleDuration', 'volume']
+        for col in numeric_columns:
+            df_work[col] = pd.to_numeric(df_work[col], errors='coerce')
+
+        # Conversion des dates avec gestion d'erreurs
+        if not pd.api.types.is_datetime64_any_dtype(df_work['timeStampOpeningConvertedtoDate']):
+            df_work['timeStampOpeningConvertedtoDate'] = pd.to_datetime(
+                df_work['timeStampOpeningConvertedtoDate'],
+                infer_datetime_format=True,
+                errors='coerce'
+            )
+
+        # Suppression des lignes invalides
+        before_cleaning = len(df_work)
+        df_work = df_work.dropna(subset=['timeStampOpeningConvertedtoDate', 'session_id', 'candleDuration', 'volume'])
+        after_cleaning = len(df_work)
+        if after_cleaning < before_cleaning:
+            logger.warning(f"{df_name}: {before_cleaning - after_cleaning} lignes supprimées lors du nettoyage")
+        if len(df_work) == 0:
+            raise ValueError(f"Aucune donnée valide dans {df_name} après nettoyage")
+
+        # Dates de session
+        session_dates = df_work.groupby('session_id')['timeStampOpeningConvertedtoDate'].min() + pd.Timedelta(days=1)
+        df_work['session_date'] = df_work['session_id'].map(session_dates.to_dict())
+
+        # Calcul des métriques classiques
+        agg_functions = {
+            'candleDuration': ['mean', 'median', 'std', 'count', 'min', 'max'],
+            'volume': ['mean', 'median', 'std', 'sum', 'min', 'max']
+        }
+        session_stats = df_work.groupby('session_id').agg(agg_functions)
+        session_stats.columns = ['_'.join(col).strip() for col in session_stats.columns]
+        session_stats = session_stats.reset_index()
+
+        # Renommage
+        column_mapping = {
+            'candleDuration_mean': 'duration_mean',
+            'candleDuration_median': 'duration_median',
+            'candleDuration_std': 'duration_std',
+            'candleDuration_count': 'candle_count',
+            'candleDuration_min': 'duration_min',
+            'candleDuration_max': 'duration_max',
+            'volume_mean': 'volume_mean',
+            'volume_median': 'volume_median',
+            'volume_std': 'volume_std',
+            'volume_sum': 'volume_sum',
+            'volume_min': 'volume_min',
+            'volume_max': 'volume_max'
+        }
+        session_stats = session_stats.rename(columns=column_mapping)
+        session_stats['session_date'] = session_stats['session_id'].map(session_dates.to_dict())
+        session_stats['dataset'] = df_name
+
+        # Calcul des métriques ATR, extrêmes et volumes above
+        atr_stats = []
+        extreme_stats = []
+        volume_above_stats = []
+        logger.info(
+            f"🔄 Calcul des métriques ATR, contrats extrêmes et volumes above par tick pour {len(session_stats)} sessions...")
+
+        for session_id in session_stats['session_id']:
+            session_data = df_work[df_work['session_id'] == session_id].sort_values('timeStampOpeningConvertedtoDate')
+
+            # ATR
+            try:
+                atr_series = calculate_atr_10_periods(session_data, period_window=period_atr_stat_session)
+                atr_mean = atr_series.dropna().mean() if not atr_series.dropna().empty else np.nan
+            except Exception as e:
+                logger.warning(f"Erreur calcul ATR pour session {session_id}: {e}")
+                atr_mean = np.nan
+            atr_stats.append(atr_mean)
+
+            # Contrats extrêmes
+            try:
+                extreme_metrics = calculate_extreme_contracts_metrics(session_data)
+            except Exception as e:
+                logger.warning(f"Erreur calcul contrats extrêmes pour session {session_id}: {e}")
+                extreme_metrics = {
+                    'extreme_sum_with_zeros': np.nan,
+                    'extreme_sum_without_zeros': np.nan,
+                    'extreme_count_nonzero': 0,
+                    'extreme_ratio': np.nan
+                }
+            extreme_stats.append(extreme_metrics)
+
+            # NOUVEAU: Volumes above par tick
+            try:
+                volume_above_metrics = calculate_volume_above_metrics(session_data,xtickReversalTickPrice=xtickReversalTickPrice)
+            except Exception as e:
+                logger.warning(f"Erreur calcul volumes above pour session {session_id}: {e}")
+                volume_above_metrics = {
+                    'volume_above_per_tick_mean': np.nan,
+                    'volume_above_count': 0,
+                    'volume_above_ratio': np.nan
+                }
+            volume_above_stats.append(volume_above_metrics)
+
+        # Intégration des métriques
+        session_stats['atr_mean'] = atr_stats
+        session_stats['extreme_with_zeros'] = [s['extreme_sum_with_zeros'] for s in extreme_stats]
+        session_stats['extreme_without_zeros'] = [s['extreme_sum_without_zeros'] for s in extreme_stats]
+        session_stats['extreme_count_nonzero'] = [s['extreme_count_nonzero'] for s in extreme_stats]
+        session_stats['extreme_ratio'] = [s['extreme_ratio'] for s in extreme_stats]
+
+        # NOUVEAU: Intégration volumes above par tick
+        session_stats['volume_above_per_tick_mean'] = [s['volume_above_per_tick_mean'] for s in volume_above_stats]
+        session_stats['volume_above_count'] = [s['volume_above_count'] for s in volume_above_stats]
+        session_stats['volume_above_ratio'] = [s['volume_above_ratio'] for s in volume_above_stats]
+
+        logger.info(f"✅ Métriques calculées pour {df_name}: {len(session_stats)} sessions traitées")
+        return session_stats
+
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du calcul des métriques pour {df_name}: {e}")
+        raise
+
+
+def setup_plotting_style():
+    """Configuration optimisée du style des graphiques"""
+    plt.style.use('default')
+    sns.set_palette("husl")
+    plt.rcParams.update({
+        'figure.dpi': 100,
+        'savefig.dpi': 300,
+        'font.size': 10,
+        'axes.titlesize': 12,
+        'axes.labelsize': 10,
+        'xtick.labelsize': 9,
+        'ytick.labelsize': 9,
+        'legend.fontsize': 9
+    })
+
+
+def validate_dataframe_structure(df: pd.DataFrame, df_name: str, required_columns: list) -> Dict[str, Any]:
+    """
+    Validation complète de la structure d'un DataFrame
+
+    Returns:
+        Dict contenant les résultats de validation
+    """
+    validation_results = {
+        'is_valid': True,
+        'missing_columns': [],
+        'data_types': {},
+        'null_counts': {},
+        'shape': df.shape,
+        'warnings': []
+    }
+
+    # Vérifier les colonnes manquantes
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    validation_results['missing_columns'] = missing_columns
+
+    if missing_columns:
+        validation_results['is_valid'] = False
+        logger.error(f"Colonnes manquantes dans {df_name}: {missing_columns}")
+        return validation_results
+
+    # Analyser les types de données et valeurs nulles
+    for col in required_columns:
+        validation_results['data_types'][col] = str(df[col].dtype)
+        validation_results['null_counts'][col] = df[col].isnull().sum()
+
+        # Avertissements spécifiques par colonne
+        null_pct = (df[col].isnull().sum() / len(df)) * 100
+        if null_pct > 10:
+            validation_results['warnings'].append(
+                f"Colonne {col}: {null_pct:.1f}% de valeurs nulles"
+            )
+
+    # Vérifications spécifiques pour les colonnes critiques
+    if 'session_id' in df.columns:
+        unique_sessions = df['session_id'].nunique()
+        total_rows = len(df)
+        if unique_sessions < 2:
+            validation_results['warnings'].append(
+                f"Seulement {unique_sessions} session(s) unique(s) détectée(s)"
+            )
+        if total_rows / unique_sessions < 5:
+            validation_results['warnings'].append(
+                f"Peu de données par session: {total_rows / unique_sessions:.1f} lignes/session en moyenne"
+            )
+
+    return validation_results
+
+
+
+
+def print_enhanced_summary_statistics_with_sessions(valid_results,groupe1,groupe2,xtickReversalTickPrice=None):
+    """
+    Affiche le résumé statistique enrichi avec analyse par sessions intraday et volumes above par tick
+    """
+    print("\n" + "=" * 80)
+    print("📋 RÉSUMÉ STATISTIQUE AVEC SESSIONS INTRADAY (ATR + CONTRATS EXTRÊMES + VOLUMES ABOVE PAR TICK)")
+    print("=" * 80)
+
+    for df_name, data in valid_results.items():
+        print(f"\n📊 {df_name.upper()}")
+        print("-" * 60)
+
+        # Données globales
+        print(f"🌍 DONNÉES GLOBALES:")
+        print(f"   📅 Période: {data['date_range'][0]} → {data['date_range'][1]}")
+        print(f"   🎯 Nombre de sessions: {data['total_sessions']}")
+        print(f"   ⏱️  Durée moyenne globale: {data['avg_duration_overall']:.2f}s")
+
+        # Analyse par groupes de sessions
+        if 'session_data_by_group' in data:
+            print(f"\n🔍 ANALYSE PAR SESSIONS INTRADAY:")
+
+            for group_label, session_indices in [("GROUPE 1", groupe1), ("GROUPE 2", groupe2)]:
+                group_key = str(session_indices)
+                if group_key in data['session_data_by_group'] and data['session_data_by_group'][group_key] is not None:
+                    group_data = data['session_data_by_group'][group_key]
+
+                    print(f"\n   📊 {group_label} (Sessions {session_indices}):")
+                    print(f"      🎯 Sessions analysées: {group_data['total_sessions']}")
+                    print(f"      ⏱️  Durée moyenne: {group_data['avg_duration_overall']:.2f}s")
+                    print(f"      📈 Volume moyen/session: {group_data['volume_stats']['avg_volume_per_session']:.2f}")
+
+                    # ATR pour ce groupe
+                    if group_data['atr_stats']['sessions_with_atr'] > 0:
+                        print(f"      📊 ATR moyen: {group_data['atr_stats']['atr_overall_mean']:.4f}")
+                        print(
+                            f"      🔗 Corrélation ATR-Durée: {group_data['atr_stats']['atr_duration_correlation']:.3f}")
+                    else:
+                        print(f"      ⚠️  Pas de données ATR valides")
+
+                    # Contrats extrêmes pour ce groupe
+                    if group_data['extreme_contracts_stats']['sessions_with_extreme_contracts'] > 0:
+                        print(
+                            f"      🎯 Contrats extrêmes (sans zéros): {group_data['extreme_contracts_stats']['extreme_without_zeros_mean']:.4f}")
+                        print(
+                            f"      📊 Ratio contrats extrêmes: {group_data['extreme_contracts_stats']['extreme_ratio_mean']:.3f}")
+                    else:
+                        print(f"      ⚠️  Pas de contrats extrêmes")
+
+                    # NOUVEAU: Volumes above par tick pour ce groupe
+                    if group_data['volume_above_per_tick_stats']['sessions_with_volume_above'] > 0:
+                        print(
+                            f"      📊 Volume above par tick moyen: {group_data['volume_above_per_tick_stats']['volume_above_per_tick_overall_mean']:.4f}")
+                        print(
+                            f"      📊 Ratio bougies volume above: {group_data['volume_above_per_tick_stats']['volume_above_ratio_mean']:.3f}")
+                    else:
+                        print(f"      ⚠️  Pas de volumes above par tick")
+
+                else:
+                    print(f"\n   📊 {group_label} (Sessions {session_indices}):")
+                    print(f"      ⚠️  Aucune donnée disponible")
+                    exit(32)
+
+        # Comparaison entre groupes incluant volumes above par tick
+        print(f"\n💡 COMPARAISON ENTRE SESSIONS:")
+        global_duration = data['avg_duration_overall']
+        global_volume_above = data['volume_above_per_tick_stats']['volume_above_per_tick_overall_mean'] if not pd.isna(
+            data['volume_above_per_tick_stats']['volume_above_per_tick_overall_mean']) else None
+
+        if 'session_data_by_group' in data:
+            for group_label, session_indices in [("GROUPE 1", groupe1), ("GROUPE 2", groupe2)]:
+                group_key = str(session_indices)
+                if group_key in data['session_data_by_group'] and data['session_data_by_group'][group_key] is not None:
+                    group_duration = data['session_data_by_group'][group_key]['avg_duration_overall']
+                    diff_pct = ((group_duration - global_duration) / global_duration * 100)
+                    trend = "📈 plus lent" if diff_pct > 5 else "📉 plus rapide" if diff_pct < -5 else "📊 similaire"
+                    print(f"   {group_label}: {trend} que la moyenne globale ({diff_pct:+.1f}%)")
+
+                    # Comparaison volumes above par tick
+                    if global_volume_above is not None:
+                        group_volume_above = data['session_data_by_group'][group_key]['volume_above_per_tick_stats'][
+                            'volume_above_per_tick_overall_mean']
+                        if not pd.isna(group_volume_above):
+                            vol_diff_pct = ((group_volume_above - global_volume_above) / global_volume_above * 100)
+                            vol_trend = "📈 plus élevé" if vol_diff_pct > 10 else "📉 plus faible" if vol_diff_pct < -10 else "📊 similaire"
+                            print(f"      Volume above par tick: {vol_trend} ({vol_diff_pct:+.1f}%)")
+
+        print("-" * 60)
+
+    print("\n" + "=" * 80)
+    print("📊 LÉGENDE DES SESSIONS INTRADAY")
+    print("=" * 80)
+    print(f"🌍 GLOBAL: Toutes les sessions confondues")
+    print(f"🌅 GROUPE 1 (Sessions {groupe1}): Sessions de trading matinales/Asie")
+    print(f"🌍 GROUPE 2 (Sessions {groupe2}): Sessions Europe/US étendues")
+    print(f"📊 Volume Above par Tick: VolAbv/{xtickReversalTickPrice} pour candleDir=-1")
+    print("=" * 80)
+
+
+XTICKREVERAL_TICKPRICE = 10  # Nombre de ticks dans la zone above
+PERDIOD_ATR_SESSION_ANALYSE=15
+def create_enhanced_visualizations_with_sessions(results: Dict[str, Any], save_plots: bool = False,
+                                                 output_dir: str = ".", groupe1=None,
+    groupe2=None,period_atr_stat_session=None):
+    """
+    Création de 5 visualisations avec segmentation par sessions intraday
+    Chaque figure contient 3 graphiques : Global, Session Groupe 1, Session Groupe 2
+    """
+    setup_plotting_style()
+
+    if not results:
+        raise ValueError("Aucune donnée à visualiser")
+
+    valid_results = {k: v for k, v in results.items() if v is not None}
+    n_datasets = len(valid_results)
+    colors = plt.cm.Set1(np.linspace(0, 1, n_datasets))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # =============================================================================
+    # FIGURE 1: Évolutions temporelles avec sessions (3 lignes × 3 graphiques)
+    # =============================================================================
+    fig1, axes1 = plt.subplots(3, 3, figsize=(24, 18))
+    fig1.suptitle('📊 ÉVOLUTIONS TEMPORELLES PAR SESSIONS INTRADAY', fontsize=16, fontweight='bold')
+
+    session_groups = [
+        ("GLOBAL", None, "Toutes sessions"),
+        (f"SESSIONS {groupe1}", groupe1, f"Sessions {groupe1}"),
+        (f"SESSIONS {groupe2}", groupe2, f"Sessions {groupe2}")
+    ]
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        # Durée moyenne
+        ax_dur = axes1[row_idx, 0]
+        # Volume moyen
+        ax_vol = axes1[row_idx, 1]
+        # Nombre de bougies
+        ax_count = axes1[row_idx, 2]
+
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            # Filtrer les données si nécessaire
+            if session_filter is not None:
+                # Utiliser les données filtrées par session
+                if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                    session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                else:
+                    continue  # Pas de données pour ce groupe
+            else:
+                session_stats = data['session_stats']
+
+            if len(session_stats) == 0:
+                continue
+
+            session_stats = session_stats.sort_values('session_date')
+            color = colors[idx]
+
+            # Durée
+            ax_dur.plot(session_stats['session_date'], session_stats['duration_mean'],
+                        marker='o', label=f'{df_name}', linewidth=2, markersize=4, color=color, alpha=0.8)
+            if len(session_stats) > 1:
+                x_numeric = range(len(session_stats))
+                z = np.polyfit(x_numeric, session_stats['duration_mean'], 1)
+                p = np.poly1d(z)
+                ax_dur.plot(session_stats['session_date'], p(x_numeric), "--", color=color, alpha=0.6, linewidth=1.5)
+
+            # Volume
+            ax_vol.plot(session_stats['session_date'], session_stats['volume_mean'],
+                        marker='s', label=f'{df_name}', linewidth=2, markersize=4, color=color, alpha=0.8)
+            if len(session_stats) > 1:
+                z_vol = np.polyfit(x_numeric, session_stats['volume_mean'], 1)
+                p_vol = np.poly1d(z_vol)
+                ax_vol.plot(session_stats['session_date'], p_vol(x_numeric), "--", color=color, alpha=0.6,
+                            linewidth=1.5)
+
+            # Nombre de bougies
+            ax_count.plot(session_stats['session_date'], session_stats['candle_count'],
+                          marker='^', label=f'{df_name}', linewidth=2, markersize=4, color=color, alpha=0.8)
+            if len(session_stats) > 1:
+                z_count = np.polyfit(x_numeric, session_stats['candle_count'], 1)
+                p_count = np.poly1d(z_count)
+                ax_count.plot(session_stats['session_date'], p_count(x_numeric), "--", color=color, alpha=0.6,
+                              linewidth=1.5)
+
+        # Configuration des axes
+        ax_dur.set_title(f'📈 Durée Moyenne - {group_desc}', fontweight='bold')
+        ax_dur.set_ylabel('Durée Moyenne (s)')
+        ax_dur.legend()
+        ax_dur.grid(True, alpha=0.3)
+        ax_dur.tick_params(axis='x', rotation=45)
+
+        ax_vol.set_title(f'📊 Volume Moyen - {group_desc}', fontweight='bold')
+        ax_vol.set_ylabel('Volume Moyen')
+        ax_vol.legend()
+        ax_vol.grid(True, alpha=0.3)
+        ax_vol.tick_params(axis='x', rotation=45)
+
+        ax_count.set_title(f'📊 Nombre de Bougies - {group_desc}', fontweight='bold')
+        ax_count.set_ylabel('Nombre de Bougies')
+        ax_count.legend()
+        ax_count.grid(True, alpha=0.3)
+        ax_count.tick_params(axis='x', rotation=45)
+
+        if row_idx == 2:  # Dernière ligne
+            ax_dur.set_xlabel('Date de Session')
+            ax_vol.set_xlabel('Date de Session')
+            ax_count.set_xlabel('Date de Session')
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_temporal_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # =============================================================================
+    # FIGURE 2: Distributions des DURÉES par sessions (3 lignes)
+    # =============================================================================
+    fig2, axes2 = plt.subplots(3, min(4, len(valid_results)), figsize=(6 * min(4, len(valid_results)), 18))
+    if len(valid_results) == 1:
+        axes2 = axes2.reshape(-1, 1)
+    fig2.suptitle('⏱️ DISTRIBUTIONS DES DURÉES PAR SESSIONS INTRADAY', fontsize=16, fontweight='bold')
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            if idx < 4:  # Limite à 4 datasets
+                ax = axes2[row_idx, idx] if len(valid_results) > 1 else axes2[row_idx]
+
+                # Filtrer les données si nécessaire
+                if session_filter is not None:
+                    if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                        session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                    else:
+                        ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center',
+                                va='center')
+                        ax.set_title(f'⏱️ {df_name} - {group_desc}', fontweight='bold')
+                        continue
+                else:
+                    session_stats = data['session_stats']
+
+                if len(session_stats) == 0:
+                    ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center', va='center')
+                    ax.set_title(f'⏱️ {df_name} - {group_desc}', fontweight='bold')
+                    continue
+
+                duration_data = session_stats['duration_mean']
+
+                ax.hist(duration_data, bins=min(15, len(session_stats)),
+                        color=colors[idx], alpha=0.6, edgecolor='black', linewidth=0.5)
+
+                p25 = np.percentile(duration_data, 25)
+                p50 = np.percentile(duration_data, 50)
+                p75 = np.percentile(duration_data, 75)
+
+                ax.axvline(p25, color='red', linestyle='--', linewidth=2, alpha=0.8, label=f'P25: {p25:.1f}s')
+                ax.axvline(p50, color='orange', linestyle='--', linewidth=2, alpha=0.8, label=f'P50: {p50:.1f}s')
+                ax.axvline(p75, color='green', linestyle='--', linewidth=2, alpha=0.8, label=f'P75: {p75:.1f}s')
+
+                ax.set_title(f'⏱️ {df_name} - {group_desc}', fontweight='bold')
+                ax.set_xlabel('Durée Moyenne (s)')
+                ax.set_ylabel('Fréquence')
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
+
+        # Masquer les axes non utilisés
+        if len(valid_results) < 4:
+            for idx in range(len(valid_results), 4):
+                if len(valid_results) > 1 and axes2.shape[1] > idx:
+                    axes2[row_idx, idx].set_visible(False)
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_durations_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # =============================================================================
+    # FIGURE 3: Distributions des VOLUMES par sessions (3 lignes)
+    # =============================================================================
+    fig3, axes3 = plt.subplots(3, min(4, len(valid_results)), figsize=(6 * min(4, len(valid_results)), 18))
+    if len(valid_results) == 1:
+        axes3 = axes3.reshape(-1, 1)
+    fig3.suptitle('📊 DISTRIBUTIONS DES VOLUMES PAR SESSIONS INTRADAY', fontsize=16, fontweight='bold')
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            if idx < 4:
+                ax = axes3[row_idx, idx] if len(valid_results) > 1 else axes3[row_idx]
+
+                # Filtrer les données si nécessaire
+                if session_filter is not None:
+                    if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                        session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                    else:
+                        ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center',
+                                va='center')
+                        ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+                        continue
+                else:
+                    session_stats = data['session_stats']
+
+                if len(session_stats) == 0:
+                    ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center', va='center')
+                    ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+                    continue
+
+                volume_data = session_stats['volume_mean']
+
+                ax.hist(volume_data, bins=min(15, len(session_stats)),
+                        color=colors[idx], alpha=0.6, edgecolor='black', linewidth=0.5)
+
+                v25 = np.percentile(volume_data, 25)
+                v50 = np.percentile(volume_data, 50)
+                v75 = np.percentile(volume_data, 75)
+
+                ax.axvline(v25, color='red', linestyle='--', linewidth=2, alpha=0.8, label=f'P25: {v25:.1f}')
+                ax.axvline(v50, color='orange', linestyle='--', linewidth=2, alpha=0.8, label=f'P50: {v50:.1f}')
+                ax.axvline(v75, color='green', linestyle='--', linewidth=2, alpha=0.8, label=f'P75: {v75:.1f}')
+
+                ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+                ax.set_xlabel('Volume Moyen')
+                ax.set_ylabel('Fréquence')
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
+
+        # Masquer les axes non utilisés
+        if len(valid_results) < 4:
+            for idx in range(len(valid_results), 4):
+                if len(valid_results) > 1 and axes3.shape[1] > idx:
+                    axes3[row_idx, idx].set_visible(False)
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_volumes_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # =============================================================================
+    # FIGURE 4: Distributions de l'ATR par sessions (3 lignes)
+    # =============================================================================
+    fig4, axes4 = plt.subplots(3, min(4, len(valid_results)), figsize=(6 * min(4, len(valid_results)), 18))
+    if len(valid_results) == 1:
+        axes4 = axes4.reshape(-1, 1)
+    fig4.suptitle(f'📈 DISTRIBUTIONS ATR {period_atr_stat_session} PAR SESSIONS INTRADAY', fontsize=16,
+                  fontweight='bold')
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            if idx < 4:
+                ax = axes4[row_idx, idx] if len(valid_results) > 1 else axes4[row_idx]
+
+                # Filtrer les données si nécessaire
+                if session_filter is not None:
+                    if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                        session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                    else:
+                        ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center',
+                                va='center')
+                        ax.set_title(f'📈 {df_name} - {group_desc}', fontweight='bold')
+                        continue
+                else:
+                    session_stats = data['session_stats']
+
+                if len(session_stats) == 0:
+                    ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center', va='center')
+                    ax.set_title(f'📈 {df_name} - {group_desc}', fontweight='bold')
+                    continue
+
+                atr_data = session_stats['atr_mean'].dropna()
+
+                if len(atr_data) > 0:
+                    ax.hist(atr_data, bins=min(15, len(atr_data)),
+                            color=colors[idx], alpha=0.6, edgecolor='black', linewidth=0.5)
+
+                    atr_p25 = np.percentile(atr_data, 25)
+                    atr_p50 = np.percentile(atr_data, 50)
+                    atr_p75 = np.percentile(atr_data, 75)
+
+                    ax.axvline(atr_p25, color='red', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P25: {atr_p25:.3f}')
+                    ax.axvline(atr_p50, color='orange', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P50: {atr_p50:.3f}')
+                    ax.axvline(atr_p75, color='green', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P75: {atr_p75:.3f}')
+
+                    ax.set_xlabel('ATR Moyen par Session')
+                    ax.set_ylabel('Fréquence')
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
+                else:
+                    ax.text(0.5, 0.5, 'Pas de données\nATR valides', transform=ax.transAxes, ha='center', va='center')
+
+                ax.set_title(f'📈 {df_name} - {group_desc}', fontweight='bold')
+
+        # Masquer les axes non utilisés
+        if len(valid_results) < 4:
+            for idx in range(len(valid_results), 4):
+                if len(valid_results) > 1 and axes4.shape[1] > idx:
+                    axes4[row_idx, idx].set_visible(False)
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_atr_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # =============================================================================
+    # FIGURE 5: Distributions des contrats extrêmes par sessions (3 lignes)
+    # =============================================================================
+    fig5, axes5 = plt.subplots(3, min(4, len(valid_results)), figsize=(6 * min(4, len(valid_results)), 18))
+    if len(valid_results) == 1:
+        axes5 = axes5.reshape(-1, 1)
+    fig5.suptitle('🎯 DISTRIBUTIONS CONTRATS EXTRÊMES (SANS ZÉROS) PAR SESSIONS INTRADAY', fontsize=16,
+                  fontweight='bold')
+
+    session_groups = [
+        ("GLOBAL", None, "Toutes sessions"),
+        (f"SESSIONS {groupe1}", groupe1, f"Sessions {groupe1}"),
+        (f"SESSIONS {groupe2}", groupe2, f"Sessions {groupe2}")
+    ]
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            if idx < 4:
+                ax = axes5[row_idx, idx] if len(valid_results) > 1 else axes5[row_idx]
+
+                # Filtrer les données si nécessaire
+                if session_filter is not None:
+                    if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                        session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                    else:
+                        ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center',
+                                va='center')
+                        ax.set_title(f'🎯 {df_name} - {group_desc}', fontweight='bold')
+                        continue
+                else:
+                    session_stats = data['session_stats']
+
+                if len(session_stats) == 0:
+                    ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center', va='center')
+                    ax.set_title(f'🎯 {df_name} - {group_desc}', fontweight='bold')
+                    continue
+
+                # Utiliser les données des contrats extrêmes SANS zéros
+                contracts_data = session_stats['extreme_without_zeros'].dropna()
+
+                if len(contracts_data) > 0:
+                    ax.hist(contracts_data, bins=min(15, len(contracts_data)),
+                            color=colors[idx], alpha=0.6, edgecolor='black', linewidth=0.5)
+
+                    cnz_p25 = np.percentile(contracts_data, 25)
+                    cnz_p50 = np.percentile(contracts_data, 50)
+                    cnz_p75 = np.percentile(contracts_data, 75)
+
+                    ax.axvline(cnz_p25, color='red', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P25: {cnz_p25:.3f}')
+                    ax.axvline(cnz_p50, color='orange', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P50: {cnz_p50:.3f}')
+                    ax.axvline(cnz_p75, color='green', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P75: {cnz_p75:.3f}')
+
+                    ax.set_xlabel('Moyenne Contrats Extrêmes (sans zéros)')
+                    ax.set_ylabel('Fréquence')
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
+                else:
+                    ax.text(0.5, 0.5, 'Pas de données\ncontrats non-zéro', transform=ax.transAxes, ha='center',
+                            va='center', fontsize=12)
+
+                ax.set_title(f'🎯 {df_name} - {group_desc}', fontweight='bold')
+
+        # Masquer les axes non utilisés pour cette ligne
+        if len(valid_results) < 4:
+            for idx in range(len(valid_results), 4):
+                if len(valid_results) > 1 and axes5.shape[1] > idx:
+                    axes5[row_idx, idx].set_visible(False)
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_extreme_contracts_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+ # =============================================================================
+    # FIGURE 6: Distributions des volumes above par tick par sessions (3 lignes)
+    # =============================================================================
+    fig6, axes6 = plt.subplots(3, min(4, len(valid_results)), figsize=(6 * min(4, len(valid_results)), 18))
+    if len(valid_results) == 1:
+        axes6 = axes6.reshape(-1, 1)
+    fig6.suptitle('📊 DISTRIBUTIONS VOLUME ABOVE PAR TICK PAR SESSIONS INTRADAY', fontsize=16,
+                  fontweight='bold')
+
+    session_groups = [
+        ("GLOBAL", None, "Toutes sessions"),
+        (f"SESSIONS {groupe1}", groupe1, f"Sessions {groupe1}"),
+        (f"SESSIONS {groupe2}", groupe2, f"Sessions {groupe2}")
+    ]
+
+    for row_idx, (group_title, session_filter, group_desc) in enumerate(session_groups):
+        for idx, (df_name, data) in enumerate(valid_results.items()):
+            if idx < 4:
+                ax = axes6[row_idx, idx] if len(valid_results) > 1 else axes6[row_idx]
+
+                # Filtrer les données si nécessaire
+                if session_filter is not None:
+                    if 'session_data_by_group' in data and str(session_filter) in data['session_data_by_group']:
+                        session_stats = data['session_data_by_group'][str(session_filter)]['session_stats']
+                    else:
+                        ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center',
+                                va='center')
+                        ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+                        continue
+                else:
+                    session_stats = data['session_stats']
+
+                if len(session_stats) == 0:
+                    ax.text(0.5, 0.5, f'Pas de données\n{group_desc}', transform=ax.transAxes, ha='center', va='center')
+                    ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+                    continue
+
+                # Utiliser les données des volumes above par tick
+                volume_above_data = session_stats['volume_above_per_tick_mean'].dropna()
+
+                if len(volume_above_data) > 0:
+                    ax.hist(volume_above_data, bins=min(15, len(volume_above_data)),
+                            color=colors[idx], alpha=0.6, edgecolor='black', linewidth=0.5)
+
+                    va_p25 = np.percentile(volume_above_data, 25)
+                    va_p50 = np.percentile(volume_above_data, 50)
+                    va_p75 = np.percentile(volume_above_data, 75)
+
+                    ax.axvline(va_p25, color='red', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P25: {va_p25:.3f}')
+                    ax.axvline(va_p50, color='orange', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P50: {va_p50:.3f}')
+                    ax.axvline(va_p75, color='green', linestyle='--', linewidth=2, alpha=0.8,
+                               label=f'P75: {va_p75:.3f}')
+
+                    ax.set_xlabel('Volume Above Moyen par Tick')
+                    ax.set_ylabel('Fréquence')
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
+                else:
+                    ax.text(0.5, 0.5, 'Pas de données\nvolume above valides', transform=ax.transAxes, ha='center',
+                            va='center', fontsize=12)
+
+                ax.set_title(f'📊 {df_name} - {group_desc}', fontweight='bold')
+
+        # Masquer les axes non utilisés pour cette ligne
+        if len(valid_results) < 4:
+            for idx in range(len(valid_results), 4):
+                if len(valid_results) > 1 and axes6.shape[1] > idx:
+                    axes6[row_idx, idx].set_visible(False)
+
+    plt.tight_layout()
+    if save_plots:
+        plt.savefig(f"{output_dir}/trading_volume_above_per_tick_sessions_{timestamp}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+def run_enhanced_trading_analysis_with_sessions(
+    df_init_features_train=None,
+    df_init_features_test=None,
+    df_init_features_val1=None,
+    df_init_features_val=None,
+    groupe1=None,
+    groupe2=None,xtickReversalTickPrice=None,period_atr_stat_session=None) -> Dict[str, Any]:
+    """
+    Version améliorée avec analyse par sessions intraday et volumes above par tick
+    """
+    logger.info("🚀 Démarrage de l'analyse trading avec sessions intraday")
+
+    # Filtrer les DataFrames non-None
+    dataframes = {
+        'df_init_features_train': df_init_features_train,
+        'df_init_features_test': df_init_features_test,
+        'df_init_features_val1': df_init_features_val1,
+        'df_init_features_val': df_init_features_val
+    }
+    valid_dataframes = {k: v for k, v in dataframes.items() if v is not None}
+
+    if not valid_dataframes:
+        raise ValueError("Aucun DataFrame fourni pour l'analyse")
+
+    results = {}
+    required_columns = ['timeStampOpeningConvertedtoDate', 'session_id', 'candleDuration', 'volume']
+
+    logger.info(f"Analyse de {len(valid_dataframes)} dataset(s): {list(valid_dataframes.keys())}")
+
+    try:
+        # Validation et analyse pour chaque dataset
+        for df_name, df in valid_dataframes.items():
+            logger.info(f"🔍 Traitement de {df_name}...")
+
+            # Validation
+            validation = validate_dataframe_structure(df, df_name, required_columns)
+            if not validation['is_valid']:
+                logger.error(f"❌ Validation échouée pour {df_name}")
+                continue
+
+            if validation['warnings']:
+                for warning in validation['warnings']:
+                    logger.warning(f"⚠️ {df_name}: {warning}")
+
+            # Calcul des métriques globales (données complètes)
+            session_stats_global = calculate_session_metrics_enhanced(df, df_name,xtickReversalTickPrice=xtickReversalTickPrice,period_atr_stat_session=period_atr_stat_session)
+
+            # Calcul des métriques par groupe de sessions
+            session_data_by_group = {}
+
+            for group_name, session_indices in [("GROUPE_1", groupe1), ("GROUPE_2", groupe2)]:
+                logger.info(f"🔍 Analyse {group_name} (sessions {session_indices}) pour {df_name}")
+
+                # Filtrage des données par groupe de sessions
+                df_filtered = filter_data_by_session_group(df, session_indices, df_name)
+
+                if len(df_filtered) > 0:
+                    try:
+                        session_stats_filtered = calculate_session_metrics_enhanced(df_filtered,
+                                                                                    f"{df_name}_{group_name}",xtickReversalTickPrice=xtickReversalTickPrice,period_atr_stat_session=period_atr_stat_session)
+
+                        # Calcul des statistiques pour ce groupe
+                        volume_stats = {
+                            'avg_volume_per_session': session_stats_filtered['volume_mean'].mean(),
+                            'total_volume': session_stats_filtered['volume_sum'].sum(),
+                            'duration_volume_correlation': session_stats_filtered['duration_mean'].corr(
+                                session_stats_filtered['volume_mean'])
+                        }
+
+                        # Statistiques ATR
+                        atr_valid = session_stats_filtered['atr_mean'].dropna()
+                        atr_stats = {
+                            'atr_mean_per_session': session_stats_filtered['atr_mean'],
+                            'atr_overall_mean': atr_valid.mean() if len(atr_valid) > 0 else np.nan,
+                            'atr_std': atr_valid.std() if len(atr_valid) > 0 else np.nan,
+                            'sessions_with_atr': len(atr_valid),
+                            'atr_duration_correlation': session_stats_filtered['atr_mean'].corr(
+                                session_stats_filtered['duration_mean'])
+                        }
+
+                        # Statistiques contrats extrêmes
+                        extreme_with_zeros = session_stats_filtered['extreme_with_zeros'].dropna()
+                        extreme_without_zeros = session_stats_filtered['extreme_without_zeros'].dropna()
+
+                        extreme_contracts_stats = {
+                            'extreme_contracts_with_zeros': session_stats_filtered['extreme_with_zeros'],
+                            'extreme_contracts_without_zeros': session_stats_filtered['extreme_without_zeros'],
+                            'extreme_with_zeros_mean': extreme_with_zeros.mean() if len(
+                                extreme_with_zeros) > 0 else np.nan,
+                            'extreme_without_zeros_mean': extreme_without_zeros.mean() if len(
+                                extreme_without_zeros) > 0 else np.nan,
+                            'extreme_ratio_mean': session_stats_filtered['extreme_ratio'].mean(),
+                            'sessions_with_extreme_contracts': len(extreme_without_zeros)
+                        }
+
+                        # NOUVEAU: Statistiques volumes above par tick
+                        volume_above_per_tick_valid = session_stats_filtered['volume_above_per_tick_mean'].dropna()
+
+                        volume_above_per_tick_stats = {
+                            'volume_above_per_tick_mean_series': session_stats_filtered['volume_above_per_tick_mean'],
+                            'volume_above_per_tick_overall_mean': volume_above_per_tick_valid.mean() if len(
+                                volume_above_per_tick_valid) > 0 else np.nan,
+                            'volume_above_ratio_mean': session_stats_filtered['volume_above_ratio'].mean(),
+                            'sessions_with_volume_above': len(volume_above_per_tick_valid)
+                        }
+
+                        session_data_by_group[str(session_indices)] = {
+                            'session_stats': session_stats_filtered,
+                            'total_sessions': session_stats_filtered['session_id'].nunique(),
+                            'total_candles': session_stats_filtered['candle_count'].sum(),
+                            'avg_duration_overall': session_stats_filtered['duration_mean'].mean(),
+                            'volume_stats': volume_stats,
+                            'atr_stats': atr_stats,
+                            'extreme_contracts_stats': extreme_contracts_stats,
+                            'volume_above_per_tick_stats': volume_above_per_tick_stats  # NOUVEAU
+                        }
+
+                        logger.info(
+                            f"✅ {group_name}: {session_data_by_group[str(session_indices)]['total_sessions']} sessions analysées")
+                        logger.info(
+                            f"   📊 Volumes above par tick: {volume_above_per_tick_stats['sessions_with_volume_above']} sessions")
+
+                    except Exception as e:
+                        logger.warning(f"⚠️ Erreur lors de l'analyse du {group_name} pour {df_name}: {e}")
+                        session_data_by_group[str(session_indices)] = None
+                else:
+                    logger.warning(f"⚠️ Aucune donnée trouvée pour {group_name} dans {df_name}")
+                    session_data_by_group[str(session_indices)] = None
+
+            # Calcul des statistiques globales avec volumes above par tick
+            volume_stats_global = {
+                'avg_volume_per_session': session_stats_global['volume_mean'].mean(),
+                'total_volume': session_stats_global['volume_sum'].sum(),
+                'duration_volume_correlation': session_stats_global['duration_mean'].corr(
+                    session_stats_global['volume_mean'])
+            }
+
+            # Statistiques ATR globales
+            atr_valid_global = session_stats_global['atr_mean'].dropna()
+            atr_stats_global = {
+                'atr_mean_per_session': session_stats_global['atr_mean'],
+                'atr_overall_mean': atr_valid_global.mean() if len(atr_valid_global) > 0 else np.nan,
+                'atr_std': atr_valid_global.std() if len(atr_valid_global) > 0 else np.nan,
+                'atr_min': atr_valid_global.min() if len(atr_valid_global) > 0 else np.nan,
+                'atr_max': atr_valid_global.max() if len(atr_valid_global) > 0 else np.nan,
+                'sessions_with_atr': len(atr_valid_global),
+                'atr_duration_correlation': session_stats_global['atr_mean'].corr(session_stats_global['duration_mean'])
+            }
+
+            # Statistiques contrats extrêmes globales
+            extreme_with_zeros_global = session_stats_global['extreme_with_zeros'].dropna()
+            extreme_without_zeros_global = session_stats_global['extreme_without_zeros'].dropna()
+
+            extreme_contracts_stats_global = {
+                'extreme_contracts_with_zeros': session_stats_global['extreme_with_zeros'],
+                'extreme_contracts_without_zeros': session_stats_global['extreme_without_zeros'],
+                'extreme_with_zeros_mean': extreme_with_zeros_global.mean() if len(
+                    extreme_with_zeros_global) > 0 else np.nan,
+                'extreme_without_zeros_mean': extreme_without_zeros_global.mean() if len(
+                    extreme_without_zeros_global) > 0 else np.nan,
+                'extreme_ratio_mean': session_stats_global['extreme_ratio'].mean(),
+                'extreme_count_total': session_stats_global['extreme_count_nonzero'].sum(),
+                'sessions_with_extreme_contracts': len(extreme_without_zeros_global),
+                'extreme_with_zeros_duration_corr': session_stats_global['extreme_with_zeros'].corr(
+                    session_stats_global['duration_mean']),
+                'extreme_without_zeros_duration_corr': session_stats_global['extreme_without_zeros'].corr(
+                    session_stats_global['duration_mean']),
+                'extreme_atr_correlation': session_stats_global['extreme_without_zeros'].corr(
+                    session_stats_global['atr_mean'])
+            }
+
+            # NOUVEAU: Statistiques volumes above par tick globales
+            volume_above_per_tick_valid_global = session_stats_global['volume_above_per_tick_mean'].dropna()
+
+            volume_above_per_tick_stats_global = {
+                'volume_above_per_tick_mean_series': session_stats_global['volume_above_per_tick_mean'],
+                'volume_above_per_tick_overall_mean': volume_above_per_tick_valid_global.mean() if len(
+                    volume_above_per_tick_valid_global) > 0 else np.nan,
+                'volume_above_per_tick_std': volume_above_per_tick_valid_global.std() if len(
+                    volume_above_per_tick_valid_global) > 0 else np.nan,
+                'volume_above_ratio_mean': session_stats_global['volume_above_ratio'].mean(),
+                'volume_above_count_total': session_stats_global['volume_above_count'].sum(),
+                'sessions_with_volume_above': len(volume_above_per_tick_valid_global),
+                'volume_above_duration_correlation': session_stats_global['volume_above_per_tick_mean'].corr(
+                    session_stats_global['duration_mean']),
+                'volume_above_atr_correlation': session_stats_global['volume_above_per_tick_mean'].corr(
+                    session_stats_global['atr_mean']),
+                'volume_above_extreme_correlation': session_stats_global['volume_above_per_tick_mean'].corr(
+                    session_stats_global['extreme_without_zeros'])
+            }
+
+            # Stockage des résultats enrichis
+            results[df_name] = {
+                'session_stats': session_stats_global,
+                'total_sessions': session_stats_global['session_id'].nunique(),
+                'total_candles': session_stats_global['candle_count'].sum(),
+                'avg_duration_overall': session_stats_global['duration_mean'].mean(),
+                'avg_candles_per_session': session_stats_global['candle_count'].mean(),
+                'date_range': (session_stats_global['session_date'].min().date(),
+                               session_stats_global['session_date'].max().date()),
+                'volume_stats': volume_stats_global,
+                'atr_stats': atr_stats_global,
+                'extreme_contracts_stats': extreme_contracts_stats_global,
+                'volume_above_per_tick_stats': volume_above_per_tick_stats_global,  # NOUVEAU
+                'session_data_by_group': session_data_by_group,
+                'validation': validation
+            }
+
+            # Logging enrichi
+            logger.info(f"✅ {df_name}: {results[df_name]['total_sessions']} sessions globales analysées")
+            logger.info(f"   📊 ATR: {atr_stats_global['sessions_with_atr']} sessions avec ATR valide")
+            logger.info(
+                f"   🎯 Contrats extrêmes: {extreme_contracts_stats_global['sessions_with_extreme_contracts']} sessions")
+            logger.info(
+                f"   📊 Volumes above par tick: {volume_above_per_tick_stats_global['sessions_with_volume_above']} sessions")
+
+        # Visualisations avec sessions (maintenant 6 figures)
+        if results:
+            create_enhanced_visualizations_with_sessions(results,groupe1=groupe1,
+    groupe2=groupe2,period_atr_stat_session=period_atr_stat_session)
+            logger.info("📊 Visualisations avec sessions intraday générées avec succès (6 figures)")
+
+        # Affichage du résumé enrichi avec sessions
+        print_enhanced_summary_statistics_with_sessions(results,groupe1=groupe1,groupe2=groupe2,xtickReversalTickPrice=xtickReversalTickPrice)
+
+        logger.info("🎉 Analyse avec sessions intraday terminée avec succès!")
+        return results
+
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de l'analyse: {e}")
+        raise
+
+
+
+
+def print_enhanced_summary_statistics(valid_results):
+    """
+    Affiche le résumé statistique enrichi avec ATR et contrats extrêmes
+    """
+    print("\n" + "=" * 80)
+    print("📋 RÉSUMÉ STATISTIQUE GLOBAL ENRICHI (ATR + CONTRATS EXTRÊMES)")
+    print("=" * 80)
+
+    for df_name, data in valid_results.items():
+        print(f"\n📊 {df_name.upper()}")
+        print("-" * 60)
+        print(f"📅 Période: {data['date_range'][0]} → {data['date_range'][1]}")
+        print(f"🎯 Nombre de sessions: {data['total_sessions']}")
+        print(f"🕯️  Total bougies: {data['total_candles']:,}")
+        print(f"⏱️  Durée moyenne globale: {data['avg_duration_overall']:.2f}s")
+        print(f"📊 Bougies/session: {data['avg_candles_per_session']:.1f}")
+
+        # Statistiques des sessions
+        session_stats = data['session_stats']
+        print(
+            f"📈 Durée min/max par session: {session_stats['duration_mean'].min():.1f}s / {session_stats['duration_mean'].max():.1f}s")
+        print(
+            f"📊 Bougies min/max par session: {session_stats['candle_count'].min()} / {session_stats['candle_count'].max()}")
+
+        # Statistiques de volume
+        vol_stats = data['volume_stats']
+        print(f"📈 Volume moyen/session: {vol_stats['avg_volume_per_session']:.2f}")
+        print(f"💰 Volume total: {vol_stats['total_volume']:.2f}")
+        print(f"🔗 Corrélation durée-volume: {vol_stats['duration_volume_correlation']:.3f}")
+
+        # NOUVEAU: Statistiques ATR
+        atr_stats = data['atr_stats']
+        print(f"\n📊 ANALYSE ATR 10 PÉRIODES:")
+        print(f"   🎯 Sessions avec ATR valide: {atr_stats['sessions_with_atr']}/{data['total_sessions']}")
+        if not pd.isna(atr_stats['atr_overall_mean']):
+            print(f"   📈 ATR moyen global: {atr_stats['atr_overall_mean']:.4f}")
+            print(f"   📏 ATR min/max: {atr_stats['atr_min']:.4f} / {atr_stats['atr_max']:.4f}")
+            print(f"   📊 Écart-type ATR: {atr_stats['atr_std']:.4f}")
+            print(f"   🔗 Corrélation ATR-Durée: {atr_stats['atr_duration_correlation']:.3f}")
+        else:
+            print(f"   ⚠️  Pas de données ATR valides (sessions trop courtes)")
+
+        # NOUVEAU: Statistiques contrats extrêmes
+        extreme_stats = data['extreme_contracts_stats']
+        print(f"\n🎯 ANALYSE CONTRATS EXTRÊMES:")
+        print(
+            f"   📊 Sessions avec contrats extrêmes: {extreme_stats['sessions_with_extreme_contracts']}/{data['total_sessions']}")
+
+        if not pd.isna(extreme_stats['extreme_with_zeros_mean']):
+            print(f"   📈 Contrats extrêmes (avec zéros): {extreme_stats['extreme_with_zeros_mean']:.4f}")
+            print(f"   🎯 Contrats extrêmes (sans zéros): {extreme_stats['extreme_without_zeros_mean']:.4f}")
+            print(f"   📊 Ratio moyen contrats extrêmes: {extreme_stats['extreme_ratio_mean']:.3f}")
+            print(f"   📈 Total contrats extrêmes: {extreme_stats['extreme_count_total']}")
+            print(f"   🔗 Corrélation avec-zéros-Durée: {extreme_stats['extreme_with_zeros_duration_corr']:.3f}")
+            print(f"   🔗 Corrélation sans-zéros-Durée: {extreme_stats['extreme_without_zeros_duration_corr']:.3f}")
+            if not pd.isna(extreme_stats['extreme_atr_correlation']):
+                print(f"   🔗 Corrélation contrats-ATR: {extreme_stats['extreme_atr_correlation']:.3f}")
+        else:
+            print(f"   ⚠️  Pas de données de contrats extrêmes disponibles")
+
+        # Insights d'interprétation
+        print(f"\n💡 INSIGHTS:")
+
+        # Analyse de l'évolution temporelle
+        if len(session_stats) > 1:
+            duration_trend = np.polyfit(range(len(session_stats)), session_stats['duration_mean'], 1)[0]
+            trend_text = "📈 amélioration" if duration_trend < 0 else "📉 dégradation"
+            print(f"   ⏱️  Tendance durée: {trend_text} ({duration_trend:.3f}s/session)")
+
+        # Analyse de la stabilité
+        duration_cv = session_stats['duration_mean'].std() / session_stats['duration_mean'].mean()
+        stability = "🔹 stable" if duration_cv < 0.2 else "🔸 variable" if duration_cv < 0.5 else "🔴 instable"
+        print(f"   📊 Stabilité: {stability} (CV={duration_cv:.3f})")
+
+        # Efficacité ATR
+        if not pd.isna(atr_stats['atr_duration_correlation']):
+            atr_efficiency = "📈 positive" if atr_stats['atr_duration_correlation'] < -0.3 else "📊 neutre" if abs(
+                atr_stats['atr_duration_correlation']) < 0.3 else "📉 négative"
+            print(f"   🎯 Efficacité ATR: {atr_efficiency}")
+
+        # Sélectivité des contrats
+        if not pd.isna(extreme_stats['extreme_ratio_mean']):
+            selectivity = "🎯 très sélective" if extreme_stats['extreme_ratio_mean'] < 0.1 else "📊 sélective" if \
+            extreme_stats['extreme_ratio_mean'] < 0.3 else "📈 peu sélective"
+            print(f"   🔍 Sélectivité contrats: {selectivity} ({extreme_stats['extreme_ratio_mean']:.1%})")
+
+import numpy as np
+
+def _percentiles(series, q=(25, 50, 75)):
+    """Renvoie un dict {p25, p50, p75} – NaN si < 2 points"""
+    s = series.dropna().to_numpy()
+    if s.size < 2:
+        return {f"p{qi}": np.nan for qi in q}
+    pct = np.percentile(s, q)
+    return {f"p{qi}": pct[i] for i, qi in enumerate(q)}
+import numpy as np
+import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────
+
+def _iqr(series: pd.Series) -> float:
+    """Inter‑quartile range (P75‑P25). Renvoie NaN si < 2 valeurs valides."""
+    s = series.dropna().to_numpy()
+    return np.nan if s.size < 2 else np.percentile(s, 75) - np.percentile(s, 25)
+
+# ──────────────────────────────────────────────────────────────
+# Fonction principale
+# ──────────────────────────────────────────────────────────────
+def create_dataframe_with_group_indicators(
+        df: pd.DataFrame,
+        groupe1_sessions: list,
+        groupe2_sessions: list,
+        xtickReversalTickPrice: float | None = None,
+        period_atr_stat_session: int | None = None,
+):
+    """Ajoute 16 colonnes d'indicateurs (8 par groupe) calculés *intra‑session*.
+
+    Chaque spread est maintenant l'IQR calculé **directement sur les bougies** du
+    groupe (et non plus sur la moyenne par session).
+    """
+
+    logger.info("🚀 Création du DataFrame avec indicateurs de groupe")
+    logger.info(f"   GROUPE1: sessions {groupe1_sessions}")
+    logger.info(f"   GROUPE2: sessions {groupe2_sessions}")
+
+    # ── Pré‑traitement minimal ────────────────────────────────
+    df_enriched = df.copy()
+
+    # Supprimer les éventuels doublons de colonnes
+    if df_enriched.columns.duplicated().any():
+        dupes = df_enriched.columns[df_enriched.columns.duplicated()].tolist()
+        logger.warning(f"🔄 Colonnes dupliquées détectées → {dupes} ; on garde la 1re occurrence")
+        df_enriched = df_enriched.loc[:, ~df_enriched.columns.duplicated(keep="first")]
+
+    # S'assurer que session_id est une Series
+    if isinstance(df_enriched["session_id"], pd.DataFrame):
+        df_enriched["session_id"] = df_enriched["session_id"].iloc[:, 0]
+
+    # ── Colonnes à créer ──────────────────────────────────────
+    group_columns_g1 = [
+        "volume_p50_g1", "atr_p50_g1", "duration_p50_g1", "extreme_ratio_g1",
+        "vol_above_p50_g1", "volume_spread_g1", "volume_above_spread_g1", "atr_spread_g1", "duration_spread_g1",
+    ]
+    group_columns_g2 = [
+        "volume_p50_g2", "atr_p50_g2", "duration_p50_g2", "extreme_ratio_g2",
+        "vol_above_p50_g2", "volume_spread_g2", "volume_above_spread_g2", "atr_spread_g2", "duration_spread_g2",
+    ]
+    all_group_columns = group_columns_g1 + group_columns_g2
+    df_enriched[all_group_columns] = np.nan
+
+    # ── Boucle sessions ───────────────────────────────────────
+    total_sessions = df_enriched["session_id"].nunique()
+    logger.info(f"📊 Traitement de {total_sessions} sessions…")
+
+    for sid in df_enriched["session_id"].unique():
+        session_mask = df_enriched["session_id"] == sid
+        session_data = df_enriched[session_mask]
+
+        # --- GROUPE 1 ----------------------------------------------------
+        g1_data = session_data[session_data["deltaCustomSessionIndex"].isin(groupe1_sessions)]
+        if not g1_data.empty:
+            try:
+                # Calcul des métriques de contrats extrêmes
+                extreme_metrics_g1 = calculate_extreme_contracts_metrics(g1_data)
+
+                # Calcul ATR par bougie (si colonnes H/L/C présentes)
+                atr_series_g1 = calculate_atr_10_periods(
+                    g1_data, period_window=period_atr_stat_session
+                )
+
+                g1_indicators = {
+                    "volume_p50_g1": g1_data["volume"].median(),
+                    "atr_p50_g1": atr_series_g1.median(),
+                    "duration_p50_g1": g1_data["candleDuration"].median(),
+                    "extreme_ratio_g1": extreme_metrics_g1["extreme_ratio"],  # Utiliser la valeur calculée
+                    "vol_above_p50_g1": (g1_data["VolAbv"] / xtickReversalTickPrice).median()
+                    if xtickReversalTickPrice and "VolAbv" in g1_data.columns else np.nan,
+                    "volume_spread_g1": _iqr(g1_data["volume"]),
+                    "volume_above_spread_g1": _iqr(g1_data["VolAbv"] / xtickReversalTickPrice)
+                    if xtickReversalTickPrice and "VolAbv" in g1_data.columns else np.nan,
+                    "atr_spread_g1": _iqr(atr_series_g1),
+                    "duration_spread_g1": _iqr(g1_data["candleDuration"]),
+                }
+
+                for k, v in g1_indicators.items():
+                    df_enriched.loc[session_mask, k] = v
+
+            except Exception as err:
+                logger.warning(f"⚠️ Session {sid} – G1: {err}")
+
+        # --- GROUPE 2 ----------------------------------------------------
+        g2_data = session_data[session_data["deltaCustomSessionIndex"].isin(groupe2_sessions)]
+        if not g2_data.empty:
+            try:
+                # Calcul des métriques de contrats extrêmes
+                extreme_metrics_g2 = calculate_extreme_contracts_metrics(g2_data)
+
+                # Calcul ATR par bougie
+                atr_series_g2 = calculate_atr_10_periods(
+                    g2_data, period_window=period_atr_stat_session
+                )
+
+                g2_indicators = {
+                    "volume_p50_g2": g2_data["volume"].median(),
+                    "atr_p50_g2": atr_series_g2.median(),
+                    "duration_p50_g2": g2_data["candleDuration"].median(),
+                    "extreme_ratio_g2": extreme_metrics_g2["extreme_ratio"],  # Utiliser la valeur calculée
+                    "vol_above_p50_g2": (g2_data["VolAbv"] / xtickReversalTickPrice).median()
+                    if xtickReversalTickPrice and "VolAbv" in g2_data.columns else np.nan,
+                    "volume_spread_g2": _iqr(g2_data["volume"]),
+                    "volume_above_spread_g2": _iqr(g2_data["VolAbv"] / xtickReversalTickPrice)
+                    if xtickReversalTickPrice and "VolAbv" in g2_data.columns else np.nan,
+                    "atr_spread_g2": _iqr(atr_series_g2),
+                    "duration_spread_g2": _iqr(g2_data["candleDuration"]),
+                }
+
+                for k, v in g2_indicators.items():
+                    df_enriched.loc[session_mask, k] = v
+
+            except Exception as err:
+                logger.warning(f"⚠️ Session {sid} – G2: {err}")
+
+    # ── Rapport de remplissage ────────────────────────────────
+    logger.info("📊 Rapport de remplissage des colonnes :")
+    for col in all_group_columns:
+        fill_rate = df_enriched[col].notna().sum() / len(df_enriched) * 100
+        logger.info(f"   {col}: {fill_rate:.1f}% rempli")
+
+    logger.info("✅ Colonnes indicateurs ajoutées (intra‑session)")
+    return df_enriched
+
+
+def validate_group_indicators_dataframe(df_enriched):
+    """
+    Fonction de validation du DataFrame enrichi
+
+    Parameters:
+    -----------
+    df_enriched : DataFrame
+        DataFrame avec les 16 colonnes d'indicateurs
+
+    Returns:
+    --------
+    dict : Rapport de validation
+    """
+
+    validation_report = {
+        'is_valid': True,
+        'issues': [],
+        'statistics': {}
+    }
+
+    # Vérifier la présence des 16 colonnes
+    expected_columns = [
+        'volume_p50_g1', 'atr_p50_g1', 'duration_p50_g1', 'extreme_ratio_g1',
+        'vol_above_p50_g1', 'volume_spread_g1', 'atr_spread_g1', 'duration_spread_g1',
+        'volume_p50_g2', 'atr_p50_g2', 'duration_p50_g2', 'extreme_ratio_g2',
+        'vol_above_p50_g2', 'volume_spread_g2', 'atr_spread_g2', 'duration_spread_g2'
+    ]
+
+    missing_columns = [col for col in expected_columns if col not in df_enriched.columns]
+    if missing_columns:
+        validation_report['is_valid'] = False
+        validation_report['issues'].append(f"Colonnes manquantes: {missing_columns}")
+
+    # Vérifier la cohérence des valeurs par session
+    for col in expected_columns:
+        if col in df_enriched.columns:
+            # Chaque session doit avoir une seule valeur unique pour chaque indicateur
+            values_per_session = df_enriched.groupby('session_id')[col].nunique()
+            problematic_sessions = values_per_session[values_per_session > 1]
+
+            if len(problematic_sessions) > 0:
+                validation_report['issues'].append(
+                    f"Colonne {col}: {len(problematic_sessions)} sessions avec valeurs non-constantes"
+                )
+
+            # Statistiques
+            validation_report['statistics'][col] = {
+                'coverage': df_enriched[col].notna().sum() / len(df_enriched),
+                'mean': df_enriched[col].mean(),
+                'std': df_enriched[col].std(),
+                'min': df_enriched[col].min(),
+                'max': df_enriched[col].max()
+            }
+
+    return validation_report
+
+
+# Fonction d'utilisation simplifiée
+def create_analysis_ready_dataframe(df, groupe1_sessions=None, groupe2_sessions=None):
+    """
+    Fonction principale pour créer le DataFrame prêt pour l'analyse
+
+    Parameters:
+    -----------
+    df : DataFrame source
+    groupe1_sessions : list, par défaut GROUPE_SESSION_1
+    groupe2_sessions : list, par défaut GROUPE_SESSION_2
+
+    Returns:
+    --------
+    DataFrame enrichi et validé
+    """
+
+    logger.info("🎯 CRÉATION DU DATAFRAME D'ANALYSE")
+
+    # Étape 1: Créer le DataFrame enrichi
+    df_enriched = create_dataframe_with_group_indicators(df, groupe1_sessions, groupe2_sessions)
+
+    # Étape 2: Valider le résultat
+    validation = validate_group_indicators_dataframe(df_enriched)
+
+    # Étape 3: Afficher le rapport de validation
+    if validation['is_valid']:
+        logger.info("✅ VALIDATION RÉUSSIE!")
+    else:
+        logger.warning("⚠️ PROBLÈMES DÉTECTÉS:")
+        for issue in validation['issues']:
+            logger.warning(f"   - {issue}")
+
+    # Étape 4: Afficher un échantillon du résultat
+    logger.info("📋 ÉCHANTILLON DU RÉSULTAT:")
+    sample_columns = ['session_id', 'deltaCustomSessionIndex', 'volume_p50_g1', 'volume_p50_g2', 'atr_p50_g1',
+                      'atr_p50_g2']
+    available_sample_columns = [col for col in sample_columns if col in df_enriched.columns]
+
+    if available_sample_columns:
+        sample = df_enriched[available_sample_columns].head(10)
+        logger.info(f"\n{sample.to_string()}")
+
+    return df_enriched, validation
+
+
+
+
+
+
+
+
+
+
